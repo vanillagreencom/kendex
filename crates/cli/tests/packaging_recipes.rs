@@ -5,17 +5,11 @@
 //! catch up.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-
-fn repo(rel: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
-}
 
 #[allow(clippy::unwrap_used)]
-fn read(rel: &str) -> String {
-    fs::read_to_string(repo(rel)).unwrap()
+fn read_recipe(rel: &str) -> String {
+    let recipes = crate::test_util::checkout_root().join("packaging");
+    fs::read_to_string(recipes.join(rel)).unwrap()
 }
 
 /// A checksum entry as the recipes write it: 64 hex chars, quotes and a
@@ -37,7 +31,9 @@ struct Lane {
 
 #[allow(clippy::unwrap_used)]
 fn unix_lanes() -> Vec<Lane> {
-    let workflow = read(".github/workflows/release.yml");
+    let workflow =
+        fs::read_to_string(crate::test_util::checkout_root().join(".github/workflows/release.yml"))
+            .unwrap();
     let lanes: Vec<Lane> = workflow
         .lines()
         .filter_map(|l| l.trim().strip_prefix("target: "))
@@ -64,7 +60,7 @@ fn unix_lanes() -> Vec<Lane> {
 /// must sit inside the pair that matches it, with its own sha256 beside it.
 #[test]
 fn homebrew_formula_places_each_lane_under_its_os_and_arch_block() {
-    let formula = read("packaging/homebrew/kendex-cli.rb");
+    let formula = read_recipe("homebrew/kendex-cli.rb");
     let mut os = "";
     let mut arch = "";
     let mut placed: Vec<(String, &str, &str)> = Vec::new();
@@ -122,7 +118,7 @@ fn homebrew_formula_places_each_lane_under_its_os_and_arch_block() {
 /// The Linux command links libdbus-1; macOS uses the native keyring.
 #[test]
 fn homebrew_formula_declares_dbus_and_build_only_patchelf_only_for_linux() {
-    let formula = read("packaging/homebrew/kendex-cli.rb");
+    let formula = read_recipe("homebrew/kendex-cli.rb");
     let mut blocks = Vec::new();
     let mut dependencies = Vec::new();
     for line in formula.lines().map(str::trim) {
@@ -151,7 +147,7 @@ fn homebrew_formula_declares_dbus_and_build_only_patchelf_only_for_linux() {
 /// Patching the staged Linux command leaves macOS and child environments alone.
 #[test]
 fn homebrew_formula_patches_the_linux_command_before_installing_it() {
-    let formula = read("packaging/homebrew/kendex-cli.rb");
+    let formula = read_recipe("homebrew/kendex-cli.rb");
     let install: Vec<_> = formula
         .lines()
         .map(str::trim)
@@ -173,7 +169,7 @@ fn homebrew_formula_patches_the_linux_command_before_installing_it() {
 /// through its `arch` stanza and needs a checksum for each.
 #[test]
 fn homebrew_cask_selects_a_dmg_and_checksum_per_mac_arch() {
-    let cask = read("packaging/homebrew/kendex-cask.rb");
+    let cask = read_recipe("homebrew/kendex-cask.rb");
     let mac_arches: Vec<&str> = unix_lanes()
         .into_iter()
         .filter(|l| l.os == "macos")
@@ -224,7 +220,7 @@ fn homebrew_cask_selects_a_dmg_and_checksum_per_mac_arch() {
 /// reinstalls the old version over it on the next `brew upgrade`.
 #[test]
 fn homebrew_cask_hands_the_upgrade_to_the_app() {
-    let cask = read("packaging/homebrew/kendex-cask.rb");
+    let cask = read_recipe("homebrew/kendex-cask.rb");
     assert!(
         cask.lines().any(|l| l.trim() == "auto_updates true"),
         "{cask}"
@@ -236,7 +232,7 @@ fn homebrew_cask_hands_the_upgrade_to_the_app() {
 /// kept out by the `binary` link refusing a name brew's bin already holds.
 #[test]
 fn homebrew_cask_links_the_command_out_of_the_app() {
-    let cask = read("packaging/homebrew/kendex-cask.rb");
+    let cask = read_recipe("homebrew/kendex-cask.rb");
     let lines: Vec<&str> = cask.lines().map(str::trim).collect();
     let want = r##"binary "#{appdir}/kendex.app/Contents/MacOS/kendex""##;
     assert!(lines.contains(&want), "kendex-cask.rb has no `{want}`");
@@ -263,8 +259,8 @@ fn the_prebuilt_package_carries_a_source_array_per_linux_arch() {
         "AUR test assumes one x86_64 and one aarch64 linux lane"
     );
     let pkg = "kendex-bin";
-    let pkgbuild = read(&format!("packaging/arch/{pkg}/PKGBUILD"));
-    let srcinfo = read(&format!("packaging/arch/{pkg}/.SRCINFO"));
+    let pkgbuild = read_recipe(&format!("arch/{pkg}/PKGBUILD"));
+    let srcinfo = read_recipe(&format!("arch/{pkg}/.SRCINFO"));
     assert!(
         pkgbuild.contains("arch=('x86_64' 'aarch64')"),
         "{pkg}: arch array"
@@ -388,11 +384,11 @@ fn pkgbuild_field_reads_past_a_comment_that_carries_a_paren() {
 }
 
 fn pkgbuild(package: &str) -> String {
-    read(&format!("packaging/arch/{package}/PKGBUILD"))
+    read_recipe(&format!("arch/{package}/PKGBUILD"))
 }
 
 fn srcinfo(package: &str) -> String {
-    read(&format!("packaging/arch/{package}/.SRCINFO"))
+    read_recipe(&format!("arch/{package}/.SRCINFO"))
 }
 
 /// The values a `.SRCINFO` records for a field, one per `<field> = ` line.
@@ -452,7 +448,7 @@ fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
             vec!["1".to_owned()],
             "{package}: the 5.x-to-1.0 transition needs an epoch on every package"
         );
-        let srcinfo = read(&format!("packaging/arch/{package}/.SRCINFO"));
+        let srcinfo = read_recipe(&format!("arch/{package}/.SRCINFO"));
         assert!(
             srcinfo.lines().any(|l| l.trim() == "epoch = 1"),
             "{package}: .SRCINFO is stale for epoch"
@@ -533,7 +529,7 @@ fn every_source_arch_package_disables_makepkg_lto() {
 /// the transition the Arch epoch covers above; the cask has no equivalent.
 #[test]
 fn the_formula_declares_the_restart_as_a_new_version_scheme() {
-    let formula = read("packaging/homebrew/kendex-cli.rb");
+    let formula = read_recipe("homebrew/kendex-cli.rb");
     assert!(
         formula.lines().any(|l| l.trim() == "version_scheme 1"),
         "kendex-cli.rb: no `version_scheme 1`, so a 5.x install never shows \
@@ -545,9 +541,9 @@ fn the_formula_declares_the_restart_as_a_new_version_scheme() {
 /// than searched for over the whole file because the header comment already
 /// spells out the install command the caveat has to name.
 fn homebrew_cask_caveats() -> String {
-    const RECIPE: &str = "packaging/homebrew/kendex-cask.rb";
+    const RECIPE: &str = "homebrew/kendex-cask.rb";
     const OPENER: &str = "caveats <<~EOS";
-    let text = read(RECIPE);
+    let text = read_recipe(RECIPE);
     let lines: Vec<&str> = text.lines().collect();
     let opener = lines
         .iter()

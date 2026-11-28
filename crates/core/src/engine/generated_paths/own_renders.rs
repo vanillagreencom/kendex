@@ -290,44 +290,81 @@ fn record(env: &Env, root: &Path) -> Result<Lock, String> {
     }
 }
 
-/// A copy of the files a commit of `root` carries: every tracked file and
-/// every untracked one Git does not ignore, as the working tree holds them.
-/// The path returned is the copy's root.
+/// A copy of the checkout's project and catalog inputs. Only Git's tracked
+/// and nonignored untracked files are copied, so an editor's swap file in a
+/// render cannot make the plan judge bytes that no commit carries.
 ///
-/// The planner reads every file in a render tree but the tool caches a
-/// skill's source leaves out (`source_read::TOOL_CACHES`), so any other
-/// ignored file there, such as an editor's swap file, makes it plan the
-/// tree over again. No commit carries that file, and no clone
-/// `tools/lock-record` refreshes holds it, so the check judges this copy
-/// and leaves the checkout's leftovers out.
-///
-/// The scratch directory is a Git repository with every copied file staged,
-/// and the copy sits one directory below it, as a project in a subdirectory
-/// of a repository does. Git lists the copy's nested instruction files to
-/// the planner as it lists the checkout's. The copy's root holds no `.git`,
-/// so its plan writes no inventory, which `own_inventory.rs` judges, and
-/// keeps every position it holds back: where the root holds `.git`, the
-/// plan keeps only those the inventory at `HEAD` lists, and that drops the
-/// render of a package the branch adds.
-fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
+/// When checking inventory, the scratch project has its own repository and
+/// retains the checkout's HEAD for ownership and adopted-workflow reads.
+/// The byte check puts the project below the repository root so the plan
+/// can see its nested instruction files and new renders without requiring
+/// those renders to be in HEAD's inventory.
+pub(super) fn committed_copy(with_head: bool) -> Result<(tempfile::TempDir, PathBuf), String> {
+    let root = crate::test_util::checkout_root();
     let tmp = tempfile::tempdir().map_err(|error| format!("scratch directory: {error}"))?;
     let repository = crate::test_util::rooted(&tmp);
     let copy = repository.join("checkout");
-    // Every caller copies this checkout. Share its immutable file list;
-    // every planted defect still has a separate scratch tree.
     static LISTED: OnceLock<String> = OnceLock::new();
     let listed = LISTED.get_or_init(|| {
+        // The project configuration, its local catalog, harness positions
+        // and instruction shims are the inputs these plans consume.
         crate::test_util::git(
-            root,
+            &root,
             &[
                 "ls-files",
                 "-z",
                 "--cached",
                 "--others",
                 "--exclude-standard",
+                "--",
+                ".agents",
+                ".claude",
+                ".claude-plugin",
+                ".codex",
+                ".copilot",
+                ".cursor",
+                ".gemini",
+                ".github",
+                ".opencode",
+                ".pi",
+                ".gitattributes",
+                ".gitignore",
+                ".kendex-generated.json",
+                ".kendex-lock.json",
+                ".mcp.json",
+                "kendex.toml",
+                "kendex-local.toml",
+                "kendex.settings.toml",
+                "CLAUDE.md",
+                "GEMINI.md",
+                "opencode.json",
+                "opencode.jsonc",
+                ":(glob)**/AGENTS.md",
+                "agents",
+                "commands",
+                "hooks",
+                "mcp",
+                "output-styles",
+                "pi-extensions",
+                "plugins",
+                "skills",
             ],
         )
     });
+    let root_text = root.to_str().ok_or("checkout path is not UTF-8")?;
+    let clone_destination = if with_head { "checkout" } else { "." };
+    crate::test_util::git(
+        &repository,
+        &[
+            "clone",
+            "-q",
+            "--shared",
+            "--no-checkout",
+            "--",
+            root_text,
+            clone_destination,
+        ],
+    );
     // Git lists an untracked nested repository, such as a linked worktree,
     // as its directory with a trailing slash: none of its files is this
     // checkout's.
@@ -355,25 +392,25 @@ fn committed_copy(root: &Path) -> Result<(tempfile::TempDir, PathBuf), String> {
             });
         copied.map_err(|error| format!("copy {carried}: {error}"))?;
     }
-    crate::test_util::git(&repository, &["init", "-q"]);
-    crate::test_util::git(&repository, &["add", "-A", "-f"]);
+    let git_root = if with_head { &copy } else { &repository };
+    crate::test_util::git(git_root, &["add", "-A", "-f"]);
     Ok((tmp, copy))
 }
 
 /// A checkout held to its own declaration and record, read off a copy of
 /// what a commit of it carries.
-fn check(root: &Path) -> Standing {
+fn check() -> Standing {
+    let (_tmp, copy) = match committed_copy(false) {
+        Ok(copied) => copied,
+        Err(cause) => return unplanned(Path::new("."), cause),
+    };
     let env = match Env::detect() {
         Ok(env) => env,
-        Err(error) => return unplanned(root, error.to_string()),
-    };
-    let (_tmp, copy) = match committed_copy(root) {
-        Ok(copied) => copied,
-        Err(cause) => return unplanned(root, cause),
+        Err(error) => return unplanned(&copy, error.to_string()),
     };
     match (declaration(&env, &copy), record(&env, &copy)) {
         (Ok(declared), Ok(lock)) => check_against(&env, &copy, &declared, &lock),
-        (Err(cause), _) | (_, Err(cause)) => unplanned(root, cause),
+        (Err(cause), _) | (_, Err(cause)) => unplanned(&copy, cause),
     }
 }
 
@@ -381,8 +418,7 @@ fn check(root: &Path) -> Standing {
 /// this repository renders. The passing direction, through the whole path.
 #[test]
 fn the_committed_renders_are_the_bytes_this_checkout_renders() {
-    let root = crate::test_util::checkout_root();
-    if let Standing::Refused(finding) = check(&root) {
+    if let Standing::Refused(finding) = check() {
         panic!("{}", refusal(&finding));
     }
 }
@@ -452,8 +488,7 @@ fn complete_declarations(report: &EngineReport) -> bool {
 
 #[test]
 fn refresh_then_verify_agrees_on_every_committed_install_record() {
-    let (tmp, copy) =
-        committed_copy(&crate::test_util::checkout_root()).expect("the committed checkout copies");
+    let (tmp, copy) = committed_copy(false).expect("the committed checkout copies");
     let env = Env::fake(crate::test_util::rooted(&tmp).join("home"), FakeOs::Linux);
     assert!(
         !record(&env, &copy)
@@ -707,8 +742,7 @@ impl Planted {
     #[allow(clippy::expect_used)]
     fn new() -> Self {
         let env = Env::detect().expect("the host environment is readable");
-        let (tmp, copy) =
-            committed_copy(&crate::test_util::checkout_root()).expect("the checkout copies");
+        let (tmp, copy) = committed_copy(false).expect("the checkout copies");
         let mut declared = declaration(&env, &copy).expect("the copy's manifest reads");
         let lock = record(&env, &copy).expect("the copy's install record reads");
         // Refusal controls judge one skill. The passing test above still
@@ -818,8 +852,10 @@ fn a_render_of_a_package_the_record_does_not_hold_is_refused() {
     let mut planted = Planted::new();
     let skill = "planted-package";
     let render = format!(".agents/skills/{skill}/SKILL.md");
-    let committed = crate::commit_offer::committed_inventory(&crate::test_util::checkout_root())
-        .expect("the inventory at HEAD reads");
+    let committed = crate::commit_offer::committed_inventory(
+        planted.copy.parent().expect("the copy has a repository"),
+    )
+    .expect("the inventory at HEAD reads");
     assert!(
         !committed.contains(&render),
         "HEAD's inventory lists {render}"

@@ -1363,6 +1363,10 @@ reads() {
           }
           if (read[r] == ".") {
             if (kind[r] != "target") continue
+          } else if (substr(read[r], 1, 3) == "**/") {
+            filename = path
+            sub(/^.*\//, "", filename)
+            if (filename != substr(read[r], 4)) continue
           } else if (path != read[r] && index(path, read[r] "/") != 1) continue
           if (kind[r] == "build" && path !~ ENVIRON["PROSE"]) build = 1
           if (kind[r] == "include") included = 1

@@ -30,7 +30,7 @@ use crate::engine::{PlanOptions, plan_apply};
 use crate::env::Env;
 use crate::model::Scope;
 
-use super::INVENTORY;
+use super::{INVENTORY, own_renders::committed_copy};
 
 /// The first word of every line this check writes.
 const NAME: &str = "render-inventory";
@@ -260,8 +260,9 @@ fn check(root: &Path) -> Standing {
 /// this repository renders, laid out as the writer writes it. The passing
 /// direction, through the whole path.
 #[test]
+#[allow(clippy::expect_used, reason = "the test requires a checkout to plan")]
 fn the_committed_inventory_is_the_set_this_checkout_renders() {
-    let root = crate::test_util::checkout_root();
+    let (_tmp, root) = committed_copy(true).expect("the committed checkout copies");
     match check(&root) {
         Standing::Current => {}
         Standing::Refused(finding) => panic!("{}", refusal(&finding)),
@@ -283,7 +284,7 @@ const RENDERED_NOWHERE: &str = ".agents/skills/.nothing-renders-this/SKILL.md";
 /// repository actually renders.
 #[test]
 fn an_inventory_that_is_not_the_render_set_is_refused() {
-    let root = crate::test_util::checkout_root();
+    let (_tmp, root) = committed_copy(true).expect("the committed checkout copies");
     let (_, listed) = committed(&root.join(INVENTORY)).expect("the committed inventory reads");
     let removed = listed
         .iter()
@@ -333,7 +334,7 @@ fn an_inventory_that_is_not_the_render_set_is_refused() {
 /// of the file, parsing it to a set, would wave through.
 #[test]
 fn an_inventory_laid_out_on_one_line_is_refused() {
-    let root = crate::test_util::checkout_root();
+    let (_tmp, root) = committed_copy(true).expect("the committed checkout copies");
     let (_, listed) = committed(&root.join(INVENTORY)).expect("the committed inventory reads");
     let tmp = tempfile::tempdir().expect("a scratch directory");
     let path = crate::test_util::rooted(&tmp).join(INVENTORY);

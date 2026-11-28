@@ -12,28 +12,26 @@ use super::deps_cli::tree;
 use super::verify_records::{commit, git, kendex, repository, said, write};
 use crate::test_util::rooted;
 
-/// Copies the files under `root/package` that Git does not ignore into
-/// `dest/package`. Tracked and new untracked files are both copied, so a
+/// Copies the files under `package` that Git does not ignore into
+/// `dest`. Tracked and new untracked files are both copied, so a
 /// file the change under test adds is in the fixture; a cache a script run
 /// left in the checkout, `scripts/__pycache__` say, is not, since the
 /// render omits it and the fixture catalog would then hold what the render
 /// cannot.
 #[allow(clippy::unwrap_used)]
-fn copy_unignored(root: &Path, package: &str, dest: &Path) {
+fn copy_unignored(package: &Path, dest: &Path) {
     let listed = git(
-        root,
+        package,
         &[
             "ls-files",
             "-z",
             "--cached",
             "--others",
             "--exclude-standard",
-            "--",
-            package,
         ],
     );
     for relative in listed.split('\0').filter(|name| !name.is_empty()) {
-        let source = root.join(relative);
+        let source = package.join(relative);
         let kind = match fs::symlink_metadata(&source) {
             Ok(meta) => meta.file_type(),
             // Listed from the index, deleted in the working tree under test.
@@ -51,8 +49,9 @@ fn copy_unignored(root: &Path, package: &str, dest: &Path) {
 fn installed(home: &Path) -> (PathBuf, PathBuf, String) {
     let catalog = home.join("catalog");
     let project = home.join("assistant");
-    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    copy_unignored(&checkout, "skills/jarvis", &catalog);
+    let jarvis = crate::test_util::checkout_root().join("skills/jarvis");
+    let agents = crate::test_util::checkout_root().join("agents");
+    copy_unignored(&jarvis, &catalog.join("skills/jarvis"));
     for name in [
         "cpa",
         "legal",
@@ -62,9 +61,9 @@ fn installed(home: &Path) -> (PathBuf, PathBuf, String) {
         "scout",
         "reviewer-arch",
     ] {
-        let path = format!("agents/{name}.md");
-        let text = fs::read_to_string(checkout.join(&path)).unwrap();
-        write(&catalog.join(path), &text);
+        let file = format!("{name}.md");
+        let text = fs::read_to_string(agents.join(&file)).unwrap();
+        write(&catalog.join("agents").join(file), &text);
     }
     write(&catalog.join("kendex.toml"), "is_source_catalog = true\n");
     repository(&catalog);
@@ -201,7 +200,8 @@ fn the_fixture_copy_leaves_out_what_git_ignores() {
             .any(|(entry, _)| entry == "file:scripts/__pycache__/x.pyc")
     );
     let catalog = root.join("catalog");
-    copy_unignored(&checkout, "skills/jarvis", &catalog);
+    let jarvis = checkout.join("skills/jarvis");
+    copy_unignored(&jarvis, &catalog.join("skills/jarvis"));
     assert_eq!(
         tree(&catalog.join("skills/jarvis")),
         vec![

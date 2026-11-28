@@ -254,12 +254,11 @@ fn commit_all(upstream: &Path, message: &str) {
 /// package; and a project under `home` declaring it.
 #[allow(clippy::unwrap_used)]
 fn kendexs_own_repository(home: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let upstream = home
         .join("git")
         .join(kendex_core::manifest::DEFAULT_SOURCE_REPO);
     copy_tree(
-        &repo.join("skills/agent-runtime"),
+        &crate::test_util::checkout_root().join("skills/agent-runtime"),
         &upstream.join("skills/agent-runtime"),
     );
     fs::write(upstream.join("kendex.toml"), "is_source_catalog = true\n").unwrap();

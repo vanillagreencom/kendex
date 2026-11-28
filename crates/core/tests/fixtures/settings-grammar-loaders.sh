@@ -5,7 +5,7 @@
 # row's recorded verdict AND with what settings_template::read says, so the
 # reader and the loaders are pinned to one grammar.
 #
-# usage: settings-grammar-loaders.sh REPO_ROOT CORPUS
+# usage: settings-grammar-loaders.sh SKILLS_DIR CORPUS
 #
 # The caller's environment is not an input to any of this. Both loader
 # families give an exported variable precedence over the file, so a probe
@@ -23,8 +23,8 @@ set -euo pipefail
 # defined answers every row `refused`.
 root="$(cd -- "$1" && pwd)"
 corpus="$2"
-env_lib="$root/skills/orch/scripts/lib/kendex-env.sh"
-settings_lib="$root/skills/review-gate/scripts/lib/settings.sh"
+env_lib="$root/orch/scripts/lib/kendex-env.sh"
+settings_lib="$root/review-gate/scripts/lib/settings.sh"
 for lib in "$env_lib" "$settings_lib"; do
   [ -r "$lib" ] || { echo "cannot read the loader at $lib" >&2; exit 1; }
 done

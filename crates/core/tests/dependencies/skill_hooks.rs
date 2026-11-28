@@ -162,8 +162,9 @@ fn naming_the_hook(f: &Fixture) -> BTreeSet<String> {
 #[allow(clippy::unwrap_used)]
 pub(super) fn world(edge: bool, extra: &str) -> Fixture {
     let f = fixture("");
-    let checkout = test_util::checkout_root();
-    let skill_md = fs::read_to_string(checkout.join("skills/docs-writing/SKILL.md")).unwrap();
+    let skill_md =
+        fs::read_to_string(test_util::checkout_root().join("skills/docs-writing/SKILL.md"))
+            .unwrap();
     assert_eq!(
         skill_md.matches(EDGE).count(),
         1,
@@ -178,10 +179,11 @@ pub(super) fn world(edge: bool, extra: &str) -> Fixture {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("SKILL.md"), skill_md).unwrap();
     fs::create_dir_all(f.source.join("hooks")).unwrap();
+    let hooks = test_util::checkout_root().join("hooks");
     for hook in [HOOK, COMPANION] {
         fs::write(
             f.source.join(format!("hooks/{hook}.sh")),
-            fs::read(checkout.join(format!("hooks/{hook}.sh"))).unwrap(),
+            fs::read(hooks.join(format!("{hook}.sh"))).unwrap(),
         )
         .unwrap();
     }

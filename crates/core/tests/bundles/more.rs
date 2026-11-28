@@ -18,8 +18,7 @@ use super::{Fixture, apply_now, catalog_bundles, fixture, installed, lock_of, ma
 #[test]
 #[allow(clippy::unwrap_used)]
 fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
-    let catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let sealed = SealedSource::open(&catalog).unwrap();
+    let sealed = SealedSource::open(&crate::test_util::checkout_root()).unwrap();
     let catalog = sealed.root();
     let catalog_text = sealed
         .read_to_string(&catalog.join("kendex.toml"))

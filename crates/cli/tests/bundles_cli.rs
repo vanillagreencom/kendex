@@ -163,17 +163,17 @@ fn the_jarvis_bundle_installs_the_carrier_beside_its_judge() {
     fs::create_dir_all(&project).unwrap();
     // The override belongs to the test boundary: the must-fail control
     // removes the hook group from a disposable copy of this real catalog.
-    let catalog = std::env::var_os("JARVIS_TEST_CATALOG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
-        .canonicalize()
-        .unwrap();
+    let catalog = match std::env::var_os("JARVIS_TEST_CATALOG") {
+        Some(path) => kendex_core::source_read::SealedSource::open(Path::new(&path)),
+        None => kendex_core::source_read::SealedSource::open(&crate::test_util::checkout_root()),
+    }
+    .unwrap();
     let output = kendex(
         &home,
         &project,
         &[
             "add",
-            catalog.to_str().unwrap(),
+            catalog.root().to_str().unwrap(),
             "--bundle",
             "jarvis",
             "--harness",
@@ -215,7 +215,7 @@ fn the_jarvis_bundle_installs_the_carrier_beside_its_judge() {
         }
     }
     if std::env::var_os("JARVIS_TEST_CATALOG").is_none() {
-        assert_jarvis_hook_group_control(&catalog, &home);
+        assert_jarvis_hook_group_control(catalog.root(), &home);
     }
 }
 

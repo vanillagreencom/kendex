@@ -30,9 +30,11 @@
 #            walk follows out-of-line modules and literal path attributes.
 #            Literal reads in shared files use the compiling target's
 #            package. A shared root constructor alone is not a file read.
-#            It resolves checkout_root() and literal path joins. An
+#            It resolves checkout_root(), literal path joins and a
+#            literal ls-files pathspec on a checkout binding. An
 #            unresolved checkout root emits "." for its executable.
-#   target-catalog  a checkout used as a catalog source by a test target.
+#   target-catalog  the manifest of a checkout used as a catalog source by
+#                   a test target. The selector derives its layout inputs.
 #   target-root    the metadata roster, in target row format, for job setup.
 #   package-root   the manifest directory of a package in that roster.
 #   complete       with --ci-targets, the number of preceding read rows.
@@ -230,7 +232,42 @@ if rows=$(find crates -type f -name '*.rs' |
     }
     return ""
   }
-  function scan(file, text,   dir, rest, lit, chain, owner, path, catalog) {
+  # The scoped checkout copy gets its filenames from this ls-files call.
+  # Read the entire argument array before accepting any inputs. An unknown
+  # pathspec stays opaque, just like an unrestricted walk of the checkout.
+  function checkout_pathspecs(before, after,   binding, query, args, paths, n, i, lit, body, code) {
+    if (after !~ /^;/ ||
+        !match(before, /(^|\n)[ \t]*let [[:alnum:]_]+ = crate::test_util::$/)) return 0
+    binding = substr(before, RSTART, RLENGTH)
+    sub(/^.*let /, "", binding)
+    sub(/ .*/, "", binding)
+    if (!match(after, /\n\}/)) return 0
+    body = substr(after, 1, RSTART)
+    query = "crate::test_util::git\\([ \t\n]*&" binding ",[ \t\n]*&\\[[ \t\n]*\"ls-files\",[ \t\n]*\"-z\",[ \t\n]*\"--cached\",[ \t\n]*\"--others\",[ \t\n]*\"--exclude-standard\",[ \t\n]*\"--\","
+    if (!match(body, query)) return 0
+    args = substr(body, RSTART + RLENGTH)
+    if (!match(args, /^([ \t\n]*"[^"]+",)+[ \t\n]*\]/)) return 0
+    args = substr(args, 1, RLENGTH)
+    # The copy also uses the root to join each listed file and to borrow
+    # Git objects for HEAD. A second path operation must stay unresolved.
+    code = structure(body)
+    if (body !~ /&\[[ \t\n]*"clone",[ \t\n]*"-q",[ \t\n]*"--shared",[ \t\n]*"--no-checkout",[ \t\n]*"--",[ \t\n]*root_text,/ ||
+        !sub("crate::test_util::git\\([ \t\n]*&" binding ",", "", code) ||
+        !sub("let root_text = " binding "\\.to_str\\(\\)", "", code) ||
+        !sub("for carried in carried \\{[ \t\n]*let from = " binding "\\.join\\(carried\\)", "", code) ||
+        gsub(/(^|[^[:alnum:]_])root_text([^[:alnum:]_]|$)/, "", code) != 1 ||
+        code ~ ("(^|[^[:alnum:]_])" binding "([^[:alnum:]_]|$)")) return 0
+    while (match(args, /"[^"]+"/)) {
+      lit = unquote(substr(args, RSTART, RLENGTH))
+      args = substr(args, RSTART + RLENGTH)
+      if (lit ~ /^:\(glob\)\*\*\/[[:alnum:]_.-]+$/) lit = substr(lit, 8)
+      else if (lit !~ /^[[:alnum:]_.-]+(\/[[:alnum:]_.-]+)*$/ || resolve(".", lit) != lit) return 0
+      paths[++n] = lit
+    }
+    for (i = 1; i <= n; i++) emit("manifest", paths[i])
+    return 1
+  }
+  function scan(file, text,   dir, rest, lit, chain, owner, path, catalog, before, concat) {
     dir = file
     sub(/\/[^\/]*$/, "", dir)
     owner = manifest_dir(file)
@@ -252,34 +289,52 @@ if rows=$(find crates -type f -name '*.rs' |
     if (owner == "" && target_manifest == "") return
     rest = text
     while (match(rest, /env![ \t\n]*\([ \t\n]*"CARGO_MANIFEST_DIR"[ \t\n]*\)|checkout_root\(\)/)) {
-      # This binding is the local source passed to kendex add catalog in
-      # catalog_render_lint. A different root expression remains unrestricted.
-      catalog = target == "kendex-cli\ttest\tcatalog_render_lint" && file == "crates/cli/tests/catalog_render_lint.rs" &&
+      before = substr(rest, 1, RSTART - 1)
+      # A sealed catalog, a catalog installer, or the bare mirror consulted
+      # by the planned-closure test. The mirror reads the committed catalog
+      # rather than reading files through the checkout path.
+      catalog = before ~ /SealedSource::open\([ \t\n]*&([[:alnum:]_]+::)*test_util::$/ ||
+        (before ~ /"clone",[ \t\n]*"--bare",[ \t\n]*test_util::$/ &&
+        substr(rest, RSTART + RLENGTH) ~ /^\.to_str\(\)\.unwrap\(\),[ \t\n]*mirror\.to_str\(\)\.unwrap\(\),/ &&
+        substr(rest, RSTART + RLENGTH) ~ /planned_closure\(/) ||
+        (target == "kendex-cli\ttest\tcatalog_render_lint" && file == "crates/cli/tests/catalog_render_lint.rs" &&
         substr(rest, 1, RSTART - 1) ~ /let catalog = Path::new\($/ &&
         substr(rest, RSTART + RLENGTH) ~ /^\)[ \t\n]*\.join\("\.\.\/\.\."\)[ \t\n]*\.canonicalize\(\)[ \t\n]*\.unwrap\(\);/ &&
-        text ~ /test_util::source_path\(&catalog\)/
+        text ~ /test_util::source_path\(&catalog\)/)
       lit = substr(rest, RSTART, RLENGTH)
       rest = substr(rest, RSTART + RLENGTH)
-      # The closing parentheses of the Path::new or PathBuf::from around it.
-      if (match(rest, /^[ \t\n]*\)+/)) rest = substr(rest, RLENGTH + 1)
       chain = lit == "checkout_root()" ? "../.." : ""
       if (chain != "" && target == "") continue
+      concat = lit != "checkout_root()" && before ~ /(^|[^[:alnum:]_])concat![ \t\n]*[([{][ \t\n]*$/
+      if (concat) {
+        while (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
+          chain = chain unquote(substr(rest, RSTART, RLENGTH))
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        if (!sub(/^[ \t\n]*(,[ \t\n]*)?[]})]/, "", rest)) {
+          emit("manifest", resolve(target == "" ? owner : target_manifest, chain), owner)
+          emit("manifest", ".", owner)
+          continue
+        }
+      }
+      # Close any Path::new or PathBuf::from around the operand.
+      sub(/^([ \t\n]*\))+/, "", rest)
       while (1) {
         if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
           lit = substr(rest, RSTART, RLENGTH)
           sub(/[ \t\n]*\)$/, "", lit)
           chain = chain "/" unquote(lit)
-        } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
-          chain = chain unquote(substr(rest, RSTART, RLENGTH))
         } else {
           break
         }
         rest = substr(rest, RLENGTH + 1)
       }
       path = resolve(target == "" ? owner : target_manifest, chain)
-      if (owner != "" || path != ".") emit(catalog && path == "." ? "catalog" : "manifest", path, owner)
+      if (target != "" && path == "." && !catalog && checkout_pathspecs(before, rest)) continue
+      if (catalog && path == ".") emit("catalog", "kendex.toml", owner)
+      else if (owner != "" || path != ".") emit("manifest", path, owner)
       # An argument the chain could not read may lead anywhere from there.
-      if (target == "" && match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
+      if (target == "" && rest ~ /^[ \t\n]*\.join[ \t\n]*\(/) emit("manifest", ".", owner)
     }
   }
   # Use the same width unit as substr. Apple awk can replace a multibyte

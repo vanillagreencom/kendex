@@ -192,10 +192,10 @@ fn enabled_fixture_with_arming(armed: bool) -> Fixture {
 
 #[allow(clippy::unwrap_used)]
 fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fixture {
-    let checkout = test_util::checkout_root();
-    let canonical =
-        fs::read_to_string(checkout.join("skills/bot-instructions/tests/fixtures/canonical.toml"))
-            .unwrap();
+    let canonical = fs::read_to_string(
+        test_util::checkout_root().join("skills/bot-instructions/tests/fixtures/canonical.toml"),
+    )
+    .unwrap();
     let fixture = fixture_at(&canonical, armed, harness, package_rel);
     for directory in [
         ".bot-instructions",
@@ -207,7 +207,8 @@ fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fix
         fs::create_dir_all(fixture.root.join(directory)).unwrap();
     }
     fs::copy(
-        checkout.join("skills/bot-instructions/tests/fixtures/coderabbit-schema.json"),
+        test_util::checkout_root()
+            .join("skills/bot-instructions/tests/fixtures/coderabbit-schema.json"),
         fixture
             .root
             .join(".bot-instructions/coderabbit-schema.json"),

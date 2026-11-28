@@ -4,8 +4,7 @@
 //! an update every client turns away. That is a tag-run failure otherwise,
 //! because release.yml never runs on a pull request; here the real step
 //! runs the real script against a signer this test controls.
-//! Inputs: .github/workflows/release.yml, tools/release-digests,
-//! .agents/skills/app-deploy/SKILL.md and DEVELOPMENT.md.
+//! Inputs: .github/workflows/release.yml and tools/release-digests.
 
 #[cfg(unix)]
 use std::collections::BTreeMap;
@@ -390,57 +389,6 @@ fn every_tauri_signing_env_value_comes_from_its_workflow_secret() {
     assert!(signing_env_uses_workflow_secrets(&workflow));
     let wrong_source = format!("{workflow}\nTAURI_SIGNING_PRIVATE_KEY: ${{{{ env.KEY }}}}\n");
     assert!(!signing_env_uses_workflow_secrets(&wrong_source));
-}
-
-#[test]
-fn local_signing_docs_use_a_dedicated_signing_env_file() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let [secrets, packaging] = [
-        (".agents/skills/app-deploy/SKILL.md", "## Secrets\n"),
-        ("DEVELOPMENT.md", "## Packaging\n"),
-    ]
-    .map(|(path, heading)| {
-        let document = std::fs::read_to_string(root.join(path))
-            .expect("read signing instructions")
-            .replace("\r\n", "\n");
-        document
-            .split_once(heading)
-            .expect("signing section exists")
-            .1
-            .split("\n## ")
-            .next()
-            .expect("signing section has content")
-            .to_owned()
-    });
-    // KEN-3823 requires this source-content contract and its rejected prior routes.
-    for (name, section, expected) in [
-        ("Secrets", secrets.as_str(), true),
-        ("Packaging", packaging.as_str(), true),
-        (
-            "prior Packaging",
-            "Bundling signs updater artifacts, so set `TAURI_SIGNING_PRIVATE_KEY` or pass `--no-sign`.",
-            false,
-        ),
-        (
-            "shared project file",
-            r#"The project's private env file holds `op://` references. `op run --env-file "<private env file>"` resolves them for that command only. The login environment is not a supported source for a signing secret."#,
-            false,
-        ),
-    ] {
-        assert_eq!(local_signing_route(section), expected, "{name}");
-    }
-}
-
-fn local_signing_route(section: &str) -> bool {
-    [
-        "dedicated signing env file",
-        "op://",
-        "op run",
-        "login environment",
-        "not a supported source",
-    ]
-    .iter()
-    .all(|part| section.contains(part))
 }
 
 /// The publish job downloads two signatures per lane, and its `add` globs

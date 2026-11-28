@@ -7,18 +7,15 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
 use super::{job, run_script, step};
 use crate::test_util::{fixture_env, rooted, source_path};
 
 #[allow(clippy::unwrap_used)]
-fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+fn checkout_catalog() -> kendex_core::source_read::SealedSource {
+    kendex_core::source_read::SealedSource::open(&crate::test_util::checkout_root()).unwrap()
 }
 
 #[allow(clippy::unwrap_used)]
@@ -281,8 +278,10 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
 fn selected_ci_packages_deliver_an_executable_release_installer() {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
-    let repository = repo();
-    let suite = repository.join("skills/harness-ci/tests/install-latest.test.sh");
+    let catalog = checkout_catalog();
+    let repository = catalog.root();
+    let suite =
+        crate::test_util::checkout_root().join("skills/harness-ci/tests/install-latest.test.sh");
     for package in ["review-gate", "harness-ci"] {
         let home = root.join(package);
         let project = home.join("project");
@@ -291,7 +290,7 @@ fn selected_ci_packages_deliver_an_executable_release_installer() {
             project.join("kendex.toml"),
             format!(
                 "schema = 8\n[sources.catalog]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n",
-                source_path(&repository)
+                source_path(repository)
             ),
         )
         .unwrap();
@@ -349,13 +348,14 @@ fn selected_ci_packages_deliver_an_executable_release_installer() {
 fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     let tmp = tempfile::tempdir().unwrap();
     let root = rooted(&tmp);
-    let repository = repo();
-    let script = repository.join("tools/catalog-release-check");
+    let catalog = checkout_catalog();
+    let repository = catalog.root();
+    let script = crate::test_util::checkout_root().join("tools/catalog-release-check");
     let home = root.join("release-home");
     fs::create_dir(&home).unwrap();
     let mut installer = Command::new("/bin/bash");
     installer
-        .arg(repository.join("skills/harness-ci/scripts/install-latest.sh"))
+        .arg(crate::test_util::checkout_root().join("skills/harness-ci/scripts/install-latest.sh"))
         .current_dir(&root)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
@@ -375,7 +375,7 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     }
     eprintln!("{}", String::from_utf8_lossy(&install.stdout));
     let binary = home.join(".local/bin/kendex");
-    let output = check(&binary, &script, &repository, &root);
+    let output = check(&binary, &script, repository, &root);
     eprintln!(
         "current catalog: {}",
         String::from_utf8_lossy(&output.stdout)
@@ -590,7 +590,10 @@ fn assert_render_hands_on(render_step: &[&str], checked_out: &str) {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn catalog_ci_hands_the_callers_base_catalog_to_the_upgrade_leg() {
-    let text = fs::read_to_string(repo().join(".github/workflows/catalog-check.yml")).unwrap();
+    let text = fs::read_to_string(
+        crate::test_util::checkout_root().join(".github/workflows/catalog-check.yml"),
+    )
+    .unwrap();
     assert_prior_selection(&text);
     for (target, replacement) in [
         ("            *[!0]*) echo", "            *) echo"),
@@ -617,7 +620,10 @@ fn catalog_ci_hands_the_callers_base_catalog_to_the_upgrade_leg() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn catalog_ci_installs_the_release_and_runs_its_render_check() {
-    let text = fs::read_to_string(repo().join(".github/workflows/catalog-check.yml")).unwrap();
+    let text = fs::read_to_string(
+        crate::test_util::checkout_root().join(".github/workflows/catalog-check.yml"),
+    )
+    .unwrap();
     let assert_install_scope = |workflow: &str| {
         let install_step = step(workflow, "name: Install latest released kendex");
         assert_eq!(

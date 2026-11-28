@@ -31,8 +31,8 @@ struct Row {
     body: String,
 }
 
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+fn skills() -> PathBuf {
+    crate::test_util::checkout_root().join("skills")
 }
 
 fn corpus_path() -> PathBuf {
@@ -114,7 +114,7 @@ fn script_path() -> PathBuf {
 #[allow(clippy::unwrap_used)]
 fn harness(extra: &[(&str, &str)]) -> String {
     let mut command = controlled_bash();
-    command.arg(script_path()).arg(root()).arg(corpus_path());
+    command.arg(script_path()).arg(skills()).arg(corpus_path());
     for (name, value) in extra {
         command.env(name, value);
     }
@@ -270,7 +270,7 @@ fn the_observation_ignores_a_hostile_environment() {
     );
 }
 
-/// A relative `REPO_ROOT` observes what an absolute one observes. Each
+/// A relative skills directory observes what an absolute one observes. Each
 /// probe runs from its own scratch directory, so a root left unresolved
 /// leaves `source` reading nothing — and a resolver that was never defined
 /// answers `refused`, which is a verdict the corpus itself uses. Sixteen
@@ -282,7 +282,7 @@ fn a_relative_repo_root_observes_the_same_thing() {
         .arg(script_path())
         .arg(".")
         .arg(corpus_path())
-        .current_dir(root())
+        .current_dir(skills())
         .output()
         .unwrap();
     assert!(

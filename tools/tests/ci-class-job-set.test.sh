@@ -127,16 +127,25 @@ include_row() {
     "$(field cargo_lint <<<"$got") $(field cargo_linux_matrix <<<"$got" |
       jq 'any(.include[]; .crate == "kendex-app" and .targets == ["--lib"])')"
 }
-# A target whose checkout read rust-reads cannot resolve runs for every
-# docs-only path: the core lib's render check reads each tracked render.
-render_row() {
-  check "a docs-only tracked render keeps kendex-core --lib" true \
-    "$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true .agents/skills/code-quality/SKILL.md |
+# The project planner reads the render, its source and instruction shims.
+# A nested AGENTS.md still selects the planner when missing from the checkout.
+render_row() { # PATH
+  check "the render proof keeps kendex-core --lib for $1" true \
+    "$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true "$1" |
       field cargo_linux_matrix | jq 'any(.include[]; .crate == "kendex-core" and (.targets | index("--lib")))')"
+}
+unread_docs_row() {
+  local got
+  got="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true docs/architecture/engine.md)"
+  check "a docs-only architecture page keeps no Cargo target" 'false {"include":[]}' \
+    "$(field cargo_linux <<<"$got") $(field cargo_linux_matrix <<<"$got")"
 }
 row_spawn suite_read_row
 row_spawn include_row
-row_spawn render_row
+row_spawn render_row .agents/skills/code-quality/SKILL.md
+row_spawn render_row skills/code-quality/SKILL.md
+row_spawn render_row docs/architecture/AGENTS.md
+row_spawn unread_docs_row
 
 # The Rust targets are the reach's: a runtime source runs every target of its
 # runtime and of each runtime that path-depends on it, a path a target or the

@@ -15,12 +15,12 @@ use test_util::{SUDO_STUB, install_stub};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("repo root")
+fn install_script() -> PathBuf {
+    test_util::checkout_root().join("install.sh")
+}
+
+fn icon_dir() -> PathBuf {
+    test_util::checkout_root().join("crates/app/icons")
 }
 
 /// Every icon the app ships, and the theme slot the installer owes it to.
@@ -90,6 +90,7 @@ case "$url" in
   *raw.githubusercontent.com/*)
     path="${url#*raw.githubusercontent.com/}"
     path="${path#*/}"; path="${path#*/}"; path="${path#*/}"
+    case "$path" in crates/app/icons/*) path="${path#crates/app/icons/}" ;; *) exit 22 ;; esac
     # Deliberate pessimism, not a description of curl 8.x, which leaves an
     # existing file untouched on -f and creates none where there was none.
     # Older curl did leave an empty file behind, and an installer that
@@ -148,10 +149,10 @@ fn posix_shell() -> &'static str {
 }
 
 fn run_installer() -> tempfile::TempDir {
-    run_installer_serving(&repo_root())
+    run_installer_serving(&icon_dir())
 }
 
-/// `source_root` is what the stubbed network serves raw file URLs out of;
+/// `source_root` is what the stubbed network serves raw icon URLs out of;
 /// an empty directory stands in for assets that cannot be fetched.
 fn run_installer_serving(source_root: &Path) -> tempfile::TempDir {
     run_installer_over(source_root, |_| {})
@@ -209,7 +210,7 @@ fn installer_output(
         std::env::var("PATH").unwrap_or_default()
     );
     let output = Command::new(posix_shell())
-        .arg(repo_root().join("install.sh"))
+        .arg(install_script())
         .env("PATH", path)
         .envs(test_util::fixture_env(tmp.path()))
         .env("XDG_DATA_HOME", tmp.path().join(data_dir))
@@ -236,7 +237,7 @@ fn the_latest_release_resolves_from_the_releases_redirect() {
         ("https://github.com/vanillagreencom/kendex/releases", false),
     ] {
         let curl = CURL_REDIRECTING.replace("__REDIRECT__", redirect);
-        let (tmp, output) = installer_output(&repo_root(), &curl, DATA_DIR, |_| {});
+        let (tmp, output) = installer_output(&icon_dir(), &curl, DATA_DIR, |_| {});
         let unavailable = installer_message::value(&output.stderr, "release-unavailable");
         if installs {
             assert!(output.status.success(), "{redirect}: {output:?}");
@@ -267,8 +268,9 @@ fn icon_slot(home: &Path, size: &str) -> PathBuf {
 /// matches the running window against.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn app_binary_name() -> String {
-    let manifest = std::fs::read_to_string(repo_root().join("crates/app/Cargo.toml"))
-        .expect("crates/app/Cargo.toml");
+    let manifest =
+        std::fs::read_to_string(test_util::checkout_root().join("crates/app/Cargo.toml"))
+            .expect("crates/app/Cargo.toml");
     manifest
         .lines()
         .skip_while(|line| line.trim() != "[package]")
@@ -316,9 +318,13 @@ fn every_arch_desktop_package_installs_what_the_installer_installs() {
         .collect();
 
     for package in ["kendex", "kendex-git", "kendex-bin"] {
-        let pkgbuild =
-            std::fs::read_to_string(repo_root().join(format!("packaging/arch/{package}/PKGBUILD")))
-                .unwrap_or_else(|error| panic!("the {package} PKGBUILD: {error}"));
+        let pkgbuild = std::fs::read_to_string(
+            test_util::checkout_root()
+                .join("packaging/arch")
+                .join(package)
+                .join("PKGBUILD"),
+        )
+        .unwrap_or_else(|error| panic!("the {package} PKGBUILD: {error}"));
         let packaged = pkgbuild
             .split_once("<<'DESKTOP'\n")
             .and_then(|(_, rest)| rest.split_once("\nDESKTOP"))

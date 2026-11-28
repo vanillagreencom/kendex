@@ -20,8 +20,8 @@ fn committed_path() -> PathBuf {
     reason = "a catalog that will not open or a table that will not serialize is the test's own fixture, and the panic names which"
 )]
 fn regenerated() -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let sealed = SealedSource::open(&root).expect("the repository opens as a catalog");
+    let sealed = SealedSource::open(&crate::test_util::checkout_root())
+        .expect("the repository opens as a catalog");
     let config = source_config(&sealed, "kendex").expect("its layout reads");
     let committed =
         Allowance::parse(&std::fs::read_to_string(committed_path()).unwrap_or_default())
