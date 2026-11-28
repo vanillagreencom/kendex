@@ -851,7 +851,8 @@ impl Wake {
         let mut lines = BTreeMap::new();
         let mut provider_resumes = BTreeSet::new();
         // Read the saved receipt before any send can replace its cursor.
-        // Only an active resume request holds off a new inbox wake.
+        // An active request holds off new inbox wakes. A matching unread
+        // value shares this receipt and does not need a second reader.
         for (item, mark, resume) in pending {
             let Some(lane) = fleet.lanes.iter().find(|lane| {
                 lane.item == item
@@ -868,7 +869,11 @@ impl Wake {
                 continue;
             }
             let name = super::lanes::lane_name(lane);
-            if resumes.iter().any(|(lane_name, _)| lane_name == &name) {
+            if resumes.iter().any(|(lane_name, _)| lane_name == &name)
+                || unread
+                    .iter()
+                    .any(|(target, state)| target == &item && state == &mark.unread)
+            {
                 provider_resumes.insert(item);
             }
             let caps = host_line(&mut lines, &scripts, lane);

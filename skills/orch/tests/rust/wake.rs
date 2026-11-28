@@ -2153,6 +2153,12 @@ done
         .get(wake::RESUME_KIND, lane_name)
         .unwrap()
         .to_owned();
+    let covered_unread = "unread-covered-by-resume";
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: covered_unread.into(),
+    });
     let defer = host.tools.join("defer-row-refusal");
     std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
     let first = wake(&mut baseline);
@@ -2168,6 +2174,7 @@ done
     );
     let mark = fleet.mark("KEN-1").unwrap();
     assert_eq!(mark.resume.as_deref(), Some(queued.as_str()));
+    assert_eq!(mark.unread, covered_unread);
     assert!(matches!(
         mark.outcome,
         Some(WakeOutcome::Unconfirmed { .. })
@@ -2195,12 +2202,32 @@ done
     std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
     assert!(wake(&mut with_unread).events.is_empty());
     assert!(!drop_on.exists());
-    assert_eq!(fleet.mark("KEN-1"), Some(mark));
+    assert_eq!(fleet.mark("KEN-1"), Some(mark.clone()));
     write_row(agent_runtime::rows::TurnEvent::Stop);
     for _ in 0..2 {
         observe_ssh_worker(&fleet, &mut baseline, &clock);
     }
     assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    // The mail cursor still publishes the unread value the continuation
+    // covered. Only the saved receipt can read that value on this pass.
+    let calls_before = host.calls().len();
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let same_unread = wake(&mut baseline);
+    assert!(same_unread.events.is_empty(), "{same_unread:?}");
+    assert!(!drop_on.exists());
+    assert_eq!(fleet.mark("KEN-1"), Some(mark));
+    assert_eq!(typed().lines().count(), 3);
+    assert_eq!(
+        host.calls()[calls_before..]
+            .iter()
+            .filter(|call| call.ends_with(rows.to_str().unwrap()))
+            .count(),
+        1
+    );
+    baseline.apply(Change::Clear {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+    });
     assert!(baseline.identities(UNREAD_KIND).is_empty());
     assert_eq!(
         rendered(&wake(&mut baseline)),
