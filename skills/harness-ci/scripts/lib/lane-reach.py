@@ -95,7 +95,8 @@ RENDER = (".agents/", ".claude/", ".codex/", ".pi/")
 # kendex parks a switched-off skill's SKILL.md under the second name.
 SKILL_MARKERS = ("SKILL.md", "SKILL.md.disabled")
 MODULE = re.compile(r"\.(?:[cm]?[jt]s|[jt]sx)$")
-JS_TRIVIA = r"(?:\s|/\*[\s\S]*?\*/|//[^\n]*(?:\n|$))*"
+# The comment body cannot consume its closing delimiter even on backtracking.
+JS_TRIVIA = r"(?:\s|/\*(?:[^*]|\*(?!/))*\*/|//[^\r\n\u2028\u2029]*(?=[\r\n\u2028\u2029]|\Z))*"
 JS_REFERENCE = re.compile(r"\b(?:import\b" + JS_TRIVIA + r"(\(" + JS_TRIVIA +
                           r")?|from\b" + JS_TRIVIA + r")")
 JS_SPECIFIER = re.compile(r"""(['"])([^'"\\\r\n]+)\1""")
@@ -878,6 +879,10 @@ class Evidence:
             # Vitest root, where discovery does not cover added files.
             if imported not in self.files:
                 reads.update({imported} & self.changed)
+                # Vite can substitute a TypeScript file for a JS-suffixed
+                # import before appending extensions. Only probe extensions
+                # when the specifier's final component has no suffix.
+                require_shape("." not in Path(suffix).name, "vitest-module-unresolved")
                 for extension in VITEST_EXTENSIONS:
                     candidate, _ = self.checkout_path(folder, path + extension)
                     if candidate in self.files:
@@ -951,6 +956,11 @@ class Evidence:
                 resolves_from(Path(imported).parent)
                 require_shape(imported in self.files and MODULE.search(imported),
                               "vitest-module-unresolved")
+                # Vitest 4's getTestDependencies prunes paths containing
+                # node_modules, including regular files and their imports.
+                require_shape(is_setup or ("node_modules" not in imported and
+                                           "node_modules" not in str(self.work)),
+                              "vitest-import-outside-changed-graph")
                 if self.package_path(imported):
                     # Package ownership also needs imports outside Vitest's changed graph.
                     package_imports.add(imported)

@@ -897,6 +897,19 @@ edit_file "$repo/tsconfig.json" './web/src/*' './lib/*'
 mkdir -p "$repo/lib"
 git -C "$repo" mv web/src/aliased.ts lib/aliased.ts
 git -C "$repo" commit -qam 'Vite resolves the same alias from TypeScript paths'
+git -C "$repo" checkout -qb fixture-vitest-setup-suffix
+printf 'export const value = 42\n' >"$repo/lib/aliased.js.ts"
+edit_file "$repo/web/src/test-setup.ts" "'./setup-helper.ts'" "'@/aliased.js'"
+edit_file "$repo/web/app/nested/check.test.ts" "import { value } from '@/aliased'" 'const value = 42'
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'setup reads the TypeScript substitute ahead of an appended extension'
+git -C "$repo" checkout -qb fixture-vitest-pruned-alias "$vitest_literal_base"
+git -C "$repo" mv web/src/aliased.ts web/src/node_modules-info.ts
+edit_file "$repo/web/app/nested/check.test.ts" "'@/aliased'" "'@/node_modules-info'"
+git -C "$repo" commit -qam 'Vitest prunes a tracked alias input from its changed graph'
+git -C "$repo" checkout -qb fixture-vitest-comment-boundary "$vitest_literal_base"
+edit_file "$repo/web/vitest.config.ts" 'import { defineConfig }' '/* First comment */\nconst marker = 1\n/* Second comment */\nimport { defineConfig }'
+git -C "$repo" commit -qam 'an ordinary declaration between comments is outside the literal grammar'
 git -C "$repo" checkout -qb fixture-vitest-computed-config "$vitest_literal_base"
 edit_file "$repo/web/vitest.config.ts" '    ],\n' '    ].slice(),\n'
 git -C "$repo" commit -qam 'Vitest computes its projects'
@@ -1446,7 +1459,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-unowned-disabled) base="$vitest_unowned_base" ;;
     vitest-alias-*|vitest-setup-import) base="$vitest_literal_base" ;;
     vitest-ts-paths-shadow) base="$(git -C "$repo" rev-parse fixture-vitest-ts-paths)" ;;
-    vitest-ts-paths|vitest-computed-config|vitest-process|vitest-fetch|vitest-import-meta|vitest-node-builtin|vitest-file-url)
+    vitest-ts-paths|vitest-computed-config|vitest-process|vitest-fetch|vitest-import-meta|vitest-node-builtin|vitest-file-url|\
+    vitest-setup-suffix|vitest-pruned-alias|vitest-comment-boundary)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     agent-pair) base="$agent_pair_base" ;;
     command-pair) base="$command_pair_base" ;;
@@ -1525,7 +1539,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
-    runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*)
+    runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*|vitest-setup-suffix|vitest-pruned-alias)
       printf 'export const value = 43\n' >"$repo/$path" ;;
     shell-symlink) printf 'physical\n' >"$repo/$path" ;;
     dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
@@ -1549,7 +1563,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$label"
   case "$label" in
-  vitest-inherited|shared-runtime|runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*)
+  vitest-inherited|shared-runtime|runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*|\
+  vitest-setup-suffix|vitest-pruned-alias)
     [ -x "$trusted/web/node_modules/.bin/vitest" ] && [ -x "$repo/web/node_modules/.bin/vitest" ]
     base_status=0 head_status=0
     (cd "$trusted/web" && ./node_modules/.bin/vitest run) >"$SANDBOX/base-vitest-log" 2>&1 || base_status=$?
@@ -1607,6 +1622,11 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     assert_eq "$label passes actual Cargo at base" 0 "$base_status"
     assert_eq "$label fails actual Cargo after the change" 101 "$head_status" ;;
   esac
+  if [ "$label" = vitest-pruned-alias ]; then
+    assert_eq "$label actual Vitest changed listing omits the dependency" 0 \
+      "$(cd "$repo/web" && ./node_modules/.bin/vitest list --filesOnly --json --changed "$base" |
+        python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')"
+  fi
   : >"$SANDBOX/action"
   : >"$SANDBOX/local"
   tools="$SANDBOX/bin"
@@ -1749,7 +1769,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-npm-lock' ;;
     vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
     vitest-file-url) refused_jobs='job=web cause=vitest-opaque-source' ;;
-    vitest-computed-config) refused_jobs='job=web cause=vitest-opaque-config' ;;
+    vitest-computed-config|vitest-comment-boundary) refused_jobs='job=web cause=vitest-opaque-config' ;;
+    vitest-setup-suffix) refused_jobs='job=web cause=vitest-module-unresolved' ;;
+    vitest-pruned-alias) refused_jobs='job=web cause=vitest-import-outside-changed-graph' ;;
     computed-import) refused_jobs='job=web cause=vitest-runtime-import' ;;
     vitest-root-config) refused_jobs='job=web cause=vitest-loaded-config' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
@@ -1794,14 +1816,14 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
         "$(sed -n 's/^lane-reach: job=shell //p' "$SANDBOX/$implementation-log")"
     done
   fi
-  if [ "$label" = vitest-disabled-sibling ]; then
-    # Package ownership selects the reader; the unowned-marker fallback
-    # would keep the lane as unread instead.
-    for log in action-log local-log; do
-      assert_eq "$label $log web evidence" hit \
-        "$(sed -n 's/^lane: name=web verdict=true .* evidence=\([a-z]*\)$/\1/p' "$SANDBOX/$log")"
-    done
-  fi
+  case "$label" in
+    vitest-disabled-sibling|vitest-ts-paths|vitest-ts-paths-shadow)
+      # A refusal that keeps the lane eligible does not prove a reader hit.
+      for log in action-log local-log; do
+        assert_eq "$label $log web evidence" hit \
+          "$(sed -n 's/^lane: name=web verdict=true .* evidence=\([a-z]*\)$/\1/p' "$SANDBOX/$log")"
+      done ;;
+  esac
   if [ "$label" = queue-prerequisite ]; then
     assert_eq "$label has queue proof" queue_only=true "$(sed -n '/^queue_only=/p' "$SANDBOX/action")"
   fi
@@ -1888,6 +1910,9 @@ vitest-alias-unread|web/spare-é.mjs|||false|
 vitest-ts-paths|lib/aliased.ts|||true|
 vitest-ts-paths-shadow|lib/aliased.js|||true|
 vitest-setup-import|web/src/setup-helper.ts|||true|
+vitest-setup-suffix|lib/aliased.ts|||true|
+vitest-pruned-alias|web/src/node_modules-info.ts|||true|
+vitest-comment-boundary|web/spare-é.mjs|||true|
 vitest-computed-config|web/spare-é.mjs|||true|
 vitest-process|web/spare-é.mjs|||false|
 vitest-fetch|web/spare-é.mjs|||false|
