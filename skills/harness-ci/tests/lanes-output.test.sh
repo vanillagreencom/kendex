@@ -7,7 +7,7 @@
 # workflow that does not ask, a ci.yml copied before the default, keeps its
 # lanes once a refresh delivers the render.
 # Inputs: harness-ci scripts, the change-scope classifier and the change-class action.
-# Render causes are covered by render-claims.test.sh.
+# Proved render claims are covered by render-claims.test.sh.
 set -euo pipefail
 # shellcheck source=../../change-scope/tests/lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
@@ -38,7 +38,8 @@ mkdir -p "$repo/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$repo/$READER"
 # The manifest a manifest row replaces.
 printf 'schema = 7\n' >"$repo/kendex.toml"
-commit_paths "$repo" baseline seed.txt
+rendered_skill=.agents/skills/orch/SKILL.md
+commit_paths "$repo" baseline seed.txt "$rendered_skill"
 # One base per state of the opt-back in the base commit's settings.
 base_with_settings() { # NAME SETTINGS — prints the base commit
   git -C "$repo" checkout -q -B "$1" main
@@ -99,6 +100,44 @@ write_row() { # NAME BASE PATHS LINES: commits the row's change on BASE
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$1"
 }
+
+# The shipped action reads both the classifier's proof result and the docs
+# verdict. An inventoried Markdown render still matches the docs path set.
+mkdir -p "$SANDBOX/refusing-verifier"
+cat >"$SANDBOX/refusing-verifier/kendex" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  --version) printf 'kendex 0.0.0-stub\n' ;;
+  'verify --help') exit 0 ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$SANDBOX/refusing-verifier/kendex"
+no_verifier_path=""
+while IFS= read -r dir; do
+  [ -n "$dir" ] && [ ! -x "$dir/kendex" ] || continue
+  no_verifier_path="${no_verifier_path:+$no_verifier_path:}$dir"
+done <<<"$(printf '%s' "$PATH" | tr ':' '\n')"
+
+rows=0
+while IFS='|' read -r name paths classifier_path expected_class expected_cause expected_lanes expected_verdicts; do
+  rows=$((rows + 1))
+  write_row "$name" "$base_default" "$paths" 3
+  PATH="$classifier_path" run_action merge_group "$base_default" "$SANDBOX/default" true
+  assert_eq "$name: class and docs membership" "$(printf 'change_class=%s\ndocs_only=true' "$expected_class")" \
+    "$(sed -n '/^change_class=/p; /^docs_only=/p' "$SANDBOX/action-output")"
+  assert_eq "$name: class cause" "$expected_cause" \
+    "$(sed -n 's/^class: class=[^ ]* measured=[^ ]* cause=\([^ ]*\).*/\1/p' "$SANDBOX/action-stderr")"
+  assert_eq "$name: aggregate lane eligibility" "lanes=$expected_lanes" \
+    "$(sed -n '/^lanes=/p' "$SANDBOX/action-output")"
+  assert_eq "$name: per-lane eligibility" "$expected_verdicts" "$(verdicts)"
+done <<ROWS
+ordinary-markdown|docs/guide.md|$no_verifier_path|trivial|documentation-paths|false|lane_check=false,lane_other=false,lane_mac=false
+mixed-verify-refused|docs/guide.md $rendered_skill|$SANDBOX/refusing-verifier:$PATH|standard|verify-refused|true|lane_check=true,lane_other=true,lane_mac=false
+mixed-no-verifier|docs/guide.md $rendered_skill|$no_verifier_path|standard|no-verifier|true|lane_check=true,lane_other=true,lane_mac=false
+ROWS
+require_rows mixed-render-docs "$rows"
+
 rows=0
 while IFS='|' read -r name event base_name paths lines declaration default expected cause queue lane_verdicts; do
   rows=$((rows + 1))
