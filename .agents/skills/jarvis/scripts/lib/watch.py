@@ -702,16 +702,25 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                 size_read = run(["wc", "-c", str(filename)])
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
                 last_id = before.get("last_id")
+                saved_count = before.get("count")
+                legacy = "last_id" not in before and type(saved_count) is int
                 after = before.get("last_line", 0) if last_id else 0
+                if legacy:
+                    after = saved_count
                 # Include the saved position in the same logical snapshot as
                 # new mail. A restore or compaction can leave that line absent.
-                (count, first), envelopes = mailbox_events(bash, root, box, max(0, after - 1))
-                if after and (not envelopes or envelopes[0]["line"] != after or envelopes[0].get("id") != last_id):
-                    after = 0
+                read_after = max(0, after - 1)
+                (count, first), envelopes = mailbox_events(bash, root, box, read_after)
+                boundary = after > 0 and bool(envelopes) and envelopes[0]["line"] == after
+                anchor_changed = last_id and after and (not boundary or envelopes[0].get("id") != last_id)
+                # A private or compacted tail can hide the legacy boundary.
+                # Find a public ID without lowering the first pass's delivery floor.
+                if (legacy and read_after and not envelopes) or anchor_changed:
+                    boundary = False
                     (count, first), envelopes = mailbox_events(bash, root, box)
                 # Mail can arrive after the size sample. An owed mark also
                 # needs the first id from this snapshot's header.
-                if (after and len(envelopes) == 1 and count == before.get("count")
+                if (last_id and boundary and len(envelopes) == 1 and count == saved_count
                         and size is not None and size == before.get("size")
                         and (box != "to-overseer" or mark is None)):
                     continue
@@ -720,7 +729,9 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                 last = envelopes[-1] if envelopes else {}
                 next_root[box] = {"count": count, "size": size, "first": first,
                                   "last_id": last.get("id"), "last_line": last.get("line", 0)}
-                if after:
+                if legacy:
+                    envelopes = [row for row in envelopes if row["line"] > after]
+                elif boundary:
                     envelopes = envelopes[1:]
                 for envelope in envelopes:
                     if box == "to-lane":
