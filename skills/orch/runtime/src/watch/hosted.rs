@@ -2533,6 +2533,10 @@ fn clone_of(gitfile: &str) -> Option<PathBuf> {
 /// same places the handoff reads. A record in either means the close-out
 /// may still be running. Absence must be confirmed in both places.
 pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
+    record_left_with(scripts, lane, |_| ())
+}
+
+fn record_left_with<T>(scripts: &Path, lane: &Lane, live: impl FnOnce(PathBuf) -> T) -> Answer<T> {
     let root = match file_root(lane) {
         Ok(root) => root,
         Err(answer) => return answer,
@@ -2550,7 +2554,7 @@ pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
             &lane.item,
             &place.display().to_string(),
         ) {
-            Answer::Live(_) => return Answer::Live(()),
+            Answer::Live(_) => return Answer::Live(live(place)),
             Answer::Gone => {}
             Answer::Unreadable { cause } => {
                 unread.get_or_insert(cause);
@@ -2780,14 +2784,21 @@ pub(super) fn with_session_root<'a>(lane: &'a Lane, intents: &[Intent]) -> Cow<'
 // --- the finished close -------------------------------------------------------
 
 /// Whether a merged lane's work has left its host, the read the finished
-/// close and the idle line's continuation guard share: [`left_locally`] for
-/// a lane on this machine, [`record_left`] where the provider's verb reads
-/// the lane's files, and `None` on a host with no such read.
-pub fn work_left(lane: &Lane, pass: &Pass, caps: &Capabilities) -> Option<Answer<()>> {
+/// close and the idle line's continuation guard share. A live hosted
+/// reading carries the item record's path.
+pub(super) fn work_left(
+    lane: &Lane,
+    pass: &Pass,
+    caps: &Capabilities,
+) -> Option<Answer<Option<PathBuf>>> {
     if host_of(lane) == "local" {
-        Some(left_locally(pass.state_dir, lane))
+        Some(match left_locally(pass.state_dir, lane) {
+            Answer::Live(()) => Answer::Live(None),
+            Answer::Gone => Answer::Gone,
+            Answer::Unreadable { cause } => Answer::Unreadable { cause },
+        })
     } else if caps.files == Files::Verb {
-        Some(record_left(pass.scripts, lane))
+        Some(record_left_with(pass.scripts, lane, Some))
     } else {
         None
     }
@@ -2799,7 +2810,9 @@ pub fn work_left(lane: &Lane, pass: &Pass, caps: &Capabilities) -> Option<Answer
 /// machine, [`record_left`] on its host) is
 /// closed through the one close; one whose item's record stands with no
 /// close-out stamp of its attempt is inside its merge close-out or resumed
-/// and is left. A lane its provider's status
+/// and is left. An idle or exited hosted lane with a live item record is
+/// reported once and checked again while its notification stands.
+/// A lane its provider's status
 /// verb read exited on two passes (`lane-exited`) whose item has no merge
 /// is closed with its
 /// sandbox kept: the attempt ends and its record stops charging a slot,
@@ -2832,7 +2845,19 @@ pub fn close_finished(
             return;
         };
         match left {
-            Answer::Live(()) => return,
+            Answer::Live(Some(path)) if matches!(row, "lane-idle" | "lane-exited") => {
+                if pass.baseline.get(row, &name) != Some(format!("{key}|reported").as_str()) {
+                    out.events.push(Event::Tail(format!(
+                        "close-out-owed item={} path={}",
+                        lane.item,
+                        path.display()
+                    )));
+                }
+                out.changes
+                    .push(set(CLOSE_PENDING_ROW, &name, format!("{row}|{key}")));
+                return;
+            }
+            Answer::Live(_) => return,
             Answer::Gone => {}
             Answer::Unreadable { cause } => {
                 fail(
