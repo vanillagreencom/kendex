@@ -4,6 +4,7 @@ Read when a console lists owner asks or sends Reply, Done or Later through `jarv
 
 ```bash
 .agents/skills/jarvis/scripts/jarvis-session owner-asks list --home HOME --view active|snoozed [--cursor CURSOR]
+.agents/skills/jarvis/scripts/jarvis-session owner-asks render --home HOME
 .agents/skills/jarvis/scripts/jarvis-session owner-asks reply|done|later --home HOME --id ID
 .agents/skills/jarvis/scripts/jarvis-session owner-asks present --home HOME --destination KEY --root ROOT --id ASK
 .agents/skills/jarvis/scripts/jarvis-session owner-asks deliver --home HOME
@@ -29,7 +30,7 @@ Jarvis's own questions enter the page when sent. An overseer's question enters w
 
 The main home's mailbox `owner-tracker-settings` command supplies the existing posting configuration judgement. An unconfigured tracker adds no tracker requests. A configured tracker uses Linear `comments owner-requests` with that judgement's email and label. Each comment mentioning the resolved owner's canonical profile URL is a separate request. Its immutable comment identity, author, creation time, parent and server URL remain the original request metadata. No owner, team, account, profile URL or view name is a package default.
 
-Jarvis verifies approval links in its own Slack channel. It matches the relay's ask or notice, presenter and thread stamp. A delegated ask also matches the notice's destination, repository root and ask id. A presented ask stays accessible with an unconfirmed thread when that proof is unavailable. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask without a presentation links to its tracker mirror when one exists. An unread mailbox source makes the list unavailable.
+Jarvis verifies approval links against the posting record of the bound Slack relay. It reads records at the mailbox's main checkout and its registered linked checkouts on each destination. It matches the relay's ask or notice, presenter and thread stamp. A delegated ask also matches the notice's destination, repository root and ask id. A presented ask stays accessible with an unconfirmed thread when that proof is unavailable. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask links to its tracker mirror when it has no confirmed Slack thread and a mirror exists. An unread mailbox source makes the list unavailable.
 
 Cross-source suppression requires confirmed tracker posting and equality of the request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
 
@@ -50,6 +51,10 @@ Rows sort by original asked-at time, then identity. A cursor binds the home, vie
 - Refresh from the first pages after a stale-cursor result.
 
 Next replaces the visible page; final pages alone have `complete=true` and a null next cursor. Both views share the same metadata when their source and action evidence match.
+
+## Slack rendering
+
+`render` walks the active and set-aside pages at one revision. It prints the reading time, canonical counts and whole rows with the first sentence, age, asker, conversation link and approval status where present. The result begins with `kendex-owner-asks-v1` on its own line, followed by one JSON object for the Slack relay. A failed source or stale walk puts its cause in the result. A capture limit can omit whole rows while preserving their canonical counts.
 
 ## Reply and Done
 

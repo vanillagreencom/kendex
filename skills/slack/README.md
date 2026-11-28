@@ -147,6 +147,14 @@ Register `/lanes` for status output; Slack reserves `/status` ([Retired names](s
 
 A `/report` answer reaches the channel even during a Jarvis session hold; [The Jarvis session hold](schemas/journal.md#the-jarvis-session-hold) gives how other report notices are held.
 
+To show Jarvis's owner asks, set `SLACK_ASKS_COMMAND` and `SLACK_HOME_COMMAND` to the same absolute command line:
+
+```text
+/path/to/.agents/skills/jarvis/scripts/jarvis-session owner-asks render --home /path/to/jarvis-home
+```
+
+Both views show the active and set-aside counts, reading time, and conversation links with approval status where available. They show the cause when a destination cannot be read. Each view counts whole rows it had to omit. A cut in `/asks` points to App Home, which can show more rows.
+
 ## Credential boundary
 
 - Bot and app-level tokens belong only in the private env file or process environment, never in settings, bindings, journals or posts.

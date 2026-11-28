@@ -27,6 +27,11 @@
 # worker, and Slack's not_enabled raised out of the worker. One worker answers
 # envelopes in order, so a row that expects nothing waits for a later reply
 # instead of a fixed time.
+# Inputs: skills/slack/scripts/, skills/slack/tests/lib/,
+# skills/jarvis/scripts/, skills/jarvis/tests/owner_asks_test.py,
+# skills/jarvis/tests/mail_world.py, skills/jarvis/tests/fixtures/runtime_cache.py,
+# skills/mailbox/scripts/, skills/orch/scripts/, skills/orch/runtime/,
+# skills/agent-runtime/scripts/, skills/agent-runtime/runtime/.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -473,7 +478,8 @@ ROWS
 }
 output_rows
 assert_has "$(cat "$SK_TMP/relay.err")" local-only 'retained command stderr keeps its local destination'
-sk_mutant home-cut relay.py 'text \+= withheld\("SLACK_HOME_COMMAND", cause\)' 'text = withheld("SLACK_HOME_COMMAND", cause)'
+sk_mutant home-cut relay.py 'annotation \+ \(withheld\("SLACK_HOME_COMMAND", cause\) if cause else text\)' \
+  '(withheld("SLACK_HOME_COMMAND", cause) if cause else text)'
 CONTROL_FAIL="$SK_FAIL"
 CONTROL_RC=0
 CONTROL_OUT="$(output_rows nonzero; [ "$SK_FAIL" = "$CONTROL_FAIL" ])" || CONTROL_RC=$?
@@ -607,5 +613,51 @@ home_refused
 sk_assert_red "$RESULT" "1|0|After Home off" "control: not_enabled raised out of the worker stops the relay"
 sk_relay_stop
 sk_bin_reset
+
+owner_asks_rendering() {
+  local configured slash_text home_text surface rendered slash_rows reading
+  configured="$CMD/owner-render"
+  cat > "$configured" <<EOF
+#!/usr/bin/env bash
+export JARVIS_TEST_BASH="$BASH" XDG_STATE_HOME="$CMD/owner-state"
+exec python3 -B "$SK_ROOT/skills/jarvis/tests/owner_asks_test.py" --render-fixture "$ALPHA" "$CMD/owner-source-failed"
+EOF
+  chmod +x "$configured"
+  relay "$ALPHA" "SLACK_ASKS_COMMAND=$configured" "SLACK_HOME_COMMAND=$configured"
+  slash_text="$(reply "$(slash /asks U001)")"
+  slash_text="${slash_text#ephemeral|}"
+  home_open U001
+  reply "$(slash /deploy U001)" >/dev/null
+  home_text="$(sk_state '.views[-1].view.blocks | map(.text.text) | join("\n")')"
+  reading="$(printf '%s\n' "$slash_text" | sed -n '1,3p')"
+  assert_eq "$(printf '%s\n' "$home_text" | sed -n '1,3p')" "$reading" 'Slash and Home use the same reading and counts'
+  assert_has "$reading" 'Read 2026-11-02T03:00:00+00:00' 'The configured reading carries its observation time'
+  assert_has "$reading" '*Active* 35 · *Set aside* 1' 'Both views carry the canonical counts'
+  assert_has "$home_text" 'Row 33 ' 'Home walks beyond the first source page'
+  assert_has "$home_text" 'Omitted rows · 1 active · 0 set aside.' 'Home counts the row longer than a section'
+  assert_eq "$(sk_state '.views[-1].view.blocks | length <= 100 and all(.[]; (.text.text | length) <= 3000)')" true 'Home publishes sections within Slack limits'
+  assert_eq "$([ "${#slash_text}" -le 4000 ] && printf yes)" yes 'Slash response fits the reply limit'
+  slash_rows="$(printf '%s\n' "$slash_text" | awk '/^• Row / { count++ } END { print count + 0 }')"
+  assert_has "$slash_text" "Omitted rows · $((35 - slash_rows)) active · 0 set aside. Open App Home for more." 'Slash counts every omitted row and points to Home'
+  for surface in slash home; do
+    if [ "$surface" = slash ]; then rendered="$slash_text"; else rendered="$home_text"; fi
+    assert_has "$rendered" 'Set aside · 1d ago · overseer:repo' "$surface shows age and original asker for the set-aside row"
+    assert_has "$rendered" '<https://workspace.slack.com/archives/C123/p1793498400000001|Slack thread>' "$surface keeps the confirmed thread link"
+    assert_has "$rendered" 'Type yes in the Slack thread' "$surface keeps approval status"
+    assert_lacks "$rendered" 'Second sentence' "$surface renders the first sentence"
+    assert_eq "$(printf '%s\n' "$rendered" | awk '/^• Row / && !/ end\.$/ { broken++ } END { print broken + 0 }')" 0 "$surface omits rows whole"
+  done
+  touch "$CMD/owner-source-failed"
+  slash_text="$(reply "$(slash /asks U001)")"
+  home_open U001
+  reply "$(slash /deploy U001)" >/dev/null
+  home_text="$(last_view)"
+  for rendered in "$slash_text" "$home_text"; do
+    assert_has "$rendered" 'project-list evidence at ssh:fixture could not be read' 'A failed destination appears in the owner reply'
+    assert_lacks "$rendered" '*Active*' 'A failed read publishes no stale counts'
+  done
+  sk_relay_stop
+}
+owner_asks_rendering
 
 sk_summary
