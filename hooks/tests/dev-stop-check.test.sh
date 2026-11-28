@@ -17,9 +17,8 @@
 # pid has exited, one with no run at all. Transcripts carry the command the
 # way Claude Code records a Bash call that outlasted its timeout (the call,
 # then a result naming only the background output file), the way a Codex
-# rollout records an exec_command call (the arguments as one JSON string), and
-# the way each harness records a stop this hook held (its stderr as a user
-# message).
+# rollout records a direct exec_command call and a hosted code-mode command
+# execution, and the way each harness records a stop this hook held.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a planted copy per rule) run against these same rows.
@@ -131,6 +130,13 @@ recorded() { # HARNESS COMMAND
       '{type: "assistant", message: {content: [{type: "tool_use", name: "Bash", input: {command: $c, timeout: 600000}}]}}' ;;
     codex) jq -cn --arg c "$2" --arg w "$RUN_DIR" \
       '{type: "response_item", payload: {type: "function_call", name: "exec_command", arguments: ({cmd: $c, workdir: $w} | tojson)}}' ;;
+    # Native event from the Codex CLI 0.172.0 KEN-5963 hosted probe. The tool
+    # returned state=running with exit 3, recorded as "failed" in this event.
+    # MEM-526 comment 8cb0ff0f records the same launcher and early finish.
+    hosted) jq -cn --arg c "$2" \
+      '{type: "event_msg", payload: {type: "item_completed", item: {type: "CommandExecution",
+        command: ["/bin/bash", "-lc", $c], parsed_cmd: [{type: "unknown", cmd: $c}],
+        source: "unified_exec_startup", status: "failed", exit_code: 3}}}' ;;
   esac
 }
 claude_call() { # WORKTREE — a Bash call that outlasted its timeout
@@ -139,6 +145,9 @@ claude_call() { # WORKTREE — a Bash call that outlasted its timeout
 }
 codex_call() { # WORKTREE — an exec_command call in a rollout
   recorded codex ".agents/skills/orch/scripts/orch-runtime validate entry --validate-mode range --base abc123 --worktree $1"
+}
+hosted_call() { # WORKTREE — the launcher from the hosted validation probe
+  recorded hosted "DEV_VALIDATE_CMD='printf \"%s\\n\" KEN5963_NATIVE_PROBE; sleep 9' .agents/skills/orch/scripts/orch-runtime validate entry --reproduce --no-private-env --worktree \"$1\" --budget 1 --poll 1"
 }
 claude_wait() { # RUN-DIR — the --wait call a hold names
   recorded claude ".agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir $1"
@@ -175,6 +184,26 @@ transcript none '{"type":"user","message":{"content":[{"type":"tool_result","con
 # Only the shell calls recorded() emits establish an executed start or wait.
 READ_COMMAND=".agents/skills/orch/scripts/orch-runtime validate entry --worktree $WT_LIVE"
 READ_WAIT=".agents/skills/orch/scripts/orch-runtime validate entry --wait --run-dir $RUN_LIVE"
+transcript live-hosted "$(hosted_call "$WT_LIVE")"
+transcript done-hosted "$(hosted_call "$WT_DONE")"
+transcript hosted-held "$(hosted_call "$WT_LIVE"; codex_hold "$RUN_LIVE")"
+transcript hosted-held-waited "$(hosted_call "$WT_LIVE"; codex_hold "$RUN_LIVE"
+  recorded hosted "$READ_WAIT")"
+transcript hosted-waited-held "$(hosted_call "$WT_LIVE"; recorded hosted "$READ_WAIT"
+  codex_hold "$RUN_LIVE")"
+transcript hosted-outer-only "$(jq -cn --arg c "$READ_COMMAND" '
+  {type: "response_item", payload: {type: "custom_tool_call", name: "exec",
+    input: ("text(await tools.exec_command(" + ({cmd: $c} | tojson) + "))")}},
+  {type: "response_item", payload: {type: "custom_tool_call_output", output: $c}}')"
+transcript hosted-argument "$(recorded hosted "printf '%s\\n' $READ_COMMAND")"
+transcript hosted-skipped "$(recorded hosted "false && $READ_COMMAND")"
+transcript hosted-help "$(recorded hosted "$READ_COMMAND --help")"
+transcript hosted-comment "$(recorded hosted "true # $READ_COMMAND")"
+transcript hosted-heredoc "$(recorded hosted "cat <<'EOF'
+$READ_COMMAND
+EOF")"
+transcript hosted-wait-argument "$(hosted_call "$WT_LIVE"; codex_hold "$RUN_LIVE"
+  recorded hosted "printf '%s\\n' $READ_WAIT")"
 for harness in claude codex; do
   case "$harness" in
     claude)
@@ -193,6 +222,7 @@ for harness in claude codex; do
       ;;
   esac
   transcript "read-$harness" "$READ_RECORDS"
+  transcript "argument-$harness" "$(recorded "$harness" "printf '%s\\n' $READ_COMMAND")"
   transcript "held-read-wait-$harness" "$(recorded "$harness" "$READ_COMMAND"; "${harness}_hold" "$RUN_LIVE")
 $READ_WAIT_RECORD"
 done
@@ -283,7 +313,7 @@ farm() { # NAME TOOL...
   done
   printf '%s' "$dir"
 }
-FARM_NO_JQ="$(farm no-jq git cat grep awk)"
+FARM_NO_JQ="$(farm no-jq git cat awk)"
 FARM_NONE="$(farm none)"
 # agent-runtime's planted cargo, first on PATH for the unbuilt rows, so a
 # build the hook or its reader starts runs no real build.
@@ -374,8 +404,23 @@ stop_rows() {
   done <<ROWS
 a live run named by a Claude Code call that outlasted its timeout is refused|orch|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a live run named by a Codex exec_command call is refused|orch|-|agent:live-codex|2|dev-stop-check: running=$RUN_LIVE|wait
+a hosted Codex command execution holds the stop for its live run|codex|-|agent:live-hosted|2|dev-stop-check: running=$RUN_LIVE|wait
+a hosted Codex run with its verdict passes|codex|-|agent:done-hosted|0|-|-
+a hosted Codex hold with no wait passes with an abandoned notice|codex|-|active:hosted-held|0|dev-stop-check: abandoned=$RUN_LIVE|-
+a hosted Codex wait after the hold holds again|codex|-|active:hosted-held-waited|2|dev-stop-check: running=$RUN_LIVE|wait
+a hosted Codex wait before the hold does not hold again|codex|-|active:hosted-waited-held|0|dev-stop-check: abandoned=$RUN_LIVE|-
+hosted execution in the parent transcript passes silently|codex|-|parent:live-hosted|0|-|-
+outer code-mode input and output alone pass silently|codex|-|agent:hosted-outer-only|0|-|-
+hosted shell arguments naming a validation command pass silently|codex|-|agent:hosted-argument|0|-|-
+a hosted command behind a conditional is not proven to have run|codex|-|agent:hosted-skipped|0|-|-
+hosted validation help does not imply a start|codex|-|agent:hosted-help|0|-|-
+a hosted shell comment naming a validation command passes silently|codex|-|agent:hosted-comment|0|-|-
+hosted shell heredoc data naming a validation command passes silently|codex|-|agent:hosted-heredoc|0|-|-
+hosted shell arguments naming a wait do not count as a wait after the hold|codex|-|active:hosted-wait-argument|0|dev-stop-check: abandoned=$RUN_LIVE|-
 Claude Read output naming a live worktree passes silently|orch|-|agent:read-claude|0|-|-
 Codex read output naming a live worktree passes silently|orch|-|agent:read-codex|0|-|-
+Claude Bash arguments naming a validation command pass silently|orch|-|agent:argument-claude|0|-|-
+direct Codex shell arguments naming a validation command pass silently|orch|-|agent:argument-codex|0|-|-
 prose naming a live worktree passes silently|orch|-|agent:prose|0|-|-
 hold feedback alone is not a command|orch|-|agent:hold-only|0|-|-
 Claude output naming a wait after a hold is not an executed wait|orch|-|active:held-read-wait-claude|0|dev-stop-check: abandoned=$RUN_LIVE|-
@@ -405,7 +450,7 @@ a transcript that cannot be read is reported, not held|orch|-|agent:missing|0|de
 a payload that is not JSON is refused|orch|-|raw:{not json|2|dev-stop-check: payload=invalid-json|-
 a transcript path that is not a string is refused|orch|-|raw:{"agent_transcript_path":7}|2|dev-stop-check: payload=invalid-json|-
 a missing jq is reported, not held|orch|no-jq|agent:live-claude|0|dev-stop-check: missing-tools=jq|-
-every missing tool is named|orch|none|agent:live-claude|0|dev-stop-check: missing-tools=jq,git,cat,grep,awk|-
+every missing tool is named|orch|none|agent:live-claude|0|dev-stop-check: missing-tools=jq,git,cat,awk|-
 ROWS
 }
 
@@ -532,6 +577,11 @@ LIVE_STOP_LABELS=()
 COLLECT_LIVE_ROWS=1
 stop_rows
 COLLECT_LIVE_ROWS=0
+if [ -n "${STOP_ROW_LABELS:-}" ]; then
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
 form_rows
 
 # --- Must-fail controls, one per table ---------------------------------------
@@ -539,8 +589,8 @@ stop_control running "$HOOK" 'RUN_DIR=${RUN_DIR% pid=*}' 'continue' HOOK stop_ro
   "${LIVE_STOP_LABELS[@]}"
 # The matcher keys on the verb as a session writes it: keyed on the entry's
 # word instead, every row naming the verb's start passes unheld.
-stop_control matcher-word "$HOOK" 'local flag prefix="orch-runtime($DQUOTE|$SQUOTE)? +validate +entry"' \
-  'prefix="dev-validate-run($DQUOTE|$SQUOTE)?"' HOOK stop_rows "${LIVE_STOP_LABELS[@]}"
+stop_control matcher-word "$HOOK" 'def command_path:' \
+  '.[0] |= sub("orch-runtime$"; "dev-validate-run") |' HOOK stop_rows "${LIVE_STOP_LABELS[@]}"
 # A hook that hands an unbuilt runtime to its reader has the wrapper build it
 # in the foreground, past the hook's timeout, and answers no detached setup.
 stop_control built-on-call "$HOOK" 'JUDGED=""' 'JUDGED=1' HOOK stop_rows \
