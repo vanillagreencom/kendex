@@ -1284,21 +1284,35 @@ class RootRelay:
 
     def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
               attach: str = "", admission: Optional[Callable[[], bool]] = None,
-              notice_followup: bool = False, presentation: bool = False) -> Optional[str]:
+              notice_followup: bool = False, presentation: bool = False,
+              ask_root: Optional[Tuple[Dict, str]] = None) -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
         the text as its comment, or the text posted as standard Markdown.
         Slack's refusal goes to `post_refused`. Questions must fit one
-        message. Long reports continue in order under the original root,
+        message. A tracker-backed root can use a short form after its full
+        text passes the secret check. Long reports continue under the original root,
         with acknowledged progress synced after each part. An ambiguous
         write never retries. Returns the
         message ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
+        written = text
         try:
             text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
             if kind in ("ask", "overdue"):
+                if len(text) > MARKDOWN_LIMIT and ask_root is not None:
+                    ask, header = ask_root
+                    if ask.get("tracker_posted") is True:
+                        question = ask.get("text", "").split("\n", 1)[0]
+                        tail = (str(ask["issue"]), deadline_clause(ask))
+                        written = " ".join(part for part in (header, question, *tail) if part)
+                        text, body_arg = outbound(self.path, written)
+                        if len(text) > MARKDOWN_LIMIT:
+                            written = " ".join(part for part in (header, *tail) if part)
+                            text, body_arg = outbound(self.path, written)
+                        secret_check(text.encode(), f"id={env_id}")
                 markdown_checked(text, f"id={env_id} kind={kind} fix=shorten-question-or-link-detail-in-file-issue-or-report")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
             parts = [text] if attach else continuations(text)
@@ -1330,12 +1344,17 @@ class RootRelay:
                 root = root or ts
                 if len(parts) > 1:
                     self._out(envelope, kind, "progress", thread=root, next=index + 1, hash=digest)
-            return root
         except Refusal as err:
             if notice_followup and thread_ts is not None and err.error == "thread_not_found":
                 self.thread_refused(err, thread_ts)
             self.post_refused(err, envelope, kind)
             return None
+        if ask_root is not None and root is not None:
+            ask, _ = ask_root
+            excerpt = written if isinstance(written, str) else "".join(
+                piece if isinstance(piece, str) else piece.text for piece in written)
+            self.bind_presentation(ask, {"ts": root, "text": excerpt}, "ask", presentation)
+        return root
 
     def recover_presentation(self, message: Dict, bot_user: str) -> None:
         """Rebind an accepted post after a stop before its Slack stamp was saved."""
@@ -1460,7 +1479,8 @@ class RootRelay:
             if receipt is None or receipt.get("presenter") != self.presenter:
                 return False
             envelope = dict(envelope, presentation={"presenter": self.presenter})
-        pieces = self.ask_pieces(envelope, f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:")
+        header = f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:"
+        pieces = self.ask_pieces(envelope, header)
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
         if thread_ts is not None:
@@ -1471,11 +1491,9 @@ class RootRelay:
                 return False
             # The ask needs its own thread so an owner reply answers this ask.
             pieces += [f"\n\n[Referenced conversation]({permalink})"]
-        ts = self._send(envelope, "ask", pieces, None, presentation=retained)
+        ts = self._send(envelope, "ask", pieces, None, presentation=retained, ask_root=(envelope, header))
         if ts is None:
             return False
-        excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-        self.bind_presentation(envelope, {"ts": ts, "text": excerpt}, "ask", retained)
         if retained:
             self.confirm_presentation(envelope)
         # A reserved ask first posted past its deadline is its own reminder.
@@ -1491,11 +1509,12 @@ class RootRelay:
         reminder = dict(envelope, id=overdue_id(ask_id))
         thread_ts = self.state.post_thread(ask_id)
         header = f"{mention(self.binding)} Overdue, no default"
+        root_header = f"{header}. Question from {envelope.get('from', 'overseer')}:"
         # A new thread may be the owner's first sight of the question, so it
-        # carries the whole question; the original thread already shows it.
+        # gets the full presentation when it fits.
         pieces: List[Union[str, Verbatim]] = (
             [f"{header}: {envelope.get('text', '')}"] if thread_ts is not None
-            else self.ask_pieces(envelope, f"{header}. Question from {envelope.get('from', 'overseer')}:"))
+            else self.ask_pieces(envelope, root_header))
         binding = self.state.threads.get(self.state.by_envelope.get(ask_id, ""))
         established = (envelope.get("presentation") or {}).get("presenter") == self.presenter or (
             binding is not None and binding.presenter == self.presenter)
@@ -1505,14 +1524,12 @@ class RootRelay:
             if receipt is None or receipt["presenter"] != self.presenter:
                 return
             envelope = dict(envelope, presentation={"presenter": self.presenter})
-        landed = self._send(reminder, "overdue", pieces, thread_ts, presentation=retained)
+        landed = self._send(reminder, "overdue", pieces, thread_ts, presentation=retained,
+                            ask_root=(envelope, root_header) if thread_ts is None else None)
         if landed is None:
             return
-        if thread_ts is None:
-            excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-            self.bind_presentation(envelope, {"ts": landed, "text": excerpt}, "ask", retained)
-            if retained:
-                self.confirm_presentation(envelope)
+        if retained:
+            self.confirm_presentation(envelope)
         self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
     def post_notice(self, envelope: Dict, record: Optional[Dict] = None) -> None:
