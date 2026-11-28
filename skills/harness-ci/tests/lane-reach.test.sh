@@ -441,7 +441,7 @@ while IFS='|' read -r variant old new; do
   git -C "$repo" checkout -qb "fixture-$variant" "$literal_job_base"
   edit_workflow "$old" "$new"
   case "$variant" in
-    *-computed|literal-job-path)
+    *-computed|literal-job-path|literal-runner-os|literal-runner-arch|literal-runner-shell|literal-runner-label)
       printf '%s\n' 'web tools/ci.config # reason: the web check reads its protected setting' \
         >"$repo/.github/ci-lanes.conf" ;;
   esac
@@ -450,6 +450,13 @@ while IFS='|' read -r variant old new; do
 done <<'ROWS'
 literal-matrix|    runs-on: ubuntu-latest\n|    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n        include:\n          - os: ubuntu-latest\n            config: tools/ci.config\n    runs-on: ${{ matrix.os }}\n
 literal-matrix-computed|    runs-on: ubuntu-latest\n|    strategy:\n      matrix: ${{ fromJSON(vars.MATRIX) }}\n    runs-on: ubuntu-latest\n
+literal-runner-fallback|    runs-on: ubuntu-latest\n|    strategy:\n      matrix:\n        suite: [web]\n    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n
+literal-runner-fallback-no-matrix|    runs-on: ubuntu-latest\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n
+literal-runner-os|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - if: runner.os == 'Linux'\n        run: cat ./tools/input.sh\n
+literal-runner-arch|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - env:\n          ARCH: ${{ runner['arch'] }}\n        run: cat ./tools/input.sh\n
+literal-runner-shell|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat "./tools/${RUNNER_OS}.config"\n
+literal-runner-label|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - if: ${{ vars.CI_RUNNER_2V == 'ubuntu-latest' }}\n        run: cat ./tools/input.sh\n
+literal-runner-computed|    runs-on: ubuntu-latest\n|    runs-on: ${{ vars.CI_RUNNER_2V }}\n
 literal-step|      - run: cat ./tools/input.sh\n|      - if: ${{ 'ci' == 'ci' }}\n        env:\n          BASH_ENV: ./tools/step-env.sh\n        run: cat ./tools/input.sh\n
 literal-step-if-computed|      - run: cat ./tools/input.sh\n|      - if: ${{ vars.RUN_CHECK }}\n        run: cat ./tools/input.sh\n
 literal-step-env-computed|      - run: cat ./tools/input.sh\n|      - env:\n          CI_CONFIG: ${{ vars.CI_CONFIG }}\n        run: cat ./tools/input.sh\n
@@ -1529,6 +1536,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     pnpm-setup-*) base="$pnpm_setup_base" ;;
     pnpm-variant-*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     literal-matrix-read) base="$(git -C "$repo" rev-parse fixture-literal-matrix)" ;;
+    literal-runner-fallback-read) base="$(git -C "$repo" rev-parse fixture-literal-runner-fallback)" ;;
     literal-step-read) base="$(git -C "$repo" rev-parse fixture-literal-step)" ;;
     literal-job-env-read) base="$(git -C "$repo" rev-parse fixture-literal-job-env)" ;;
     literal-*|npm-config-claim|npm-*lifecycle|npm-preload|npm-prefixed-install|npm-global-option|npm-unsupported-invocation|npm-script-retained|vercel-*)
@@ -1788,6 +1796,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     pnpm-talk-*|pnpm-variant-pnpm) refused_jobs='job=web cause=pnpm-config-unread' ;;
     pnpm-variant-input|pnpm-variant-volta|pnpm-variant-newline) refused_jobs='job=web cause=opaque-action' ;;
     literal-matrix-computed) refused_jobs='job=web cause=opaque-matrix' ;;
+    literal-runner-os|literal-runner-arch|literal-runner-shell|literal-runner-label|literal-runner-computed)
+      refused_jobs='job=web cause=opaque-runner' ;;
     literal-step-if-computed) refused_jobs='job=web cause=opaque-step-condition' ;;
     literal-step-env-computed) refused_jobs='job=web cause=opaque-step-env' ;;
     literal-job-env-computed) refused_jobs='job=web cause=opaque-job-env' ;;
@@ -2012,6 +2022,14 @@ pnpm-variant-pnpm|prisma/schema.prisma|||true|
 literal-matrix|tools/unrelated.txt|||false|
 literal-matrix-read|tools/ci.config|||true|
 literal-matrix-computed|tools/unrelated.txt|||true|
+literal-runner-fallback|tools/unrelated.txt|||false|
+literal-runner-fallback-read|tools/input.sh|||true|
+literal-runner-fallback-no-matrix|tools/unrelated.txt|||false|
+literal-runner-os|tools/unrelated.txt|||true|
+literal-runner-arch|tools/unrelated.txt|||true|
+literal-runner-shell|tools/unrelated.txt|||true|
+literal-runner-label|tools/unrelated.txt|||true|
+literal-runner-computed|tools/unrelated.txt|||true|
 literal-step|tools/unrelated.txt|||false|
 literal-step-read|tools/env-lib.sh|||true|
 literal-step-if-computed|tools/unrelated.txt|||true|

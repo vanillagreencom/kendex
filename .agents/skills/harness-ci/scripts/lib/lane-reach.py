@@ -1256,6 +1256,44 @@ def expression(value):
     return value[3:-2].strip() if value.startswith("${{") and value.endswith("}}") else value
 
 
+def reads_runner_inputs(job, variable):
+    # The runner context supports both property and index syntax. A step's
+    # if also accepts an expression without braces.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+    name = re.escape(variable)
+    reference = re.compile(
+        rf"'(?:[^']|'')*'|(?P<runner>(?<![\w.-])(?:runner(?![\w-])|"
+        rf"vars\s*(?:\.\s*{name}(?![\w-])|\[\s*'{name}'\s*\])))", re.IGNORECASE,
+    )
+
+    def reads_runner(value):
+        return any(match["runner"] for match in reference.finditer(value))
+
+    def interpolated(values):
+        if isinstance(values, str):
+            # An expression can contain }} inside a quoted string. Consume
+            # complete tokens without backtracking into a quoted string.
+            return any(reads_runner(match) for match in re.findall(
+                r"\$\{\{((?>'(?:[^']|'')*'|[^'}]+|\}(?!\}))*)\}\}", values,
+            ))
+        if isinstance(values, dict):
+            values = list(values.values())
+        return isinstance(values, list) and any(interpolated(value) for value in values)
+
+    for step in job["steps"]:
+        condition = step.get("if", "")
+        if isinstance(condition, str) and reads_runner(condition):
+            return True
+        run = step.get("run", "")
+        # GitHub exports runner properties to shell steps as RUNNER_*.
+        # https://docs.github.com/en/actions/reference/workflows-and-actions/variables
+        if isinstance(run, str) and re.search(r"\bRUNNER_[A-Z0-9_]+\b", run):
+            return True
+        if interpolated({key: value for key, value in step.items() if key not in {"if", "name", "id"}}):
+            return True
+    return interpolated(job.get("env", {}))
+
+
 def matrix_words(job):
     strategy = job.get("strategy", {})
     require(isinstance(strategy, dict) and set(strategy) <= {"matrix", "fail-fast", "max-parallel"}
@@ -1276,12 +1314,21 @@ def matrix_words(job):
     require(all(isinstance(value, str) and literal(value) for axis in values.values() for value in axis),
             "opaque-matrix")
     runners = job.get("runs-on", "")
+    fallback = None
     if isinstance(runners, str):
+        fallback = re.fullmatch(
+            r"\$\{\{\s*vars\.([A-Za-z_][A-Za-z0-9_]*)\s*\|\|\s*'([^']+)'\s*\}\}", runners,
+        )
         runners = [runners]
     require(isinstance(runners, list), "opaque-runner")
     for runner in runners:
         require(isinstance(runner, str), "opaque-runner")
         if literal(runner):
+            continue
+        # The template's fallback only proves the expression's shape. A
+        # configured value can choose a runner with different properties.
+        if fallback and literal(fallback[2]):
+            require(not reads_runner_inputs(job, fallback[1]), "opaque-runner")
             continue
         reference = re.fullmatch(r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)", expression(runner))
         require(reference and values.get(reference[1]), "opaque-runner")
@@ -1319,9 +1366,9 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
     per graph reader, so a shape refusal keeps what was proved before it.
     Return each graph reader's covered paths."""
     covered = []
+    matrix = matrix_words(job)
     job_words = env_words(job.get("env", {}), "job")
     inherited = workflow_words + job_words
-    matrix = matrix_words(job) if "strategy" in job else []
     default = job.get("defaults", {}).get("run", {})
     step_inputs = []
     for step in job["steps"]:
