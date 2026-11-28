@@ -702,7 +702,7 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                 size_read = run(["wc", "-c", str(filename)])
                 size = int(size_read.stdout.split()[0]) if size_read.returncode == 0 else None
                 last_id = before.get("last_id")
-                after = before.get("count", 0) if last_id else 0
+                after = before.get("last_line", 0) if last_id else 0
                 # Include the saved position in the same logical snapshot as
                 # new mail. A restore or compaction can leave that line absent.
                 (count, first), envelopes = mailbox_events(bash, root, box, max(0, after - 1))
@@ -711,11 +711,15 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                     (count, first), envelopes = mailbox_events(bash, root, box)
                 # Mail can arrive after the size sample. An owed mark also
                 # needs the first id from this snapshot's header.
-                if (after and count == after and size is not None and size == before.get("size")
+                if (after and len(envelopes) == 1 and count == before.get("count")
+                        and size is not None and size == before.get("size")
                         and (box != "to-overseer" or mark is None)):
                     continue
-                last_id = envelopes[-1].get("id") if envelopes and envelopes[-1]["line"] == count else None
-                next_root[box] = {"count": count, "size": size, "first": first, "last_id": last_id}
+                # Private rows and compaction gaps count toward the mark.
+                # Only a public envelope can anchor the next acquisition.
+                last = envelopes[-1] if envelopes else {}
+                next_root[box] = {"count": count, "size": size, "first": first,
+                                  "last_id": last.get("id"), "last_line": last.get("line", 0)}
                 if after:
                     envelopes = envelopes[1:]
                 for envelope in envelopes:

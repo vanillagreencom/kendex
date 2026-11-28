@@ -553,6 +553,35 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 output, _ = self.read_pass(cursor)
                 self.assertIn("\nnotice after replacement\n", output)
 
+    def test_mail_pass_does_not_replay_when_logical_tail_is_hidden(self):
+        for tail in ("reservation", "compacted"):
+            with self.subTest(tail=tail):
+                root = self.project(tail)
+                self.registry.write_text(listing(self.home, root))
+                question = "question before hidden tail"
+                ask = self.mail(root, "ask", question, "--to", "owner", "--options", "yes,no",
+                                "--recommend", "yes", "--effect", "none")
+                ask_id = ask.stdout.strip().split("=", 1)[1]
+                cursor = None
+                if tail == "reservation":
+                    result = self.command([self.mail_command, "reserve", "--item", "overseer", "--id", ask_id], root)
+                else:
+                    self.clock(-100 * 86400)
+                    self.mail(root, "notice", "expired notice", "--to", "owner")
+                    self.bin.joinpath("date").unlink()
+                    _, cursor = self.read_pass()
+                    result = self.command([self.mail_command, "compact", "--item", "overseer"], root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                count, envelopes = self.native_events(root, "to-overseer")
+                self.assertEqual([row["id"] for row in envelopes], [ask_id])
+                self.assertGreater(count, envelopes[0]["line"])
+
+                output, cursor = self.read_pass(cursor)
+                self.assertIn("\n" + question + "\n", output)
+                self.assertEqual(cursor[str(root)]["to-overseer"]["count"], count)
+                again, _ = self.read_pass(cursor)
+                self.assertNotIn("\n" + question + "\n", again)
+
     def test_compaction_and_failed_read(self):
         for value in ("old a", "old b"):
             self.mail(self.peer, "notice", value, "--to", "owner")
