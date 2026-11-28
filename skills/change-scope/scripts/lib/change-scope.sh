@@ -58,6 +58,22 @@ HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
 # The settings files base_settings reads, in the ladder's order.
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
+inventory_paths() { # JSON — validate writer entries and retain only their paths
+  jq -ecs '
+    def path_string: type == "string" and length > 0
+      and (contains("\n") or contains("\u0000") | not);
+    def entry: if type == "string" then path_string
+      elif type == "object" then
+        keys == ["path", "template", "templateHash"]
+        and (.path | path_string) and (.template | path_string)
+        and (.templateHash | type == "string" and length == 71 and test("^sha256:[0-9a-f]{64}$"))
+      else false end;
+    if length == 1 and (.[0] | type == "array" and all(.[]; entry))
+    then .[0] | map(if type == "string" then . else .path end)
+    else "" | halt_error(21) end
+  ' <<<"$1"
+}
+
 # harness-only owns the names-only verdict. Its roots must also belong to
 # the caller's measurement roots before the inventory can leave the path set.
 # LOAD_ROOTS sets BRANCH_GROWTH_RENDER_ROOTS from the caller's trusted settings.

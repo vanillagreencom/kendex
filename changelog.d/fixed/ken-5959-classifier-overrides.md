@@ -1,0 +1,1 @@
+- The shared v1 consumer refresh workflow's classifier honors `HARNESS_CI_TRIVIAL_SETTINGS` and `HARNESS_CI_TRIVIAL_MAX_LINES` from the target branch's committed settings and warns when it uses either override. Remove the overrides to use the current trivial defaults, and use `HARNESS_CI_STANDARD_PATHS` for paths that still need standard review.
