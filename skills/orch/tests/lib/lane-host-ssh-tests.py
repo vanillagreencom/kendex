@@ -1128,6 +1128,37 @@ rc=0
         self.assertEqual(refused.returncode, 3, refused.stderr)
         self.assertIn(f"lane-host-ssh: mailbox-component path={box}\n".encode(), refused.stderr)
 
+    def test_session_rows_use_a_bounded_window_with_absolute_positions(self):
+        path = self.root / "lane/tmp/lane-mail/TEST-1/session-rows.jsonl"
+        path.parent.mkdir(parents=True)
+        limit = 1024 * 1024
+        row = b'{"event":"Stop","harness":"claude"}\n'
+        count = 2 * (limit // len(row) + 1)
+        final = b'{"event":"StopFailure"'
+        path.write_bytes(row * count + final)
+
+        def read():
+            return self.call("cat", "--item", "TEST-1", "--session-rows", str(path))
+
+        result = read()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        header, tail = result.stdout.split(b"\n", 1)
+        skipped, size = map(int, header.split(b"\t"))
+        self.assertGreater(skipped, 0)
+        self.assertGreaterEqual(limit, size)
+        self.assertEqual(size, len(tail))
+        self.assertEqual(skipped + tail.count(b"\n"), count)
+        self.assertEqual(tail, row * (count - skipped) + final)
+
+        path.write_bytes(row + b"x" * (limit + 1) + b"\n")
+        oversized = read()
+        self.assertNotIn(oversized.returncode, (0, 2))
+        self.assertEqual(oversized.stdout, b"")
+
+        path.unlink()
+        missing = read()
+        self.assertEqual((missing.returncode, missing.stdout), (2, b""))
+
     def test_fresh_clone_uses_host_github_protocol(self):
         self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
         self.assertIn("gh repo clone owner/repo " + self.row["clone"], (self.root / "calls").read_text())
@@ -2822,9 +2853,16 @@ exit 9
         self.assertEqual((running.returncode, running.stdout, lane.poll()), (0, b"running\n", None), running.stderr)
         # merge-pr removes the registered tree before its harness exits.
         worktree = Path(self.row["clone"] + "-worktree")
+        if sys.platform.startswith("linux"):
+            proved = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
+            self.assertEqual((proved.returncode, proved.stdout), (0, f"running\n{worktree}\n".encode()),
+                             proved.stderr)
         subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
                        check=True, capture_output=True, env=self.env)
         self.assertEqual(status().stdout, b"running\n")
+        unproved = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
+        self.assertNotEqual(unproved.returncode, 0)
+        self.assertEqual(unproved.stdout, b"")
         original = self.script.read_text()
         rule = '{"live": "running", "gone": "exited"}'
         self.assertEqual(original.count(rule), 1)

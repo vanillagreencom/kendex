@@ -2061,6 +2061,17 @@ done
 
     let lane = record["lanes"][0].as_object_mut().unwrap();
     lane.insert("mail_root".to_owned(), lane["checkout"].clone());
+    #[cfg(target_os = "linux")]
+    {
+        let phase = record["intents"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()["phase"]
+            .as_object_mut()
+            .unwrap();
+        assert!(phase.remove("hosted_mail_root").is_some());
+    }
     fleet.write_fleet(&record);
     stop();
     baseline = Baseline::default();
@@ -2078,6 +2089,18 @@ done
     stop();
     continue_once(&mut baseline, 1);
 
+    // Keep this next refusal on the normal status verb. The legacy case
+    // above has already used the provider's worktree proof to continue.
+    #[cfg(target_os = "linux")]
+    {
+        let mut rooted = fleet.read_fleet();
+        rooted["intents"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()["phase"]["hosted_mail_root"] = json!(host.worktree());
+        fleet.write_fleet(&rooted);
+    }
     stop();
     std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
     let refused = observe_ssh_worker(&fleet, &mut baseline, &clock);
@@ -2295,10 +2318,97 @@ done
     assert_eq!(mark.resume, old_resume);
     assert_eq!(mark.unread, "unread-after-retired-resume");
     assert!(matches!(mark.outcome, Some(WakeOutcome::Delivered { .. })));
-    assert!(wake(&mut baseline).events.is_empty());
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::WakeUnconfirmed { target, cause, resume }]
+            if target == "KEN-1" && cause == "turn-unmatched" && resume.as_deref() == Some("server_error")
+    ));
     let sent = typed();
     assert_eq!(sent.lines().count(), 5);
     assert_eq!(sent.lines().last(), Some(inbox_line()));
+    // The old continuation's own prompt can become visible after the new
+    // inbox wake has written its mark. A fresh watch still confirms it.
+    let delayed = sent.lines().nth(3).unwrap();
+    let receipt = json!({
+        "harness": "claude",
+        "event": "UserPromptSubmit",
+        "digest": agent_runtime::session::text_digest(delayed),
+    });
+    std::io::Write::write_all(
+        &mut std::fs::OpenOptions::new()
+            .append(true)
+            .open(&rows)
+            .unwrap(),
+        format!("{receipt}\n").as_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::WakeDelivered { target, resume }]
+            if target == "KEN-1" && resume.as_deref() == Some("server_error")
+    ));
+    assert!(wake(&mut baseline).events.is_empty());
+    assert_eq!(typed().lines().count(), 5);
+
+    // A newer continuation can type the same line. Its prompt row must not
+    // settle the earlier receipt if that send never wrote one.
+    baseline.apply(Change::Clear {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+    });
+    clock.pass(secs(1));
+    stop();
+    observe_twice(&mut baseline);
+    std::fs::write(&omit_prompt, "").unwrap();
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::WakeUnconfirmed { resume, .. }] if resume.as_deref() == Some("server_error")
+    ));
+    let earlier = fleet.mark("KEN-1").unwrap().resume;
+    let deadline = Instant::now() + secs(5);
+    while omit_prompt.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the continuation was never typed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    clock.pass(secs(1));
+    stop();
+    observe_twice(&mut baseline);
+    assert_ne!(
+        baseline.get(wake::RESUME_KIND, lane_name),
+        earlier.as_deref()
+    );
+    let later = wake(&mut baseline);
+    assert_eq!(
+        later
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event, watch::Event::WakeDelivered { resume, .. }
+                    if resume.as_deref() == Some("server_error")
+            ))
+            .count(),
+        1,
+        "{later:?}"
+    );
+    assert!(
+        wake(&mut baseline)
+            .events
+            .iter()
+            .all(|event| !matches!(event, watch::Event::WakeDelivered { .. }))
+    );
+    let sent = typed();
+    assert_eq!(sent.lines().count(), 7);
+    assert_eq!(sent.lines().nth(5), sent.lines().nth(6));
+
     assert!(
         host.calls()
             .iter()

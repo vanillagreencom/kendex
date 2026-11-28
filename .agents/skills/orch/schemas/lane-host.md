@@ -55,6 +55,8 @@ Each key, its values, and what the runtime does with it:
 - `land`: `lane`, `handoff`. The `pr-watch` `disarmed` rule in [oversee-events.md](../references/oversee-events.md).
 - `peer-mail`: optional, `verb` only. It selects `peer-append` for a hosted peer send or ask. A valid line with `files=verb` and no `peer-mail` selects legacy `append`.
 - `validate`: optional, `verb` only. `verb`: the provider serves `validate`. `validate entry --host` refuses `host-validate-undeclared` for a host whose line names no `validate`.
+- `session-rows`: optional, `verb` only. It selects `cat --session-rows` when the runtime reads a lane's session rows.
+- `worktree-status`: optional, `verb` only. It selects `status --worktree` when the runtime needs to prove the root of a running lane.
 
 ## Provider protocol
 
@@ -98,6 +100,7 @@ Each verb, its arguments, and its answer:
   - The file's exact bytes on stdout, exit `0`.
   - A missing file exits `2`; any other failure exits non-zero and not `2`.
   - The provider may confine transfers to its development root.
+  - With `--session-rows`, stdout starts with `SKIPPED<TAB>BYTES<LF>` followed by exactly `BYTES` bytes from the end of the session-row file. `SKIPPED` is the number of complete lines omitted. The window starts at a line boundary and preserves an unterminated last line. Both counts use decimal digits. A final row too large for the provider's bound fails the read.
 - `touch --item ID`.
   - Exit `0` when the host answers.
   - The runtime asks it after a `cat` exits `2`, and reads that `2` as a missing file only once `touch` answers.
@@ -130,6 +133,7 @@ Each verb, its arguments, and its answer:
   - `running` on stdout while a process of the named harness of the item's lane runs, else `exited`, exit `0`, signalling nothing.
   - An item the host holds nothing of answers `exited`.
   - Exit `75` with `status-unowned item=ID` on stderr is a host whose sandbox for the item is not the lane's own.
+  - With `--worktree`, `running` is followed by one line holding the absolute root proved by the running attempt. `exited` carries no root. If the provider cannot prove a root for a running attempt, it exits nonzero.
 - `stop --item ID --harness claude|codex|pi|copilot`.
   - Ends the named harness's processes of the item's lane and prints `stopped item=ID processes=COUNT`; `processes=0` where none ran.
   - Exit `4` with `stop-worktree-removed item=ID` on stderr is an item whose own close-out removed its worktree.
@@ -361,7 +365,7 @@ The account listing asks `accounts` under `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S` ([
 - Every verb that brings the clone up to date runs the clone's orch and agent-runtime setups right after that update: `create` on a create, a reuse and a relaunch alike, and `close` after it refreshes the clone. No runtime call after an update comes before the setup for the tree it runs in.
 - A host with no Rust toolchain holds the orch runtime and agent-runtime binaries in the setup cache (`AGENT_RUNTIME_CACHE`).
 - `close` exits `3` on changes it cannot save as render drift. Check and preserve needed files before asking it to close.
-- Static SSH declares `peer-mail=verb`.
+- Static SSH declares `peer-mail=verb`, `session-rows=verb` and `worktree-status=verb`. The row window uses Python 3 on the SSH host and carries at most 1 MiB of file bytes. Worktree proof compares the owned worktree to the recorded group leader's working directory through Linux procfs and rechecks the leader's identity.
 - For peer mail, reserve one inventory row with `item` set to `overseer`, `target` set to the recipient's SSH alias and `clone` set to the absolute path of its main checkout with mailbox and agent-runtime installed. The sender passes that same path as `peer-append --repo`. Keep the `repo` field equal to the inventory's repository, including when the recipient checkout belongs to a different repository. The existing absolute `account` field is required by the inventory and peer mail does not use it.
 - The `overseer` row serves `peer-append`, `touch`, and `cat` and `read-many` for files directly in that checkout's overseer mailbox directory. Reads outside the directory fail with status `1`. The row is omitted from lane listings.
 - For validation units, reserve one inventory row with `item` set to `validation`, `target` set to the host and `clone` set to a clone of the repository that no lane row names. Keep the `repo` field equal to the inventory's repository, and set the absolute `account` field the inventory requires, which `validate` does not use. `validate` runs every item's unit on that row, in a detached worktree under `<clone>/tmp/validate-host/`. Without the row, `validate` exits `1` with `item-unconfigured item=validation`.

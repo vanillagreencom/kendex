@@ -29,7 +29,7 @@ LANE_MAIL = "/.agents/skills/mailbox/scripts/lane-mail"
 # `capabilities` verb; the runtime guesses no line for a provider that fails it.
 CAPABILITIES = "\t".join(("kind=ssh", "launch=ssh", "channel=mailbox", "files=verb", "status=verb", "stop=verb",
                           "relaunch=resume", "park=none", "accounts=none", "pool=plan", "land=lane", "pane=local",
-                          "peer-mail=verb", "validate=verb"))
+                          "peer-mail=verb", "validate=verb", "session-rows=verb", "worktree-status=verb"))
 
 
 def notice(key, **values):
@@ -417,14 +417,59 @@ def peer_read_allowed(row, path):
 
 READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
 
-def read(row, path):
+# The SSH transport carries a tail starting on a row boundary and its line
+# offset. Count the prefix on the host from the same open file and byte
+# snapshot, so a concurrent append cannot move the reported positions.
+SESSION_ROWS_BYTES = 1024 * 1024
+READ_SESSION_ROWS = r'''
+import os
+import stat
+import sys
+
+path, limit = sys.argv[1], int(sys.argv[2])
+try:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except FileNotFoundError:
+    sys.exit(2)
+with os.fdopen(fd, "rb") as stream:
+    metadata = os.fstat(stream.fileno())
+    if not stat.S_ISREG(metadata.st_mode):
+        sys.exit("lane-host-ssh: session-rows-not-regular")
+    start = max(metadata.st_size - limit, 0)
+    remaining, skipped, last = start, 0, b"\n"
+    while remaining:
+        chunk = stream.read(min(remaining, 65536))
+        if not chunk:
+            sys.exit("lane-host-ssh: session-rows-short")
+        remaining -= len(chunk)
+        skipped += chunk.count(b"\n")
+        last = chunk[-1:]
+    size = metadata.st_size - start
+    tail = stream.read(size)
+    if len(tail) != size:
+        sys.exit("lane-host-ssh: session-rows-short")
+    if last != b"\n":
+        end = tail.find(b"\n")
+        if end < 0 or end == len(tail) - 1:
+            sys.exit("lane-host-ssh: session-row-too-large")
+        skipped += 1
+        tail = tail[end + 1:]
+sys.stdout.buffer.write(f"{skipped}\t{len(tail)}\n".encode("ascii") + tail)
+'''
+
+
+def read(row, path, session_rows=False):
     """Return a remote file's bytes, or None for a path that is not there.
 
     A file that is not there exits 2, which is the caller's one reading of
     "the lane has not written this yet"; every other read failure keeps its
     own status so the caller refuses rather than reads empty.
     """
-    result = remote(row, READ_FILE, path, accept=(2,))
+    if session_rows:
+        result = remote(row, MAILBOX_GUARD + 'exec python3 -c "$2" "$1" "$3"',
+                        path, READ_SESSION_ROWS, str(SESSION_ROWS_BYTES), accept=(2,))
+    else:
+        result = remote(row, READ_FILE, path, accept=(2,))
     return None if result.returncode == 2 else result.stdout
 
 
@@ -576,6 +621,10 @@ printf other''', row["clone"], item).stdout
 def owned_worktree(row, item, verb):
     """Resolve the item only after the clone marker confirms its owner."""
     owned(row, item, verb)
+    return worktree_path(row, item)
+
+
+def worktree_path(row, item):
     path = worktree(row, "path", item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=item, fix=PATH_FIX)
@@ -1080,19 +1129,35 @@ def runtime_result(answer):
     return reply.get("result") or {} if isinstance(reply, dict) else {}
 
 
-def status(row, item):
-    """Read the lane's recorded process group without signalling any process:
-    running while a member lives, exited once none does or nothing was
-    recorded. It reads no directory, so a lane whose worktree its own
-    close-out removed still reads running."""
-    owned(row, item, "status")
+def process_group(row, item):
     answer = remote(row, 'exec "$1$2" process group --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
                     accept=None)
-    word = {"live": "running", "gone": "exited"}.get(runtime_result(answer).get("reading"))
-    if answer.returncode != 0 or word is None:
+    group = runtime_result(answer)
+    if answer.returncode != 0 or group.get("reading") not in ("live", "gone"):
         step_failed("status-read-failed", answer.stderr, RUNTIME_FIX, item=item, exit=answer.returncode)
         raise SystemExit(1)
-    lifecycle_output(row, (word + "\n").encode())
+    return group
+
+
+def status(row, item, prove_worktree=False):
+    """Read the lane's recorded process group, optionally proving its cwd."""
+    owned(row, item, "status")
+    group = process_group(row, item)
+    word = {"live": "running", "gone": "exited"}[group["reading"]]
+    if word == "exited" or not prove_worktree:
+        lifecycle_output(row, (word + "\n").encode())
+        return
+    path = worktree_path(row, item)
+    pid, start = group.get("pid"), group.get("start")
+    if isinstance(pid, int) and pid > 1 and isinstance(start, str) and start:
+        cwd = remote(row, 'test "$1" -ef "/proc/$2/cwd"', path, str(pid), accept=(1,))
+        if cwd.returncode == 0:
+            checked = process_group(row, item)
+            if (checked.get("pid"), checked.get("start")) == (pid, start):
+                lifecycle_output(row, f"running\n{path}\n".encode())
+                return
+    notice("status-worktree-unconfirmed", item=item)
+    raise SystemExit(1)
 
 
 def stop_lane(row, item, path, verb, failed):
@@ -1461,7 +1526,9 @@ remote account directory, so folder trust and hook approval precede the first tu
 travel on stdin. read-many reads a JSON array of item/path requests from stdin
 and returns item/path/status/base64-data rows, in request order, with one SSH
 call per target. Missing files have status 2; other failed files keep their
-nonzero status and no bytes. cat exits 2 for a path that is not there. put stages beside
+nonzero status and no bytes. cat exits 2 for a path that is not there.
+cat --session-rows returns an absolute line offset and a bounded row window.
+It requires Python 3 on the host. put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. Neither verb
 leaves its staged file behind. A failed write of the staged bytes, or of
@@ -1518,7 +1585,8 @@ its own close-out removed stops all the same. A failed validation stop exits 1
 with stop-validations-failed, a failed group stop with stop-failed, each below
 the runtime's own line. status takes the same arguments and reads the
 recorded group without signalling it: running while a member lives, exited
-otherwise. A failed ownership or group read exits nonzero and reports no
+otherwise. On Linux, status --worktree also proves the recorded group's
+working directory for a running lane. A failed ownership or group read exits nonzero and reports no
 status. A clone holding neither a marker naming the item nor
 the item's worktree, as a finished close leaves it whether or not a create for
 another item followed, holds nothing of the item: stop answers stopped item=ID
@@ -1617,12 +1685,16 @@ capabilities prints the static ssh host kind's one capability line
         action.add_argument("--item", required=True)
         if verb in ("cat", "put", "append"):
             action.add_argument("path")
+        if verb == "cat":
+            action.add_argument("--session-rows", action="store_true")
         if verb == "close":
             action.add_argument("--merged", action="store_true")
     for verb in ("stop", "status"):
         stopping = sub.add_parser(verb)
         stopping.add_argument("--item", required=True)
         stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
+        if verb == "status":
+            stopping.add_argument("--worktree", action="store_true")
     unit = sub.add_parser("validate")
     for field in ("item", "run-id"):
         unit.add_argument("--" + field, required=True)
@@ -1707,7 +1779,7 @@ def dispatch(row, args):
         if not peer_read_allowed(row, args.path):
             notice("peer-read-outside-inbox", path=args.path)
             raise SystemExit(1)
-        data = read(row, args.path)
+        data = read(row, args.path, session_rows=args.session_rows)
         if data is None:
             raise SystemExit(2)
         sys.stdout.buffer.write(data)
@@ -1722,7 +1794,7 @@ def dispatch(row, args):
     elif args.verb == "stop":
         stop(row, args.item)
     elif args.verb == "status":
-        status(row, args.item)
+        status(row, args.item, prove_worktree=args.worktree)
     elif args.verb == "close":
         path = owned_worktree(row, args.item, "close")
         # Nothing of the lane outlives its record: a lane whose SSH session

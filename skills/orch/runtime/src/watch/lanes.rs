@@ -732,8 +732,8 @@ impl HostRead {
         let pi = lane.harness.as_deref().and_then(Harness::parse) == Some(Harness::Pi);
         let rows = match (caps.files, &status) {
             (Files::Verb, None | Some(Ok(HostStatus::Running))) if pi => {
-                Some(Ok(match hosted::session_rows(scripts, lane) {
-                    Answer::Live(text) => rows::last_row_in(&text),
+                Some(Ok(match hosted::session_rows(scripts, lane, caps) {
+                    Answer::Live(rows) => rows.last_row(),
                     Answer::Gone => Reading::Gone,
                     Answer::Unreadable { .. } => Reading::Unreadable {
                         cause: "rows-host-unread",
@@ -757,12 +757,16 @@ impl HostRead {
 fn ssh_claude_rows(
     lane: &Lane,
     pass: &Pass,
+    caps: Capabilities,
     out: &mut Produced,
 ) -> Result<Reading<rows::Row>, String> {
-    let rooted = hosted::with_session_root(lane, &pass.fleet.intents);
-    let text = match hosted::confirmed_session_rows(pass.scripts, &rooted) {
-        Answer::Live(text) => text,
-        Answer::Gone => String::new(),
+    let answer = match hosted::with_session_root(pass.scripts, lane, &pass.fleet.intents, caps) {
+        Ok(rooted) => hosted::confirmed_session_rows(pass.scripts, &rooted, caps),
+        Err(cause) => hosted::session_rows_unreadable(hosted::host_of(lane), &lane.item, &cause),
+    };
+    let window = match answer {
+        Answer::Live(rows) => Some(rows),
+        Answer::Gone => None,
         Answer::Unreadable { cause } => return Err(cause),
     };
     let at = if let Some(at) = lane.session_rows_at_launch {
@@ -792,23 +796,33 @@ fn ssh_claude_rows(
                 out.changes.push(set(
                     SSH_ROWS_FLOOR,
                     &name,
-                    format!("{}|{attempt}", rows::last_position_in(&text)),
+                    format!(
+                        "{}|{attempt}",
+                        window
+                            .as_ref()
+                            .map_or(0, hosted::SessionRows::last_position),
+                    ),
                 ));
                 return Ok(Reading::Gone);
             }
         }
     };
-    Ok(match rows::last_row_in(&text) {
-        Reading::Live(row)
-            if row.position > at
-                && row.harness.as_deref() == Some("claude")
-                && rows::stop_of(&row) == Some(Kind::Provider) =>
+    Ok(
+        match window
+            .as_ref()
+            .map_or(Reading::Gone, hosted::SessionRows::last_row)
         {
             Reading::Live(row)
-        }
-        Reading::Unreadable { cause } => Reading::Unreadable { cause },
-        Reading::Live(_) | Reading::Gone => Reading::Gone,
-    })
+                if row.position > at
+                    && row.harness.as_deref() == Some("claude")
+                    && rows::stop_of(&row) == Some(Kind::Provider) =>
+            {
+                Reading::Live(row)
+            }
+            Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            Reading::Live(_) | Reading::Gone => Reading::Gone,
+        },
+    )
 }
 
 /// Read one lane: the pane, its foreground, its screen and its local rows. `host` is what its provider answered first: an
@@ -1287,11 +1301,11 @@ pub fn observe(pass: &Pass) -> Produced {
                 // by their pane. They cannot bind a watch floor to an attempt.
                 && (lane.mail_root_confirmed || identity_of(lane).is_some())
                 && matches!(host.status, Some(Ok(HostStatus::Running)))
-                && hosts.of(lane).is_ok_and(|caps| {
-                    caps.launch == Some(hosted::Launch::Ssh) && caps.files == Files::Verb
-                })
+                && let Ok(caps) = hosts.of(lane)
+                && caps.launch == Some(hosted::Launch::Ssh)
+                && caps.files == Files::Verb
             {
-                host.rows = Some(ssh_claude_rows(lane, pass, &mut out));
+                host.rows = Some(ssh_claude_rows(lane, pass, caps, &mut out));
             }
             let failed_status = matches!(host.status, Some(Err(_)));
             let mut obs = read_lane(lane, pass.readers, &sockets, host, None);
