@@ -327,10 +327,13 @@ fn launch_record(lane: &Lane) -> Result<Option<serde_json::Map<String, Value>>, 
     };
     let item = marker::item_name(item).map_err(|e| e.to_string())?;
     let path = marker::launch_path(common, item);
-    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
-        return Ok(None);
-    }
     let unread = |cause: &dyn std::fmt::Display| format!("{}: {cause}", path.display());
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => return Ok(None),
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(cause) => return Err(unread(&cause)),
+    }
     let text = std::fs::read_to_string(&path).map_err(|e| unread(&e))?;
     let record: Value = serde_json::from_str(&text).map_err(|e| unread(&e))?;
     let Value::Object(record) = record else {
@@ -351,7 +354,7 @@ fn identity_file(record: &serde_json::Map<String, Value>) -> Option<&str> {
 pub(super) struct HostedCaller {
     record: serde_json::Map<String, Value>,
     file: PathBuf,
-    leader: agent_runtime::process::Identity,
+    pub leader: agent_runtime::process::Identity,
 }
 
 /// The hosted launch, only when its live recorded group serves this caller.

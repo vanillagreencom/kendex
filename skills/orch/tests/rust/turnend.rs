@@ -14,7 +14,6 @@ mod support;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
@@ -3872,6 +3871,15 @@ fn a_call_naming_no_session_reads_the_session_bound_at_its_pane() {
     );
     let out = world.session(&four);
     assert!(refused(&out), "another pane: {} {}", out.stdout, out.stderr);
+    fs::write(world.fleet(), "{").unwrap();
+    let out = world.session(&three);
+    assert!(
+        refused(&out),
+        "unreadable fleet: {} {}",
+        out.stdout,
+        out.stderr
+    );
+    assert!(out.stdout.contains(world.fleet().to_str().unwrap()));
 }
 
 #[test]
@@ -3881,34 +3889,24 @@ fn a_lane_session_uses_only_its_own_launch_effort() {
     let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
     world.tool_call("claude", Some(&transcript), &env);
     let unrelated = Owned::sleep();
-    for (session, pid, start, code, line) in [
-        (
-            "s1",
-            std::process::id(),
-            start_of(std::process::id()),
-            0,
-            "effort=high source=launch",
-        ),
+    let here = json!({"pid": std::process::id(), "start": start_of(std::process::id())});
+    let elsewhere = json!({"pid": unrelated.pid(), "start": unrelated.start()});
+    for (session, launch, code, line) in [
+        ("s1", here.clone(), 0, "effort=high source=launch"),
         (
             "previous",
-            std::process::id(),
-            start_of(std::process::id()),
+            here,
             1,
             "session-effort-unrecorded harness=claude session=s1",
         ),
-        (
-            "s1",
-            unrelated.pid(),
-            unrelated.start(),
-            2,
-            "session-unnamed",
-        ),
+        ("s1", elsewhere, 2, "session-unnamed"),
+        ("s1", Value::Null, 2, "session-unnamed"),
     ] {
         fs::write(
             world.fleet(),
             json!({"lanes": [{"item": ITEM, "harness": "claude",
         "status": "running", "session_id": session, "effort": "high",
-        "launch": {"pid": pid, "start": start}}]})
+        "launch": launch}]})
             .to_string(),
         )
         .unwrap();
@@ -3924,18 +3922,60 @@ fn a_lane_session_uses_only_its_own_launch_effort() {
 }
 
 #[test]
-fn a_hosted_lane_session_is_named_only_inside_its_launch_group() {
+fn a_session_uses_launch_effort_only_when_the_native_effort_is_unrecorded() {
     let world = World::launched();
     let env = [("AGENT_RUNTIME_LAUNCH_AGENT", ITEM)];
-    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
-    world.tool_call("claude", Some(&transcript), &env);
-    let leader = Owned(program("sleep").arg("30").process_group(0).spawn().unwrap());
-    let identity = world.root.join("identity");
+    let transcript = world.transcript(
+        "r.jsonl",
+        &[json!({"type": "turn_context", "payload": {"model": "gpt-5", "effort": "medium"}})],
+    );
+    world.tool_call("codex", Some(&transcript), &env);
     fs::write(
-        &identity,
-        json!({"pid": leader.pid(), "start": leader.start()}).to_string(),
+        world.fleet(),
+        json!({"lanes": [{"item": ITEM, "harness": "codex", "status": "running",
+            "session_id": "s1", "effort": "high", "launch": {"pid": std::process::id(),
+            "start": start_of(std::process::id())}}]})
+        .to_string(),
     )
     .unwrap();
+    let native = world.session(&env);
+    fs::remove_file(&transcript).unwrap();
+    let unread = world.session(&env);
+    assert_eq!(
+        [native.code, unread.code],
+        [0, 2],
+        "{}{}{}{}",
+        native.stdout,
+        native.stderr,
+        unread.stdout,
+        unread.stderr
+    );
+    assert_eq!(
+        [
+            native.stdout.lines().nth(1),
+            unread
+                .stdout
+                .lines()
+                .nth(1)
+                .and_then(|line| line.split_whitespace().next())
+        ],
+        [
+            Some("effort=medium source=session"),
+            Some("session-file-unreadable")
+        ]
+    );
+}
+
+#[test]
+fn a_hosted_lane_session_is_named_only_for_its_launch_lead() {
+    let world = World::launched();
+    let env = [
+        ("AGENT_RUNTIME_LAUNCH_AGENT", ITEM),
+        ("AGENT_RUNTIME_LAUNCH_EFFORT", "high"),
+    ];
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    world.tool_call("claude", Some(&transcript), &env);
+    let identity = world.root.join("identity");
     let launches = world.common().join("lane-launch");
     fs::create_dir_all(&launches).unwrap();
     fs::write(
@@ -3943,25 +3983,40 @@ fn a_hosted_lane_session_is_named_only_inside_its_launch_group() {
         json!({"identity_file": identity}).to_string(),
     )
     .unwrap();
-    let mut inside = isolated();
-    inside.process_group(i32::try_from(leader.pid()).unwrap());
-    let out = world.session_process(inside, &env);
+    // The hosted provider records the program it execs. The fixture keeps
+    // that lead alive as the direct parent while it serves each valid call.
+    let shell = r#""$@"; result=$?; exit "$result""#;
+    let run = |nested: Option<&Path>| {
+        let mut lead = program(agent_runtime());
+        lead.args(["process", "lead", "--file"])
+            .arg(&identity)
+            .args(["--", "/bin/sh", "-c", shell, "hosted"]);
+        if let Some(nested) = nested {
+            lead.arg(nested).args(["-c", shell, "nested"]);
+        }
+        lead.arg(binary());
+        world.session_process(lead, &env)
+    };
+    let out = run(None);
     assert_eq!(
         (out.code, out.stdout.as_str()),
         (
-            1,
-            "model=claude-haiku-5-5 source=session\nsession-effort-unrecorded harness=claude session=s1\nagent=ken-1 source=launch\n"
+            0,
+            "model=claude-haiku-5-5 source=session\neffort=high source=launch\nagent=ken-1 source=launch\n"
         ),
         "{}",
         out.stderr
     );
-    let out = world.session(&env);
-    assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
-    assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
-    assert_eq!(
-        out.stdout.split_whitespace().next(),
-        Some("session-unnamed")
-    );
+    let nested = world.root.join("pi");
+    copy_executable(Path::new("/bin/sh"), &nested);
+    for out in [run(Some(&nested)), world.session(&env)] {
+        assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
+        assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+        assert_eq!(
+            out.stdout.split_whitespace().next(),
+            Some("session-unnamed")
+        );
+    }
 }
 
 #[test]
@@ -4020,6 +4075,70 @@ fn a_controller_session_is_named_only_for_its_own_caller() {
         controller["harness_start"] = json!(unrelated.start());
         fs::write(world.fleet(), json!({"controller": controller}).to_string()).unwrap();
         unnamed(world.session(&env));
+        fs::write(world.fleet(), "{").unwrap();
+        let out = world.session(&env);
+        assert!(out.stdout.contains(world.fleet().to_str().unwrap()));
+        unnamed(out);
+    }
+}
+
+#[test]
+fn a_pi_controller_requires_the_current_native_session() {
+    let world = World::new();
+    fs::create_dir_all(world.lane.join("tmp")).unwrap();
+    let pane = world.on_pane("%3");
+    let mut env = borrowed(&pane);
+    env.extend([
+        ("AGENT_RUNTIME_LAUNCH_AGENT", "controller"),
+        ("PI_REASONING_LEVEL", "medium"),
+    ]);
+    let sessions = world
+        .home
+        .join(".pi/agent/sessions")
+        .join(agent_runtime::session::pi_slug(&world.lane));
+    fs::create_dir_all(&sessions).unwrap();
+    fs::write(
+        sessions.join("start_s1.jsonl"),
+        format!(
+            "{}\n",
+            json!({
+                "type": "message", "message": {"role": "assistant", "provider": "openai",
+                    "model": "gpt-5", "usage": {"input": 100, "output": 10}}
+            })
+        ),
+    )
+    .unwrap();
+    fs::write(
+        world.fleet(),
+        json!({"controller": {
+            "harness": "pi", "session_id": "s1", "cwd": world.lane, "effort": "high",
+            "server": SERVER_PID, "server_start": 1700000000,
+            "server_socket": world.root.join("tmux-socket"), "pane": "%3",
+            "harness_pid": std::process::id(), "harness_start": start_of(std::process::id())
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    // Pi's Bash tool supplies the active session ID anew after a switch.
+    for (id, code) in [(None, 2), (Some("replacement"), 2), (Some("s1"), 0)] {
+        let mut caller = env.clone();
+        if let Some(id) = id {
+            caller.push(("PI_SESSION_ID", id));
+        }
+        let out = world.session(&caller);
+        assert_eq!(out.code, code, "{id:?}: {} {}", out.stdout, out.stderr);
+        if code == 0 {
+            assert_eq!(
+                out.stdout,
+                "model=openai/gpt-5 source=session\neffort=medium source=session\nagent=controller source=launch\n"
+            );
+        } else {
+            assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+            assert_eq!(
+                out.stdout.split_whitespace().next(),
+                Some("session-unnamed")
+            );
+        }
     }
 }
 
