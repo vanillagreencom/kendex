@@ -15,6 +15,7 @@ use agent_runtime::{
 };
 use serde::Serialize;
 
+use super::files::StopRecord;
 use super::{KILL_GRACE, apply, ci_env, item_of_run_dir, load};
 use crate::error::{Error, Result};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
@@ -934,11 +935,7 @@ pub(crate) fn executor_reading(
 pub(crate) fn command_reading(run_dir: &Path) -> Result<Option<Reading<()>>> {
     let command = read_command(run_dir)?;
     if execution_unanswered(&command)
-        && stop_recorded(run_dir)
-        && let Ok(runner) = super::files::fields(&run_dir.join("runner"))
-        && let Some(kind) = runner.get("runner")
-        && (kind != "systemd" || runner.contains_key("status"))
-        && abandoned_execution(&super::files::RunFile::read(run_dir)?, kind)
+        && StopRecord::read(run_dir)? == Some(StopRecord::AbandonedExecution)
     {
         return Ok(Some(Reading::Gone));
     }
@@ -974,7 +971,7 @@ fn abandoned_execution(run: &super::files::RunFile, runner: &str) -> bool {
     clippy::disallowed_methods,
     reason = "the run's command identity is read before a new start can use its host"
 )]
-fn read_command(run_dir: &Path) -> Result<Option<Reading<()>>> {
+pub(super) fn read_command(run_dir: &Path) -> Result<Option<Reading<()>>> {
     let bytes = match fs::read(run_dir.join("command")) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1391,8 +1388,8 @@ pub(super) fn host_ready(worktree: &Path, host: &str) -> Result<&'static str> {
 /// answer is final, so the executor asks no more.
 const HOST_REFUSED: i32 = 4;
 
-/// Whether a stop has been recorded on the run: the stop path writes it
-/// before it waits for the run's close, which this executor gives.
+/// Whether a stop has been recorded on the run. A live host executor needs
+/// to react to a request as soon as it is published.
 fn stop_recorded(run_dir: &Path) -> bool {
     fs::symlink_metadata(run_dir.join("stop")).is_ok()
 }
@@ -1994,29 +1991,25 @@ pub fn stop_worktree(
 }
 
 /// End a run's command group, then its runner unless that runner is
-/// attached, by the identities its own files record. The `stop` file makes
-/// the run's ending read a stop, so `--record` reads it `verdict=no-verdict`,
-/// and `--wait` reads it `state=done stopped`, not `lost`, where the run
-/// wrote no sentinel, and `state=done guard-exit=N ... validate=no-verdict`
-/// where it wrote one. It is written
-/// before the end it records: at once on a run whose stage records the stop
-/// (`staged`), since that stage's close reads `stopped` whatever the stop
-/// finds, and otherwise only where the command group, or a runner that is
-/// not attached, does not read gone, or an unanswered execution claim has
-/// a recorded runner that reads gone. Other runs whose work reads gone at
-/// a stop no stage records keep the word their own ending reads. A host run's
-/// command runs on its host: the host stop (`release_host`) is asked
-/// whatever the run's holder reads, and a stop it does not confirm refuses
-/// `stop-failed`.
+/// attached, by the identities its own files record. The stop request
+/// tells a live executor to close. A staged stop records the request before
+/// signalling anything. For an unanswered execution claim, only confirming
+/// the runner's end and checking that no command could still be held releases
+/// the run. That confirmation remains readable without the user manager.
+/// A host run is stopped through its provider, which must confirm the stop.
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"
 )]
 pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static str>> {
-    let mut marked = false;
+    let stop = StopRecord::read(run_dir)?;
+    if stop == Some(StopRecord::AbandonedExecution) {
+        return Ok(None);
+    }
+    let mut marked = stop.is_some();
     let mut mark = |live: bool| -> Result<()> {
         if live && !marked {
-            atomic(run_dir, "stop", "stop-requested\n")?;
+            StopRecord::Requested.write(run_dir)?;
             marked = true;
         }
         Ok(())
@@ -2059,12 +2052,9 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                     );
                 return Ok((asked || held).then_some("attached"));
             }
-            let runner_record = run_dir.join("runner");
-            let runner = super::files::fields(&runner_record).ok();
-            let kind = runner
-                .as_ref()
-                .and_then(|r| r.get("runner"))
-                .map(String::as_str);
+            let kind = super::files::fields(&run_dir.join("runner"))
+                .ok()
+                .and_then(|r| r.get("runner").cloned());
             if super::files::unstarted(&run)? {
                 // A start whose child never ran and whose launcher wrote no
                 // runner record names no process and no unit: there is
@@ -2075,7 +2065,7 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                 {
                     return Ok(None);
                 }
-                match kind {
+                match kind.as_deref() {
                     Some("systemd") => {}
                     Some("setsid" | "attached") => return Ok(None),
                     _ => {
@@ -2088,25 +2078,10 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
             } else {
                 let command = read_command(run_dir)?;
                 if execution_unanswered(&command)
-                    && let Some(kind) = kind
+                    && let Some(kind) = kind.as_deref()
                     && abandoned_execution(&run, kind)
                 {
-                    mark(!stop_recorded(run_dir))?;
-                    // The launcher's ended status keeps the unit's absence
-                    // readable when a replacement cannot reach its manager.
-                    if kind == "systemd" && runner.is_some_and(|r| !r.contains_key("status")) {
-                        let record = fs::read_to_string(&runner_record)
-                            .map_err(|e| super::files::unreadable("runner", e))?;
-                        atomic(
-                            run_dir,
-                            "runner",
-                            &format!(
-                                "{}\nstatus={}\n",
-                                record.trim_end_matches('\n'),
-                                crate::ops::RunCause::UnitEnded.word()
-                            ),
-                        )?;
-                    }
+                    StopRecord::AbandonedExecution.write(run_dir)?;
                     return Ok(None);
                 }
                 if command.is_some_and(|reading| !matches!(reading, Reading::Gone))
@@ -2274,28 +2249,46 @@ mod tests {
     )]
     fn stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone() {
         const FIXTURE: &str = "KENDEX_TEST_UNANSWERED_EXECUTION";
+        const CASE: &str = "KENDEX_TEST_STOP_CASE";
         if let Some(worktree) = std::env::var_os(FIXTURE).map(PathBuf::from) {
             let run = worktree.join("tmp/dev-validate-claim");
-            if !agent_runtime::confine::confined() {
-                assert_eq!(stop_files(&run, false).unwrap(), None);
-            } else if std::env::var_os("KENDEX_TEST_STOP_PENDING").is_some() {
-                let error = stop_files(&run, true).unwrap_err();
-                assert!(matches!(
-                    error,
-                    Error::ValidateUnreadable {
-                        read: "stop-unreadable",
-                        ..
-                    }
-                ));
-                assert!(stop_recorded(&run));
-                assert_eq!(files::live(&worktree).unwrap(), Some((run, 0)));
-            } else {
-                assert_eq!(files::live(&worktree).unwrap(), None);
-                assert_eq!(
-                    files::RunFile::read(&run).unwrap().verdict().unwrap(),
-                    "no-verdict"
-                );
+            let case = std::env::var(CASE).unwrap();
+            match case.as_str() {
+                "pending" => {
+                    assert!(agent_runtime::confine::confined());
+                    let error = stop_files(&run, true).unwrap_err();
+                    assert!(matches!(
+                        error,
+                        Error::ValidateUnreadable {
+                            read: "stop-unreadable",
+                            ..
+                        }
+                    ));
+                    assert_eq!(StopRecord::read(&run).unwrap(), Some(StopRecord::Requested));
+                    assert_eq!(files::live(&worktree).unwrap(), Some((run, 0)));
+                }
+                "host-stop" => {
+                    assert!(!agent_runtime::confine::confined());
+                    assert_eq!(stop_files(&run, false).unwrap(), None);
+                }
+                "confirmed" => {
+                    assert!(agent_runtime::confine::confined());
+                    assert_eq!(files::live(&worktree).unwrap(), None);
+                    assert_eq!(
+                        files::RunFile::read(&run).unwrap().verdict().unwrap(),
+                        "no-verdict"
+                    );
+                    assert_eq!(stop_files(&run, true).unwrap(), None);
+                    // A requester can have read the old record before the host confirmed it.
+                    StopRecord::Requested.write(&run).unwrap();
+                    assert_eq!(
+                        StopRecord::read(&run).unwrap(),
+                        Some(StopRecord::AbandonedExecution)
+                    );
+                }
+                _ => panic!("unknown stop fixture case {case}"),
             }
+            fs::write(worktree.join(format!("checked-{case}")), &case).unwrap();
             return;
         }
 
@@ -2365,19 +2358,25 @@ mod tests {
                 assert_eq!(result.unwrap(), WorktreeStop::default());
                 assert_eq!(fs::read_to_string(&path).unwrap(), record);
             } else if case == "live" || !claim.is_empty() {
-                let error = stop_files(&run, false).unwrap_err();
-                assert!(
-                    matches!(error, Error::ValidateUnreadable { read: "stop-unreadable", ref cause }
-                    if cause.ends_with(" execution-unanswered"))
-                );
-                assert!(!run.join("stop").exists());
+                for staged in [false, true] {
+                    let error = stop_files(&run, staged).unwrap_err();
+                    assert!(
+                        matches!(error, Error::ValidateUnreadable { read: "stop-unreadable", ref cause }
+                        if cause.ends_with(" execution-unanswered"))
+                    );
+                    assert_eq!(
+                        StopRecord::read(&run).unwrap(),
+                        staged.then_some(StopRecord::Requested)
+                    );
+                    assert_eq!(files::live(&worktree).unwrap(), Some((run.clone(), 0)));
+                }
                 continue;
             } else {
                 assert_eq!(stop_files(&run, false).unwrap(), None);
             }
             assert_eq!(
-                fs::read_to_string(run.join("stop")).unwrap(),
-                "stop-requested\n"
+                StopRecord::read(&run).unwrap(),
+                Some(StopRecord::AbandonedExecution)
             );
             assert_eq!(
                 files::RunFile::read(&run).unwrap().verdict().unwrap(),
@@ -2391,11 +2390,8 @@ mod tests {
         let run = worktree.join("tmp/dev-validate-claim");
         fs::create_dir_all(&run).unwrap();
         fs::write(run.join("start"), "start=1\n").unwrap();
-        fs::write(
-            run.join("runner"),
-            "runner=systemd\nunit=orch-ken-5938\nline=runner=systemd unit=orch-ken-5938\n",
-        )
-        .unwrap();
+        let runner = "runner=systemd\nunit=orch-ken-5938\nline=runner=systemd unit=orch-ken-5938\n";
+        fs::write(run.join("runner"), runner).unwrap();
         fs::write(run.join("execution"), "attempted\n").unwrap();
         let systemctl = root.join("systemctl");
         fs::write(&systemctl, "#!/bin/sh\n[ \"$*\" = '--user show -p LoadState,ActiveState --value -- orch-ken-5938.service' ] || exit 2\nprintf 'not-found\\ninactive\\n'\n").unwrap();
@@ -2404,24 +2400,26 @@ mod tests {
             &std::env::var_os("PATH").unwrap_or_default(),
         )))
         .unwrap();
-        for (confined, pending) in [("1", true), ("0", false), ("1", false)] {
-            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-            child.args(["--exact", "validate::run::tests::stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone"])
+        for (case, confined) in [("pending", "1"), ("host-stop", "0"), ("confirmed", "1")] {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "validate::run::tests::stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone"])
                 .env(FIXTURE, &worktree)
+                .env(CASE, case)
                 .env("PATH", &path)
                 .env(agent_runtime::confine::CONFINED_VAR, confined)
-                .env_remove("KENDEX_TEST_STOP_PENDING");
-            if pending {
-                child.env("KENDEX_TEST_STOP_PENDING", "1");
-            }
-            let result = child.output().unwrap();
+                .output().unwrap();
             assert!(
                 result.status.success(),
                 "{}\n{}",
                 String::from_utf8_lossy(&result.stdout),
                 String::from_utf8_lossy(&result.stderr)
             );
+            assert_eq!(
+                fs::read_to_string(worktree.join(format!("checked-{case}"))).unwrap(),
+                case
+            );
         }
+        assert_eq!(fs::read_to_string(run.join("runner")).unwrap(), runner);
     }
 
     #[test]

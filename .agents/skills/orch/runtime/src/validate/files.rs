@@ -1,4 +1,4 @@
-//! Run-file reads for validation, proof and the catalog entry.
+//! Run files for validation, proof and the catalog entry.
 use crate::error::{Error, Result};
 use crate::state::{Proof, Reused, Stage, StageOutcome, ValidateMode};
 use agent_runtime::clock::Clock;
@@ -62,11 +62,72 @@ pub struct Timing {
     pub ended_at: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum StopRecord {
+    Requested,
+    AbandonedExecution,
+}
+
+impl StopRecord {
+    const REQUESTED: &str = "stop-requested\n";
+    const ABANDONED: &str = "execution-abandoned\n";
+
+    pub(super) fn read(dir: &Path) -> Result<Option<Self>> {
+        match fs::read_to_string(dir.join("stop")) {
+            Ok(text) if text == Self::REQUESTED => Ok(Some(Self::Requested)),
+            Ok(text) if text == Self::ABANDONED => Ok(Some(Self::AbandonedExecution)),
+            Ok(_) => Err(unreadable("stop-unreadable", dir.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(unreadable("stop-unreadable", e)),
+        }
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the stop record publishes a whole request or confirmation without letting a concurrent request replace a confirmation"
+    )]
+    pub(super) fn write(self, dir: &Path) -> Result<()> {
+        use std::io::{ErrorKind, Write};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = dir.join("stop");
+        let (part, mut file) = loop {
+            let next = NEXT.fetch_add(1, Ordering::Relaxed);
+            let part = dir.join(format!(".stop-{}-{next}.part", std::process::id()));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&part)
+            {
+                Ok(file) => break (part, file),
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(unreadable("stop-write", e)),
+            }
+        };
+        let text = match self {
+            Self::Requested => Self::REQUESTED,
+            Self::AbandonedExecution => Self::ABANDONED,
+        };
+        let written = file.write_all(text.as_bytes());
+        drop(file);
+        let published = written.and_then(|()| match self {
+            Self::Requested => match fs::hard_link(&part, &path) {
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
+                result => result,
+            },
+            Self::AbandonedExecution => fs::rename(&part, &path),
+        });
+        let _ = fs::remove_file(&part);
+        published.map_err(|e| unreadable("stop-write", e))
+    }
+}
+
 pub struct RunFile {
     pub dir: PathBuf,
     pub start: BTreeMap<String, String>,
     pub sentinel: Option<String>,
-    stopped: bool,
+    stop: Option<StopRecord>,
 }
 impl RunFile {
     pub fn read(dir: &Path) -> Result<Self> {
@@ -76,14 +137,8 @@ impl RunFile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(unreadable("sentinel-unreadable", e)),
         };
-        let stopped = match fs::read_to_string(dir.join("stop")) {
-            Ok(text) if text == "stop-requested\n" => true,
-            Ok(_) => return Err(unreadable("stop-unreadable", dir.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(unreadable("stop-unreadable", e)),
-        };
         Ok(Self {
-            stopped,
+            stop: StopRecord::read(dir)?,
             dir: dir.to_owned(),
             start: fields(&dir.join("start"))?,
             sentinel,
@@ -93,6 +148,9 @@ impl RunFile {
         self.start.get(key).map(String::as_str).unwrap_or("")
     }
     pub fn outcome(&self) -> Option<StageOutcome> {
+        if self.stop == Some(StopRecord::AbandonedExecution) {
+            return Some(StageOutcome::Stopped);
+        }
         self.stop_word(
             self.sentinel
                 .as_deref()
@@ -102,9 +160,10 @@ impl RunFile {
     /// How the run ended. With a sentinel, its word, `None` where it names
     /// none. Without one, `lost` where [`lost`] reads it so under
     /// `past_grace`, else `None`. Either word reads `stopped` where the stop
-    /// file records a stop.
+    /// file records a stop. A confirmed abandoned execution already gives
+    /// the ending even when the unit manager is no longer reachable.
     fn ending(&self, past_grace: bool) -> Result<Option<StageOutcome>> {
-        if self.sentinel.is_some() {
+        if self.sentinel.is_some() || self.stop == Some(StopRecord::AbandonedExecution) {
             return Ok(self.outcome());
         }
         Ok(self.stop_word(lost(self, past_grace)?.then_some(StageOutcome::Lost)))
@@ -112,7 +171,7 @@ impl RunFile {
     /// A stop the stop file records ended the run: its ending reads
     /// `stopped`, as the stage's close reads it.
     fn stop_word(&self, ended: Option<StageOutcome>) -> Option<StageOutcome> {
-        if self.stopped {
+        if self.stop.is_some() {
             ended.map(|_| StageOutcome::Stopped)
         } else {
             ended
@@ -560,13 +619,17 @@ fn live_inner(worktree: &Path, strict: bool) -> Result<Option<(PathBuf, u32)>> {
 /// command's group by the identity its executor recorded, else its runner
 /// by the launcher's record, or by the executor's own record where the
 /// wrapper hides the unit's manager. A run whose child never ran holds
-/// nothing. Under `strict` an unreadable reading refuses with its cause.
+/// nothing, and a confirmed abandoned execution has already been checked
+/// by the stop owner. Under `strict` an unreadable reading refuses with its cause.
 /// Otherwise a hidden manager's reading with no executor record stays
 /// unreadable, and any other unreadable reading holds the run, since a
 /// later read can answer it: unconfined, `unit-unsettled` is also the
 /// reading of a unit that still runs.
 fn holds(run: &RunFile, strict: bool) -> Result<Reading<u32>> {
-    let command = super::run::command_reading(&run.dir)
+    if run.stop == Some(StopRecord::AbandonedExecution) {
+        return Ok(Reading::Gone);
+    }
+    let command = super::run::read_command(&run.dir)
         .map_err(|e| unreadable("command-identity", format!("{}: {e}", run.dir.display())))?;
     if let (true, Some(Reading::Unreadable { cause })) = (strict, command.as_ref()) {
         return Err(unreadable(
