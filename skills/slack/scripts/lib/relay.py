@@ -1424,19 +1424,10 @@ class RootRelay:
                     self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
     def ask_pieces(self, envelope: Dict, header: str) -> List[Union[str, Verbatim]]:
-        """The whole question under `header`: its text, any draft, and its
-        options, recommendation and deadline, a blank line between each. A
-        question the tracker holds is one line: the header, its first line,
-        the issue and the deadline."""
-        if envelope.get("tracker_posted") is True:
-            # The tracker holds the detail; the one line still names the owner,
-            # frames the decision and gives its deadline. Outbound markup
-            # resolves the issue identifier to its tracker link.
-            question = envelope.get("text", "").split("\n", 1)[0]
-            return [" ".join(part for part in (header, question, str(envelope["issue"]), deadline_clause(envelope))
-                             if part)]
         options = ", ".join(envelope.get("options") or [])
         lines = [header, envelope.get("text", "")]
+        if envelope.get("tracker_posted") is True:
+            lines.append(str(envelope["issue"]))
         draft = envelope.get("draft")
         if draft:
             # The owner approves this exact text, so it is posted whole and

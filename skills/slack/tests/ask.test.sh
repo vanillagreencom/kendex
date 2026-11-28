@@ -63,11 +63,20 @@ sk_assert_red "$POSTED" "markdown_text|$MARKDOWN_WANT" "control: a fence its bac
 
 sk_bin_reset
 
-# The tracker carries the detail. Slack posts one line: the owner mention and
-# question frame, the first question line, the issue identifier, which
-# outbound markup expands into its link, and the deadline.
+# Read the deadline lane-mail assigned so the assertion checks Slack's date
+# token and fallback without depending on the time the test takes to post.
+ask_deadline() { # ROOT ASK_ID
+  local at deadline
+  at="$(jq -er --arg id "$2" 'select(.kind == "ask" and .id == $id) | .deadline' \
+    "$(sk_box "$1")/to-overseer.jsonl")" || return 1
+  deadline="$(jq -rn --arg at "$at" '$at | fromdateiso8601')" || return 1
+  printf 'It stands at <!date^%s^{date_short_pretty} at {time}|%s> unless you reply in this thread.' "$deadline" "$at"
+}
+
 tracker_ask() { # NAME FAILURE
-  local root scripts phase="${2:-}" at deadline ask_rc=0 notice
+  local root scripts phase="${2:-}" deadline ask_rc=0 notice
+  local question='Approve action?
+The action updates the release checklist.'
   root="$(sk_tracker_root "$1" Team '')"
   sk_bind "$root"
   scripts="$root/.agents/skills/mailbox/scripts"
@@ -98,12 +107,12 @@ STUB
   chmod +x "$root/.agents/skills/linear/scripts/linear.sh"
   ASK="$(cd "$root" && env ORCH_OWNER_EMAIL=owner@example.com ORCH_OWNER_ASK_LABEL=owner-gated LINEAR_TEAM=KEN \
     TRACKER_FAILURE="$phase" "$scripts/lane-mail" ask --item overseer --to owner \
-    --issue KEN-1 --do 'Approve the action. Your reply closes this ask.' --file "$(sk_text "$1" 'Approve action?
-Details on the item.')" --options approve,hold --recommend approve --effect none --wait 60 2>"$root/tracker.err")" || ask_rc=$?
+    --issue KEN-1 --do 'Approve the action. Your reply closes this ask.' --file "$(sk_text "$1" "$question")" \
+    --options approve,hold --recommend approve --effect none --wait 60 2>"$root/tracker.err")" || ask_rc=$?
   assert_eq "$ask_rc" 0 "$1 creates the owner ask"
   case "$ASK" in
     id=?*) ok "$1 returns its owner ask id" ;;
-    *) bad "$1 returns its owner ask id" "$ASK"; TRACKER_POST=""; FALLBACK_FACTS=false; return ;;
+    *) bad "$1 returns its owner ask id" "$ASK"; return ;;
   esac
   ASK="${ASK#id=}"
   if [ -n "$phase" ]; then
@@ -115,37 +124,32 @@ Details on the item.')" --options approve,hold --recommend approve --effect none
   [ -n "$phase" ] || posted=true
   assert_eq "$(jq -s --arg id "$ASK" 'any(.[]; .kind == "tracker-posted" and .re == $id)' \
     "$(sk_box "$root")/to-overseer.jsonl")" "$posted" "$1 records the intended tracker posting result"
-  at="$(jq -r 'select(.kind == "ask") | .deadline' "$(sk_box "$root")/to-overseer.jsonl")"
-  deadline="$(jq -rn --arg at "$at" '$at | fromdateiso8601')"
+  deadline="$(ask_deadline "$root" "$ASK")" || { bad "$1 records a deadline"; return; }
   sk_poll "$root"
-  TRACKER_POST="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
-  # The one line still names the owner, frames the decision and gives its deadline.
-  TRACKER_LINE="<@U001> <@U002> Question from overseer: Approve action? $LINK It stands at <!date^$deadline^{date_short_pretty} at {time}|$at> unless you reply in this thread."
-  # Slack's API post must carry the supplied question, choices and the date
-  # token for the ask's deadline, rather than a guessed wall-clock value.
-  FALLBACK_FACTS="$(jq -cn --arg text "$TRACKER_POST" --arg deadline "$deadline" \
-    '$text | contains("Details on the item.") and contains("approve, hold") and contains($deadline)')"
+  local actual expected
+  actual="$(sk_state ".messages.$(sk_channel "$root")[] | select(.text | contains(\"Approve action?\")) | .text")"
+  expected="<@U001> <@U002> Question from overseer:
+
+$question"
+  if [ "$posted" = true ]; then
+    expected="$expected
+
+$LINK"
+  fi
+  assert_eq "$actual" "$expected
+
+Options: approve, hold. Recommended: approve. $deadline" \
+    "$1 posts the whole question, options, recommendation and deadline"
 }
-tracker_ask tracker-line
-assert_eq "$TRACKER_POST" "$TRACKER_LINE" \
-  'tracker ask posts the owner mention, the question frame, its first line, issue link and deadline'
-sk_mutant tracker-line relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if False:'
-tracker_ask tracker-line-control
-sk_assert_red "$TRACKER_POST" "$TRACKER_LINE" \
-  'control: posting the whole ask fails the tracker line assertion'
-sk_bin_reset
+tracker_ask tracker-posted
 for failure in assign labels-read label comment; do
   tracker_ask "tracker-fallback-$failure" "$failure"
-  assert_eq "$FALLBACK_FACTS" true "$failure keeps the question, options and deadline in the Slack API post"
 done
-sk_mutant tracker-confirmation relay.py 'if envelope.get\("tracker_posted"\) is True:' 'if envelope.get("issue"):'
-tracker_ask tracker-fallback-control comment
-sk_assert_red "$FALLBACK_FACTS" true \
-  'control: issue presence fails the full chat fallback assertion'
-sk_bin_reset
 
 echo "=== slack referenced ask ==="
 # A linked ask stays separate from the directive, so its reply answers the ask.
+REFERENCED_QUESTION='Approve referenced action?
+The action updates the release checklist.'
 referenced_ask() {
   ROOT="$(sk_tracker_root "$1" Team '')"
   sk_bind "$ROOT"
@@ -154,7 +158,8 @@ referenced_ask() {
   REF_TS="$(sk_inject "$CH" U001 'Earlier conversation.')"
   sk_poll "$ROOT"
   REF="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
-  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" 'Approve referenced action?')" --options approve,hold --recommend hold --effect none)"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --ref "$REF" --file "$(sk_text "$1" "$REFERENCED_QUESTION")" \
+    --options approve,hold --recommend hold --effect none --wait 60)"
   ASK="${ASK#id=}"
   if [ -n "${2:-}" ]; then
     if [ -n "${3:-}" ]; then
@@ -172,7 +177,15 @@ referenced_ask() {
 }
 referenced_ask referenced
 assert_eq "$RC" 0 'the fake Slack server supports the permalink request'
-assert_has "$POSTED" "$REF_LINK" 'the ask carries the referenced Slack conversation permalink'
+DEADLINE="$(ask_deadline "$ROOT" "$ASK")" || bad 'the itemless ask records a deadline'
+assert_eq "$POSTED" "<@U001> <@U002> Question from overseer:
+
+$REFERENCED_QUESTION
+
+Options: approve, hold. Recommended: hold. $DEADLINE
+
+[Referenced conversation]($REF_LINK)" \
+  'the itemless ask posts the whole question, options, recommendation, deadline and referenced conversation link'
 assert_eq "$(sk_state "[.messages.${CH}[] | select(.ts == \"$ASK_TS\") | .thread_ts // \"top-level\"][0]")" \
   top-level 'the ask starts its own thread'
 sk_inject "$CH" U001 approve "$ASK_TS" >/dev/null
