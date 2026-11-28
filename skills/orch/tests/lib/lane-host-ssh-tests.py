@@ -2942,25 +2942,46 @@ exit 9
         self.assertEqual(status().stdout, b"exited\n")
 
     def test_status_compares_the_cwd_reported_on_a_nonlinux_target(self):
+        self.row["clone"] = str(self.root / r"équipe\lane")
+        self.inventory.write_text(json.dumps([self.row]))
         lane = self.launch_lane()
         worktree = self.row["clone"] + "-worktree"
+        owned = os.stat(worktree)
+        elsewhere = self.root.stat()
         remote_bin = self.root / "remote-bin"
         self.executable(remote_bin / "uname", "#!/bin/sh\nprintf 'Darwin\\n'\n")
-        expected = shlex.quote(f"-nP -a -p {lane.pid} -d cwd -F0pfn")
-        for pid, root, code in ((lane.pid, worktree, 0), (lane.pid, str(self.root), 0),
-                                (1, worktree, 0), (lane.pid, worktree, 1)):
-            with self.subTest(pid=pid, root=root, code=code):
+        expected = shlex.quote(f"-nP -a -p {lane.pid} -d cwd -F0pfDi")
+        process = f"p{lane.pid}"
+        device, inode = f"D0x{owned.st_dev:x}", f"i{owned.st_ino}"
+        cases = (
+            ("matching", process, "fcwd", device, inode, 0, 0),
+            ("different directory", process, "fcwd", f"D0x{elsewhere.st_dev:x}", f"i{elsewhere.st_ino}", 0, 0),
+            ("different device", process, "fcwd", f"D0x{owned.st_dev ^ 1:x}", inode, 0, 0),
+            ("wrong pid", "p1", "fcwd", device, inode, 0, 0),
+            ("wrong descriptor", process, "frtd", device, inode, 0, 0),
+            ("out of order", process, "fcwd", inode, device, 0, 0),
+            ("unreadable cwd", process, "fcwd", device, inode, 1, 0),
+            ("unreadable worktree", process, "fcwd", device, inode, 0, 1),
+        )
+        for label, pid_field, descriptor, dev_field, ino_field, lsof_exit, stat_exit in cases:
+            with self.subTest(label=label):
                 self.executable(remote_bin / "lsof", "#!/bin/sh\n"
                                 f"test \"$*\" = {expected} || exit 2\n"
-                                f"printf 'p%s\\0\\nfcwd\\0n%s\\0\\n' {pid} {shlex.quote(root)}\n"
-                                f"exit {code}\n")
+                                f"printf '%s\\0\\n%s\\0%s\\0%s\\0\\n' {pid_field} {descriptor} {dev_field} {ino_field}\n"
+                                f"exit {lsof_exit}\n")
+                self.executable(remote_bin / "stat", "#!/bin/sh\n"
+                                "test \"$#\" = 4 && test \"$1\" = -Lf && test \"$2\" = '%Xd %Ui' && test \"$3\" = -- && "
+                                f"test \"$4\" = {shlex.quote(worktree)} || exit 2\n"
+                                f"printf '%s\\n' '{owned.st_dev:x} {owned.st_ino}'\n"
+                                f"exit {stat_exit}\n")
                 answer = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree",
-                                   SSH_TEST_REMOTE_BIN=str(remote_bin))
-                if (pid, root, code) == (lane.pid, worktree, 0):
+                                   SSH_TEST_REMOTE_BIN=str(remote_bin), LC_ALL="C")
+                if label == "matching":
                     self.assertEqual((answer.returncode, answer.stdout), (0, f"running\n{worktree}\n".encode()),
                                      answer.stderr)
                 else:
                     self.assertEqual((answer.returncode, answer.stdout), (1, b""), answer.stderr)
+                    self.assertIn(b"status-worktree-unconfirmed", recorded_cause(answer.stderr).split())
 
     def test_stop_reaches_the_recorded_group_alone_whatever_the_worktree(self):
         # merge-pr removes the item's worktree before its lane goes idle: the

@@ -1164,21 +1164,32 @@ def process_group(row, item):
     raise SystemExit(1)
 
 
-# lsof -F0pfn writes NUL-terminated fields and ends each set with a newline.
+# lsof writes PID, descriptor, hex device and decimal inode in that order.
+# Field mode uses NUL terminators and ends each set with a newline.
 # The extra NUL is emitted only when lsof exits successfully.
 WORKTREE_CWD = r'''
 system=$(uname -s) || exit 1
 if test "$system" = Linux; then
   test "$1" -ef "/proc/$2/cwd"
 else
+  export LC_ALL=C
   {
     IFS= read -r -d '' process || exit 1
     IFS= read -r -d '' descriptor || exit 1
-    IFS= read -r -d '' cwd || exit 1
+    IFS= read -r -d '' device || exit 1
+    IFS= read -r -d '' inode || exit 1
     IFS= read -r -d '' end || exit 1
-    [[ "$process" == "p$2" && "$descriptor" == $'\nfcwd' && "$cwd" == n/* && "$end" == $'\n' ]] || exit 1
-    test "$1" -ef "${cwd#n}"
-  } < <(lsof -nP -a -p "$2" -d cwd -F0pfn && printf '\0')
+    [[ "$process" == "p$2" && "$descriptor" == $'\nfcwd' && "$end" == $'\n' ]] || exit 1
+    device_field='^D0x(0|[1-9a-f][0-9a-f]{0,15})$'
+    inode_field='^i(0|[1-9][0-9]{0,19})$'
+    [[ "$device" =~ $device_field && "$inode" =~ $inode_field ]] || exit 1
+    inode=${inode#i}
+    if [[ ${#inode} -eq 20 && "$inode" > 18446744073709551615 ]]; then
+      exit 1
+    fi
+    worktree_id=$(stat -Lf '%Xd %Ui' -- "$1") || exit 1
+    [[ "$worktree_id" == "${device#D0x} $inode" ]]
+  } < <(lsof -nP -a -p "$2" -d cwd -F0pfDi && printf '\0')
 fi
 '''
 
@@ -1630,8 +1641,9 @@ with stop-validations-failed, a failed group stop with stop-failed, each below
 the runtime's own line. status takes the same arguments and reads the
 recorded group without signalling it: running while a member lives, exited
 otherwise. status --worktree also proves the recorded group's working
-directory through procfs on Linux or lsof on other hosts. A failed ownership or group read exits nonzero and reports no
-status. A clone holding neither a marker naming the item nor
+directory through procfs on Linux or compares lsof and stat device and
+inode numbers on other hosts. A failed ownership or group read exits
+nonzero and reports no status. A clone holding neither a marker naming the item nor
 the item's worktree, as a finished close leaves it whether or not a create for
 another item followed, holds nothing of the item: stop answers stopped item=ID
 processes=0, status answers exited and close answers closed=absent item=ID,
