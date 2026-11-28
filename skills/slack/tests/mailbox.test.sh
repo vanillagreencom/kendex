@@ -292,14 +292,11 @@ for variant in normal hard-kill no-timeout; do
   sk_bin_reset
 done
 
-# A failed jq closure scan must stop a real owner answer, not turn it into
-# a directive. The wrapper leaves the ask read and all envelope writes real.
+# An older mailbox's unbound answer uses its installed writer. A failed jq
+# closure scan must stop that write before an answer or directive can land.
 SCAN="$(sk_new_root closure-scan)"
 sk_bind "$SCAN"
 sk_lm "$SCAN" ask --item overseer --to owner --file "$(sk_text scan 'Scan?')" --options a,b --recommend a --effect none >/dev/null
-sk_poll "$SCAN"
-SCAN_CH="$(sk_channel "$SCAN")"
-SCAN_TS="$(sk_state ".messages.${SCAN_CH}[-1].ts")"
 mkdir -p "$SCAN/tmp/fault-bin"
 REAL_JQ="$(command -v jq)" || exit 1
 python3 - "$SCAN" "$REAL_JQ" "$SK_LANE_MAIL" <<'PY'
@@ -315,7 +312,9 @@ entry = scripts / "lane-mail"
 entry.write_text('#!/usr/bin/env bash\nset -euo pipefail\nexec env PATH=' + shlex.quote(str(fault.parent)) + ':"$PATH" ' + mail + ' "$@"\n')
 entry.chmod(0o755)
 PY
-sk_store_fixture "$SCAN" ""
+sk_poll "$SCAN"
+SCAN_CH="$(sk_channel "$SCAN")"
+SCAN_TS="$(sk_state ".messages.${SCAN_CH}[-1].ts")"
 SCAN_REPLY="$(sk_inject "$SCAN_CH" U001 b "$SCAN_TS")"
 sk_poll "$SCAN"
 assert_eq "$RC=$ERR1" "1=slack: lane-mail-failed=lane-mail: mail-read-failed=overseer" "a failed closure scan stops owner delivery"

@@ -37,7 +37,7 @@
 # message reading no position, a clock start from before positions kept, a
 # reply to a request the first queue pass accepted posted, daily compaction retaining aged posts in live
 # threads and removing inactive ones, aged unposted envelopes skipped,
-# a journal reset re-posting open asks alone,
+# a legacy journal reset re-posting open asks alone,
 # owners re-resolved from the setting, a report whose file matches the pattern
 # or is gone refused, and a notice under an owner message past the horizon
 # posted once across compaction. The controls at the end plant one mutant per
@@ -67,6 +67,15 @@ directives() { # ROOT — every directive's key and text; none before the first 
 }
 answers() { jq -r 'select(.kind == "answer") | [.re, .by, .sender, .delivery_id, .text] | join(" ")' "$(sk_box "$1")/to-lane.jsonl"; }
 posts() { sk_state ".messages.${1}[] | select(.user == \"UBOT\") | [(.thread_ts // \"top\"), .text] | join(\" | \")"; }
+
+# Older roots have a working writer without the installed compactor's
+# presentation capability. Keep their send, resolve and replay paths real.
+legacy_mailbox() {
+  local scripts="$1/.agents/skills/mailbox/scripts"
+  rm -- "$scripts" && mkdir -- "$scripts" || return 1
+  printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$SK_LANE_MAIL" >"$scripts/lane-mail" || return 1
+  chmod +x "$scripts/lane-mail"
+}
 
 # --- refusals before any poll -------------------------------------------------
 BARE="$(sk_new_root bare)"
@@ -236,7 +245,8 @@ sk_poll "$ROOT"
 assert_has "$(posts C001)" "$ASK3_TS | No answer by the deadline: yes stands." "a default resolution is shown in the thread"
 R3="$(sk_inject C001 U001 'too late' "$ASK3_TS")"
 sk_poll "$ROOT"
-assert_has "$(directives "$ROOT")" "C001:$R3 too late" "a reply after the default is a directive"
+assert_eq "$(jq -cr --arg key "C001:$R3" 'select(.delivery_id == $key) | [.kind,.re,.sender,.text,.owner_question.text]' "$(sk_box "$ROOT")/to-lane.jsonl")" \
+  "[\"answer\",\"$ASK3\",\"owner\",\"too late\",\"Rotate the key?\"]" "a reply after the default still answers the presenter-bound ask"
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | wc -l | tr -d ' ')" "0" "no ask is left open"
 
 # --- a notice threads on its ref -----------------------------------------------
@@ -515,6 +525,7 @@ for n in 1 2 3; do sk_inject C777 U001 "history $n" >/dev/null; done
 PRE_PARENT="$(sk_inject C777 U001 'An adopted topic.')"
 PRE_REPLY="$(sk_inject C777 U001 'A reply before binding.' "$PRE_PARENT")"
 DELTA="$(sk_new_root delta)"
+legacy_mailbox "$DELTA" || exit 1
 sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n5 'Old notice.')" >/dev/null
 mkdir -p "$DELTA/tmp/progress-reports"
 printf '# Old report\n' > "$DELTA/tmp/progress-reports/old.md"
@@ -731,6 +742,9 @@ assert_has "$(posts C002)" "$OLD | Late ruling." "it lands in that message's thr
 # Closures first observed after the posting horizon still update state.
 while read -r mode close; do
   LATE="$(sk_new_root "late-$mode-$close")"
+  if [ "$mode" = legacy ]; then
+    legacy_mailbox "$LATE" || exit 1
+  fi
   sk_bind "$LATE"
   sk_lm "$LATE" ask --item overseer --to owner --file "$(sk_text late 'Late close?')" --options a,b --recommend a --effect none >"$SK_TMP/late.out"
   LATE_ASK="$(sed 's/^id=//' "$SK_TMP/late.out")"
@@ -738,7 +752,11 @@ while read -r mode close; do
   LATE_CH="$(sk_channel "$LATE")"
   LATE_TS="$(sk_state ".messages.${LATE_CH}[-1].ts")"
   assert_eq "$(jq -c .open_asks "$LATE/tmp/slack/status.json")" "[\"$LATE_ASK\"]" "$mode/$close: the posted ask is open before closure"
-  sk_lm "$LATE" resolve --item overseer --id "$LATE_ASK" >/dev/null
+  if [ "$close" = default ]; then
+    sk_lm "$LATE" resolve --item overseer --id "$LATE_ASK" --default >/dev/null || exit 1
+  else
+    sk_lm "$LATE" resolve --item overseer --id "$LATE_ASK" >/dev/null || exit 1
+  fi
   LATE_CLOSE="$(jq -r 'select(.kind == "resolution" or .kind == "answer") | .id' "$(sk_box "$LATE")/to-lane.jsonl" | tail -n 1)"
   sk_age_envelope "$LATE" "$LATE_CLOSE" 172800
   sk_poll "$LATE" SLACK_THREAD_DAYS=1
@@ -749,9 +767,16 @@ while read -r mode close; do
   assert_eq "$(jq -s --arg source "$LATE_CLOSE" '[.[] | select(.t == "resolved" and .source == $source)] | length' "$(sk_journal "$LATE")")" "1" "$mode/$close: restart and compaction retain closure consumption"
   LATE_REPLY="$(sk_inject "$LATE_CH" U001 'after close' "$LATE_TS")"
   sk_poll "$LATE" SLACK_THREAD_DAYS=1
-  assert_has "$(directives "$LATE")" "$LATE_CH:$LATE_REPLY after close" "$mode/$close: the retained close routes a later reply as a directive"
+  if [ "$mode" = legacy ]; then
+    assert_has "$(directives "$LATE")" "$LATE_CH:$LATE_REPLY after close" "$mode/$close: the retained close routes a later reply as a directive"
+  else
+    assert_eq "$(jq -cr --arg key "$LATE_CH:$LATE_REPLY" 'select(.delivery_id == $key) | [.kind,.re,.sender,.text,.owner_question.text]' "$(sk_box "$LATE")/to-lane.jsonl")" \
+      "[\"answer\",\"$LATE_ASK\",\"owner\",\"after close\",\"Late close?\"]" "$mode/$close: the retained presentation routes a later reply to the closed ask"
+  fi
 done <<'ROWS'
 current explicit
+legacy explicit
+legacy default
 ROWS
 
 # --- daily compaction: envelope age and thread activity are separate ------------------
@@ -809,7 +834,7 @@ control-envelope-horizon old 0 0 horizon 1 1 1
 control-live-thread-retention old 1 1 retain 0 1 1
 ROWS
 
-# --- a journal reset re-posts open asks alone ----------------------------------------------------------
+# --- a legacy journal reset re-posts open asks alone ---------------------------------------------------
 mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"
 sk_poll "$DELTA"
 assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "after the journal is moved aside no notice is posted again"
@@ -1041,8 +1066,9 @@ crash_gap "$DELTA"
 assert_eq "$GAP_COUNT" "3" "control: the delivery id dropped, the replayed note lands twice"
 sk_bin_reset
 
-sk_mutant resolve relay.py 'outcome, answer_id = self.mail.answer\(thread.envelope, text, delivery\)' 'outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)\n            self.mail._run("resolve", "--item", "overseer", "--id", thread.envelope)'
+sk_mutant resolve relay.py '(                outcome, answer_id = self\.mail\.answer\(thread\.envelope, text, delivery\))' '\1\n                if outcome == "answered":\n                    self.mail._run("resolve", "--item", "overseer", "--id", thread.envelope)'
 EPS="$(sk_new_root eps)"
+legacy_mailbox "$EPS" || exit 1
 sk_bind "$EPS"
 sk_lm "$EPS" ask --item overseer --to owner --file "$(sk_text q4 'Which?')" --options a,b --recommend a --effect none >/dev/null
 sk_poll "$EPS"
@@ -1122,7 +1148,7 @@ sk_run -- listen --root "$PAIR_A" --root "$PAIR_B" --once
 assert_eq "$RC" "0" "control: the one-channel rule gone, both roots poll one channel"
 sk_bin_reset
 
-sk_mutant horizon relay.py 'return not thread.missing and \(thread.open or max\(float\(thread.ts\), thread.active\) >= self.settings.horizon\(self.clock\(\)\)\)' 'return True'
+sk_mutant horizon relay.py 'max\(float\(thread\.ts\), thread\.active\) >= self\.settings\.horizon\(self\.clock\(\)\)' 'True'
 ZETA="$(sk_new_root zeta)"
 sk_bind "$ZETA"
 sk_rebind_at "$ZETA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"

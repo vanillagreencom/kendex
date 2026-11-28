@@ -168,10 +168,15 @@ retention-control
 receipt-control
 ROWS
 
-# Answers deliver only themselves. A successor must still receive earlier
-# app messages and an answer delivered to the previous generation.
+# Answers deliver only themselves. An older installed mailbox leaves these
+# asks unbound, so a reply after closure exercises the directive context
+# in which a successor sees earlier app messages and prior answers.
 while read -r mode; do
   ROOT="$(sk_new_root "answer-$mode")"
+  INSTALLED="$ROOT/.agents/skills/mailbox/scripts"
+  rm -- "$INSTALLED" && mkdir -- "$INSTALLED" || exit 1
+  printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$SK_LANE_MAIL" >"$INSTALLED/lane-mail" || exit 1
+  chmod +x "$INSTALLED/lane-mail" || exit 1
   sk_bind "$ROOT"
   CH="$(sk_channel "$ROOT")"
   sk_poll "$ROOT"
