@@ -523,6 +523,65 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.assertIn("after the interrupted producer", output)
         self.assertEqual(cursor[str(self.home)]["to-overseer"]["count"], before + 2)
 
+    def test_mail_pass_reads_replacement_before_next_pass(self):
+        rows = (("one-row replacement", False, False),
+                ("older copy with original first id", True, False),
+                ("same-size replacement", False, True))
+        for name, restore_first, same_size in rows:
+            with self.subTest(row=name):
+                root = self.project(name)
+                self.registry.write_text(listing(self.home, root))
+                box = root / "tmp/lane-mail/overseer/to-overseer.jsonl"
+                self.mail(root, "notice", "original notice " + "x" * 80, "--to", "owner")
+                original = box.read_bytes()
+                if restore_first:
+                    for text in ("second notice", "third notice"):
+                        self.mail(root, "notice", text, "--to", "owner")
+                _, cursor = self.read_pass()
+                saved_size = box.stat().st_size
+
+                box.write_bytes(original if restore_first else b"")
+                self.mail(root, "notice", "notice after replacement", "--to", "owner")
+                if same_size:
+                    contents = box.read_bytes()
+                    # A notice id has variable width. Pad the JSON line with
+                    # whitespace so the saved byte size matches exactly.
+                    self.assertLess(len(contents), saved_size)
+                    box.write_bytes(contents[:-1] + b" " * (saved_size - len(contents)) + b"\n")
+                self.assertEqual(box.stat().st_size == saved_size, same_size)
+
+                output, _ = self.read_pass(cursor)
+                self.assertIn("\nnotice after replacement\n", output)
+
+    def test_mail_pass_does_not_replay_when_logical_tail_is_hidden(self):
+        for tail in ("reservation", "compacted"):
+            with self.subTest(tail=tail):
+                root = self.project(tail)
+                self.registry.write_text(listing(self.home, root))
+                question = "question before hidden tail"
+                ask = self.mail(root, "ask", question, "--to", "owner", "--options", "yes,no",
+                                "--recommend", "yes", "--effect", "none")
+                ask_id = ask.stdout.strip().split("=", 1)[1]
+                cursor = None
+                if tail == "reservation":
+                    result = self.command([self.mail_command, "reserve", "--item", "overseer", "--id", ask_id], root)
+                else:
+                    self.clock(-100 * 86400)
+                    self.mail(root, "notice", "expired notice", "--to", "owner")
+                    self.bin.joinpath("date").unlink()
+                    _, cursor = self.read_pass()
+                    result = self.command([self.mail_command, "compact", "--item", "overseer"], root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                count, envelopes = self.native_events(root, "to-overseer")
+                self.assertEqual([row["id"] for row in envelopes], [ask_id])
+                self.assertGreater(count, envelopes[0]["line"])
+
+                output, cursor = self.read_pass(cursor)
+                self.assertIn("\n" + question + "\n", output)
+                self.assertEqual(cursor[str(root)]["to-overseer"]["count"], count)
+                again, _ = self.read_pass(cursor)
+                self.assertNotIn("\n" + question + "\n", again)
+
     def test_compaction_and_failed_read(self):
         for value in ("old a", "old b"):
             self.mail(self.peer, "notice", value, "--to", "owner")
@@ -1024,8 +1083,8 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     drain()
                     cycle(watch, 5)
                     cycle(watch, 6)
-                # A same-length replacement's lines at or below the drained
-                # count are read past, so no batch carries one to mark.
+                # The same-length replacement has not been batched, so the
+                # session has only taken in the old mailbox's notice.
                 expected = None if "swapped" in traits else captured
                 self.assertEqual(seen(mailbox), expected)
                 self.assertEqual(self.native_events(mailbox, "to-overseer")[0], captured + ("late" in traits))
