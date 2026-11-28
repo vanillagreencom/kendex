@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lane-mail-check, the turn-end entry: it finds its install's mailbox reader
-# by walking up from its own directory, runs that install's `orch-runtime
+# by the Pi registration or its own directory, runs that install's `orch-runtime
 # turn-end` through the shipped wrapper, which checks the key for its
 # sources once. When the key is unbuilt the entry starts the build with
 # the install's `scripts/setup --detach`, holding a turn end while the
@@ -184,19 +184,33 @@ row_arm() {
 }
 
 row_copilot() {
-  built
-  lane copilot
-  direct "rebase onto main"
-  # The harness runs the hook by the path it registered; the directory behind
-  # that path is the install's own, spelled another way.
-  mkdir -p "$LANE/.kendex-hooks" "$LANE/.github"
-  cp -- "$HOOK" "$LANE/.kendex-hooks/lane-mail-check.sh"
-  ln -s ../.kendex-hooks "$LANE/.github/hooks"
-  ROW_ENV=("CLAUDE_PROJECT_DIR=$LANE")
-  run "$LANE/.github/hooks/lane-mail-check.sh" "$LANE" "$BUILT_CACHE"
-  assert_eq "RC=$RC decision=$(jq -r '.decision // "none"' "$OUT_FILE" 2>/dev/null || echo unread)" \
-    "RC=0 decision=block" \
-    "the harness is named by the directory as the harness spelled it: a Copilot install through a link answers in Copilot's shape"
+  local scope hook_dir
+  for scope in project global; do
+    built
+    lane "copilot-$scope"
+    direct "rebase onto main"
+    ROW_ENV=("CLAUDE_PROJECT_DIR=$LANE")
+    case "$scope" in
+      project)
+        # The harness runs the registered path through a directory link.
+        mkdir -p "$LANE/.kendex-hooks" "$LANE/.github"
+        ln -s ../.kendex-hooks "$LANE/.github/hooks"
+        hook_dir="$LANE/.github/hooks"
+        ;;
+      global)
+        ROW_HOME="$TMP_ROOT/copilot-home"
+        install_packages "$ROW_HOME/.agents/skills"
+        hook_dir="$ROW_HOME/kendex/hooks"
+        mkdir -p "$hook_dir"
+        # The Copilot adapter registers each script in a document beside it.
+        printf '{"version":1,"hooks":{"agentStop":[{"type":"command","bash":"bash lane-mail-check.sh"}]}}\n' >"$hook_dir/lane-mail-check.json"
+        ;;
+    esac
+    cp -- "$HOOK" "$hook_dir/lane-mail-check.sh"
+    run "$hook_dir/lane-mail-check.sh" "$LANE" "$BUILT_CACHE"
+    assert_eq "RC=$RC $(jq -r '[.decision, (.reason | split("\n")[0])] | join(" ")' "$OUT_FILE" 2>/dev/null)" \
+      "RC=0 block lane-mail-check: unread=1" "a $scope Copilot install holds unread mail in Copilot's shape"
+  done
 }
 
 row_global() {
@@ -222,6 +236,26 @@ row_unlocatable() {
   assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$OUT_FILE")" \
     "RC=0 first=lane-mail-check: reader=unlocatable hook=$TMP_ROOT/bare/.claude/hooks stdout=" \
     "an install whose walk finds no mailbox reader is reported and passes, never held"
+}
+
+row_relocated_pi() {
+  built
+  lane pi-relocated
+  direct "rebase onto main"
+  local checkout="$TMP_ROOT/adjacent" pi_hooks="$TMP_ROOT/adjacent/.pi/kendex/hooks"
+  # An inert directory passes the old reader's -x check. There is no
+  # adjacent launcher, so the old lookup executes nothing from the checkout.
+  mkdir -p "$pi_hooks" "$checkout/.agents/skills/mailbox/scripts/lane-mail"
+  git -C "$checkout" init -q
+  git -C "$checkout" config gc.auto 0
+  git -C "$checkout" config maintenance.auto false
+  ROW_HOME="$TMP_ROOT/pi-relocated-home"
+  install_packages "$ROW_HOME/.agents/skills"
+  cp -- "$HOOK" "$pi_hooks/lane-mail-check.sh"
+  ROW_ENV=(KENDEX_HOOK_SCOPE=global "KENDEX_HOOK_ROOT=$checkout/.pi")
+  run "$pi_hooks/lane-mail-check.sh" "$LANE" "$BUILT_CACHE"
+  assert_eq "RC=$RC first=$(first_line)" "RC=2 first=lane-mail-check: unread=1" \
+    "relocated global Pi reads mail through the installed home runtime"
 }
 
 row_launcherless() {
@@ -357,7 +391,7 @@ row_key() {
   done
 }
 
-ROWS="mail arm copilot global unlocatable launcherless building failed boxless key legacy"
+ROWS="mail arm copilot global relocated_pi unlocatable launcherless building failed boxless key legacy"
 for name in ${ENTRY_ROW:-$ROWS}; do "row_$name"; done
 
 # The must-fail controls, each a copy of the entry with one whole line

@@ -5,12 +5,13 @@
 # matcher:
 # description: Claims the linked git worktree a session starts in when its private git directory carries the worktree skill's `kendex-issue` record. The worktree skill's `references/session-guard.md` defines the lease and its limits. It runs `worktree-session-guard claim <worktree root>` with the guard's owner ladder: `KENDEX_SESSION_OWNER`, else `HT_SESSION_OWNER`, else `USER`. A workflow can adopt that initial lease under its issue ID with `--adopt`, which records the session's owner in the lease. Every claim passes `--session`, so a later start under that same owner, and on Claude a prompt in required mode, refreshes the issue lease and keeps the issue owner; a lease with no matching association stays foreign. It clears Git's local repository variables plus discovery limits and namespace before resolving the checkout from the session directory. It makes one claim attempt: the guard can wait 60 seconds for its lock, and another attempt would exceed this hook's 75-second timeout. The guard records in the lease the harness process the hook runs under, where it can read one, and takes over an expired foreign lease only when the lease records at least one process and every one it records is verified dead; a lease that records none is never taken over. A start, compaction, clear or Claude prompt on a lease that already records this process is established: its claim does not wait for the lock, and a guard lock that is busy or cannot be taken, or a failed lease write, gives the keyed `maintenance` notice on stderr at exit 0, never a refusal. Guard output is limited to its first 4096 bytes. Set the process environment variable `KENDEX_WORKTREE_CLAIM=required` to require a claim; this hook loads no project settings or `.env.local`. In required mode a foreign lease, missing guard, failed claim or unexpected hook error refuses a SessionStart on Codex with `continue:false` and a keyed reason. Claude, Pi, Gemini and Copilot cannot refuse a SessionStart; they receive the same keyed result as advisory context. Without the setting, failures are notices at exit 0, and a foreign lease stays silent. A main checkout, a repository without the issue record or a directory outside Git claims nothing and says nothing. Not run on antigravity: it has no SessionStart event. Not run on opencode: it runs no hooks, and a claim taken as an instruction claims nothing. Not run on cursor: kendex delivers a hook there only as advisory rule prose, and a claim taken as an instruction claims nothing.
 # summary: Claims a git worktree the worktree skill created or adopted for the worktree session guard when a session starts in it.
-# safety: Reads Git repository metadata and the worktree issue record, and runs the guard found beside this hook's install; a project install can use the repository's guard. The guard writes the worktree's lease under the repository's Git directory. Loads no project settings or `.env.local`. Exit 0 carries a structured stop on Codex only when `KENDEX_WORKTREE_CLAIM=required`; Claude, Pi, Gemini and Copilot receive an advisory at SessionStart.
+# safety: Reads Git repository metadata and the worktree issue record, and runs the guard from the Pi carrier's registration or, on other harnesses, from this hook's own install. The guard writes the worktree's lease under the repository's Git directory. Loads no project settings or `.env.local`. Exit 0 carries a structured stop on Codex only when `KENDEX_WORKTREE_CLAIM=required`; Claude, Pi, Gemini and Copilot receive an advisory at SessionStart.
 # timeout: 75
 # harnesses: [claude, codex, pi, copilot, gemini]
 # requires-skills: [worktree]
 # requires: [worktree-prompt-claim]
 # requires-on: [claude]
+# reads-registration: true
 # ---
 
 set -euo pipefail
@@ -98,40 +99,74 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || notice unclaimed "$PWD" \
 # which load the repository's settings and `.env.local`.
 [ -f "$GIT_DIR_PATH/kendex-issue" ] || exit 0
 
-# The guard comes from this hook's own install, by the walk
-# hooks/lane-mail-check.sh owns for its reader: from the hook's physical
-# directory up five levels, stopping at the open repository's root and after
-# the home directory, each level's `skills/` and shared `.agents/skills/` tree;
-# then the home's shared tree, for a harness root CODEX_HOME,
-# PI_CODING_AGENT_DIR or COPILOT_HOME moved out of the home; then the
-# repository's own copy, only where this hook is installed in that repository.
 GUARD=worktree/scripts/worktree-session-guard
-HOOK_DIR=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || HOOK_DIR=""
-HOME_DIR=$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
-AT=$HOOK_DIR
+HOOK_DIR=${BASH_SOURCE[0]%/*}
 FOUND=""
-LEVELS=0
-while [ -n "$AT" ] && [ "$LEVELS" -lt 5 ] && [ "$AT" != "$ROOT" ] && [ "$AT" != / ]; do
-  for candidate in "$AT/skills/$GUARD" "$AT/.agents/skills/$GUARD"; do
-    if [ -x "$candidate" ]; then
-      FOUND=$candidate
-      break
+# Use the Pi carrier's registration so a global root inside a checkout
+# cannot select the checkout's guard.
+# A configured Codex or Copilot home can also end in kendex.
+install_harness=unknown
+case "${KENDEX_HOOK_SCOPE:-}:$HOOK_DIR" in
+  :*/kendex/hooks | :kendex/hooks)
+    if [[ "$HOOK_DIR" = "${CODEX_HOME:-}/hooks" ||
+          ( "${CODEX_HOME:-}" = /* && "$HOOK_DIR" -ef "$CODEX_HOME/hooks" ) ]]; then
+      install_harness=codex
+    elif [[ "$COPILOT" = true ||
+            "$HOOK_DIR" = "${COPILOT_HOME:-}/hooks" ||
+            ( "${COPILOT_HOME:-}" = /* && "$HOOK_DIR" -ef "$COPILOT_HOME/hooks" ) ]]; then
+      install_harness=copilot
+    else
+      install_harness=pi
     fi
-  done
-  { [ -z "$FOUND" ] && [ "$AT" != "$HOME_DIR" ]; } || break
-  AT=${AT%/*}
-  [ -n "$AT" ] || AT=/
-  LEVELS=$((LEVELS + 1))
-done
-if [ -z "$FOUND" ] && [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] \
-  && [ -x "$HOME_DIR/.agents/skills/$GUARD" ]; then
-  FOUND="$HOME_DIR/.agents/skills/$GUARD"
-fi
-if [ -z "$FOUND" ] && [ -x "$ROOT/.agents/skills/$GUARD" ]; then
-  case "$HOOK_DIR" in
-    "$ROOT"/*) FOUND="$ROOT/.agents/skills/$GUARD" ;;
-  esac
-fi
+    ;;
+esac
+case "${KENDEX_HOOK_SCOPE:-}:$install_harness" in
+  global:* | project:*)
+    pi_root=${KENDEX_HOOK_ROOT:-}
+    if [ -n "$pi_root" ]; then
+      if [ "$KENDEX_HOOK_SCOPE" = project ]; then
+        native="$pi_root/.pi"
+        shared="$pi_root"
+      else
+        native="$pi_root"
+        shared=${HOME:-}
+      fi
+      for candidate in "$native/skills/$GUARD" "${shared:+$shared/.agents/skills/$GUARD}"; do
+        if [ -x "$candidate" ]; then FOUND=$candidate; break; fi
+      done
+    fi
+    ;;
+  *:pi) ;; # An older Pi carrier supplies no install.
+  *)
+    # Other harnesses find the guard by the same walk that lane-mail-check
+    # uses for its reader, bounded by the home and the open repository.
+    HOOK_DIR=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || HOOK_DIR=""
+    HOME_DIR=$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
+    AT=$HOOK_DIR
+    LEVELS=0
+    while [ -n "$AT" ] && [ "$LEVELS" -lt 5 ] && [ "$AT" != "$ROOT" ] && [ "$AT" != / ]; do
+      for candidate in "$AT/skills/$GUARD" "$AT/.agents/skills/$GUARD"; do
+        if [ -x "$candidate" ]; then
+          FOUND=$candidate
+          break
+        fi
+      done
+      { [ -z "$FOUND" ] && [ "$AT" != "$HOME_DIR" ]; } || break
+      AT=${AT%/*}
+      [ -n "$AT" ] || AT=/
+      LEVELS=$((LEVELS + 1))
+    done
+    if [ -z "$FOUND" ] && [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] \
+      && [ -x "$HOME_DIR/.agents/skills/$GUARD" ]; then
+      FOUND="$HOME_DIR/.agents/skills/$GUARD"
+    fi
+    if [ -z "$FOUND" ] && [ -x "$ROOT/.agents/skills/$GUARD" ]; then
+      case "$HOOK_DIR" in
+        "$ROOT"/*) FOUND="$ROOT/.agents/skills/$GUARD" ;;
+      esac
+    fi
+    ;;
+esac
 [ -n "$FOUND" ] || notice guard "${HOOK_DIR:-unlocatable}" \
   "worktree-session-guard is not installed with this hook, so this start claims nothing; install the worktree skill in the same scope"
 

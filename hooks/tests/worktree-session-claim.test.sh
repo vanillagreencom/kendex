@@ -65,6 +65,7 @@ GUARD="$WORKTREE_SCRIPTS/worktree-session-guard"
 # alone, which a global hook must not run.
 install_world() { # WORLD [HARNESS]
   WORLD_HOME="$TMP_ROOT/home.$1"
+  WORLD_COPILOT_HOME=""
   WORLD_HOOKS="$WORLD_HOME/.claude/hooks"
   rm -rf -- "${WORLD_HOME:?}" "$TMP_ROOT/harness.$1" "${TREE:?}/.agents" "${TREE:?}/.claude"
   mkdir -p "$WORLD_HOME"
@@ -77,7 +78,10 @@ install_world() { # WORLD [HARNESS]
   case "${2:-claude}" in
     codex) WORLD_HOOKS="$WORLD_HOME/.codex/hooks" ;;
     copilot-project) WORLD_HOOKS="$WORLD_HOME/project/.github/hooks" ;;
-    copilot-global) WORLD_HOOKS="$WORLD_HOME/copilot-account/hooks" ;;
+    copilot-global)
+      WORLD_COPILOT_HOME="$WORLD_HOME/kendex"
+      WORLD_HOOKS="$WORLD_COPILOT_HOME/hooks"
+      ;;
   esac
   mkdir -p "$WORLD_HOOKS"
   cp "$HOOK" "$WORLD_HOOKS/worktree-session-claim.sh"
@@ -103,8 +107,10 @@ release_all() {
 run_hook_in() { # DIR [ENV...]
   local cwd="$1"
   shift
-  (cd "$cwd" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER -u KENDEX_WORKTREE_CLAIM HOME="$WORLD_HOME" \
-    GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$@" \
+  (cd "$cwd" && env -u KENDEX_SESSION_OWNER -u HT_SESSION_OWNER -u USER -u KENDEX_WORKTREE_CLAIM \
+    -u KENDEX_HOOK_SCOPE -u KENDEX_HOOK_ROOT HOME="$WORLD_HOME" COPILOT_HOME="$WORLD_COPILOT_HOME" \
+    XDG_CONFIG_HOME="$WORLD_HOME/.config" XDG_DATA_HOME="$WORLD_HOME/.local/share" \
+    XDG_STATE_HOME="$WORLD_HOME/.local/state" XDG_CACHE_HOME="$WORLD_HOME/.cache" GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$@" \
     "$BASH" "$WORLD_HOOKS/worktree-session-claim.sh" </dev/null >"$OUT_FILE" 2>"$ERR_FILE")
 }
 
@@ -172,6 +178,21 @@ claim_rows() {
 
 echo "=== worktree-session-claim ==="
 claim_rows
+
+relocated_pi_row() {
+  release_all
+  install_world installed
+  WORLD_HOOKS="$MAIN/.pi/kendex/hooks"
+  # The old lookup accepts the searchable directory as a guard, but
+  # cannot execute it. Only the installed home guard can claim the lease.
+  mkdir -p "$WORLD_HOOKS" "$MAIN/.agents/skills/worktree/scripts/worktree-session-guard"
+  cp -- "$HOOK" "$WORLD_HOOKS/worktree-session-claim.sh"
+  local rc=0
+  run_hook_in "$TREE" USER=alice KENDEX_HOOK_SCOPE=global "KENDEX_HOOK_ROOT=$MAIN/.pi" || rc=$?
+  assert_eq "rc=$rc first=$(first_line) owner=$(lease_owner "$TREE")" "rc=0 first=- owner=alice" \
+    "relocated global Pi claims through the installed home guard"
+}
+relocated_pi_row
 
 # Git's trace diagnostics must not change the repository data the hook reads.
 trace_rows() {
@@ -420,10 +441,10 @@ EOF
 timeout_rows
 
 unexpected_rows() {
-  local mode rc result saved_hook="$HOOK"
+  local mode rc result saved_hook="$HOOK" anchor='    AT=$HOOK_DIR'
   # An unhandled command failure exercises the production EXIT handler.
-  assert_eq "$(grep -cxF 'AT=$HOOK_DIR' "$HOOK" || :)" 1 "unexpected fault anchor"
-  awk '{ print } $0 == "AT=$HOOK_DIR" { print "false" }' "$HOOK" >"$TMP_ROOT/unexpected.sh"
+  assert_eq "$(grep -cxF -- "$anchor" "$HOOK" || :)" 1 "unexpected fault anchor"
+  awk -v anchor="$anchor" '{ print } $0 == anchor { print "    false" }' "$HOOK" >"$TMP_ROOT/unexpected.sh"
   HOOK="$TMP_ROOT/unexpected.sh"
   for mode in advisory required; do
     release_all

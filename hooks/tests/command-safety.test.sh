@@ -1829,16 +1829,15 @@ PY
 history_rows() {
   local selected_rows=("$@") selected_seen=() label policy pattern shape command_json expected key reason payload command status output
   local other="$scratch/other" malformed="$scratch/malformed" foreign="$scratch/foreign" mono="$scratch/mono" run_hook home
-  local relocated="$scratch/data" loader_home="$scratch/home" bare="$scratch/bare" harness_var
+  local relocated="$scratch/data" loader_home="$scratch/home" bare="$scratch/bare" harness_var pi_scope pi_root
   # A second project whose settings turn the policy off, a third whose
   # settings cannot be read, a project that is in no worktree with the
   # hook and its loader in Codex and Pi project layouts, and a project scope
   # below a Git top level that selects the policy and holds a loader that
   # fails. Then a global install whose harness homes CODEX_HOME, COPILOT_HOME
-  # and PI_CODING_AGENT_DIR move to data/.codex, .github and .pi, its loader
-  # only in a HOME of its own, beside a data/.agents loader that fails if a
-  # project reading sources it; and a Codex project layout whose scope holds
-  # no loader.
+  # and the carrier's global Pi root move below data.
+  # Only HOME has a loader. The checkout's adjacent support files are empty.
+  # The Codex project layout in bare has no loader.
   if [ ! -d "$other" ]; then
     git init -q "$other"
     printf '[env]\nCOMMAND_SAFETY_HISTORY_POLICY = "off"\n' >"$other/kendex.settings.toml"
@@ -1856,12 +1855,15 @@ history_rows() {
     cp -R "$ROOT/skills/commit-guards/scripts/lib" "$mono/sub/.agents/skills/commit-guards/scripts/lib"
     mkdir -p "$foreign/.pi/kendex/hooks"
     cp "$hook" "$foreign/.pi/kendex/hooks/command-safety.sh"
-    mkdir -p "$relocated/.codex/hooks" "$relocated/.github/hooks" "$relocated/.pi/kendex/hooks" \
+    mkdir -p "$relocated/kendex/hooks" "$relocated/.github/hooks" "$relocated/.pi/kendex/hooks" \
       "$relocated/.agents/skills/commit-guards/scripts/lib" "$loader_home/.agents/skills/commit-guards/scripts" "$bare/.codex/hooks"
-    cp "$hook" "$relocated/.codex/hooks/command-safety.sh"
+    git -C "$relocated" init -q
+    git -C "$relocated" config gc.auto 0
+    git -C "$relocated" config maintenance.auto false
+    cp "$hook" "$relocated/kendex/hooks/command-safety.sh"
     cp "$hook" "$relocated/.github/hooks/command-safety.sh"
     cp "$hook" "$relocated/.pi/kendex/hooks/command-safety.sh"
-    printf 'return 1\n' >"$relocated/.agents/skills/commit-guards/scripts/lib/common.sh"
+    : >"$relocated/.agents/skills/commit-guards/scripts/lib/common.sh"
     : >"$relocated/.agents/skills/commit-guards/scripts/lib/settings.sh"
     cp -R "$ROOT/skills/commit-guards/scripts/lib" "$loader_home/.agents/skills/commit-guards/scripts/lib"
     cp "$hook" "$bare/.codex/hooks/command-safety.sh"
@@ -1875,7 +1877,7 @@ history_rows() {
       *) printf 'COMMAND_SAFETY_HISTORY_POLICY = "%s"\n' "$policy" >>"$repo/kendex.settings.toml" ;;
     esac
     command=$(jq -nc --arg repo "$repo" --arg other "$other" --arg malformed "$malformed" --arg mono "$mono" "$command_json") || exit 1
-    run_hook=$hook; home=${HOME:-}; harness_var=""
+    run_hook=$hook; home=${HOME:-}; harness_var=""; pi_scope=""; pi_root=""
     case "$shape" in
       # A directory in no worktree; a row names the project as \($repo). HOME
       # is the scratch root, so ~/project is the project and HOME holds no loader.
@@ -1898,17 +1900,27 @@ history_rows() {
         payload=$(jq -nc --argjson command "$command" --arg cwd "$foreign" '{cwd:$cwd,tool_input:{command:$command}}') ;;
       outside-pi)
         home=$scratch; run_hook="$foreign/.pi/kendex/hooks/command-safety.sh"
+        pi_scope=project; pi_root=$foreign
         payload=$(jq -nc --argjson command "$command" --arg cwd "$foreign" '{cwd:$cwd,tool_input:{command:$command}}') ;;
-      # Pi trims its variable and expands a leading ~ against HOME.
-      relocated-codex | relocated-copilot | relocated-pi | bare-codex)
+      relocated-codex | relocated-copilot | relocated-copilot-kendex | relocated-pi | bare-codex)
         home=$loader_home
         case "$shape" in
-          relocated-codex) run_hook="$relocated/.codex/hooks/command-safety.sh"; harness_var="CODEX_HOME=$relocated/.codex" ;;
+          relocated-codex) run_hook="$relocated/kendex/hooks/command-safety.sh"; harness_var="CODEX_HOME=$relocated/kendex" ;;
           relocated-copilot) run_hook="$relocated/.github/hooks/command-safety.sh"; harness_var="COPILOT_HOME=$relocated/.github" ;;
-          relocated-pi) run_hook="$relocated/.pi/kendex/hooks/command-safety.sh"; harness_var="PI_CODING_AGENT_DIR= ~/../data/.pi " ;;
+          relocated-copilot-kendex) run_hook="$relocated/kendex/hooks/command-safety.sh"; harness_var="COPILOT_HOME=$relocated/kendex" ;;
+          relocated-pi)
+            pi_scope=global; pi_root="$relocated/.pi"
+            run_hook="$pi_root/kendex/hooks/command-safety.sh"
+            # package-config.ts resolves the absolute override lexically.
+            # process.ts passes the original override through to the hook.
+            harness_var="PI_CODING_AGENT_DIR=$relocated/missing/../.pi"
+            ;;
           bare-codex) run_hook="$bare/.codex/hooks/command-safety.sh" ;;
         esac
-        payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+        case "$shape" in
+          relocated-copilot*) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:{command:$command}}') ;;
+          *) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+        esac ;;
       # HOME holds no loader, so the project's missing one is not replaced.
       absent-support)
         home=$scratch
@@ -1922,7 +1934,8 @@ history_rows() {
       *absent-support) mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/history-lib" ;;
     esac
     status=0
-    output=$(env -u CODEX_HOME -u COPILOT_HOME -u PI_CODING_AGENT_DIR ${harness_var:+"$harness_var"} "HOME=$home" "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/share" "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache" \
+    output=$(env -u CODEX_HOME -u COPILOT_HOME -u PI_CODING_AGENT_DIR ${harness_var:+"$harness_var"} \
+      "KENDEX_HOOK_SCOPE=$pi_scope" "KENDEX_HOOK_ROOT=$pi_root" "HOME=$home" "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/share" "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache" \
       "$BASH" "$run_hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
     case "$shape" in
       outside-foreign-absent-support) mv "$scratch/history-lib" "$foreign/.agents/skills/commit-guards/scripts/lib" ;;
@@ -2103,6 +2116,7 @@ outside-foreign-hook|no-lazy-fetch|^$|outside-foreign|"git -C \($repo) log -p"|2
 outside-pi-hook|no-lazy-fetch|^$|outside-pi|"git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 relocated-codex-home|no-lazy-fetch|^$|relocated-codex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 relocated-copilot-home|no-lazy-fetch|^$|relocated-copilot|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+relocated-copilot-kendex-home|no-lazy-fetch|^$|relocated-copilot-kendex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 relocated-pi-dir|no-lazy-fetch|^$|relocated-pi|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 scope-without-loader|no-lazy-fetch|^$|bare-codex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-ancestor|no-lazy-fetch|^$|outside-ancestor|"git -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
@@ -2212,7 +2226,7 @@ printf '[broken\n' >>"$transfer_broken/.git/config"
 cp -R "$ROOT/skills/commit-guards/scripts/lib" "$transfer_project/.agents/skills/commit-guards/scripts/lib"
 transfer_rows() { # HOOK [LABEL...]
   local transfer_hook=$1 label harness world expected keyed command harnesses shape install payload status got owner settings cwd
-  local script late run_env=()
+  local script late run_env=() registration_env=()
   shift
   local selected_rows=("$@") selected_seen=() before=$((passed + failed))
   local GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -2246,8 +2260,14 @@ transfer_rows() { # HOOK [LABEL...]
         run_env=(HOME="$transfer_home" XDG_CONFIG_HOME="$transfer_home/.config" XDG_DATA_HOME="$transfer_home/.local/share"
           XDG_STATE_HOME="$transfer_home/.local/state" XDG_CACHE_HOME="$transfer_home/.cache") ;;
     esac
+    if [ "$owner" = - ]; then
+      run_env=(COMMAND_SAFETY_UPLOAD_HOSTS=uploads.example.com)
+    elif [ -n "$owner" ]; then
+      run_env=(COMMAND_SAFETY_OWNER_COMMAND="$owner")
+    fi
     printf '[env]\n%s\n' "$settings" >"$transfer_project/kendex.settings.toml"
     for shape in $harnesses; do
+      registration_env=()
       case "$shape" in
         claude | codex)
           install=.$shape/hooks
@@ -2257,15 +2277,12 @@ transfer_rows() { # HOOK [LABEL...]
           payload=$(jq -nc --arg command "$command" --arg cwd "$cwd" '{cwd:$cwd,toolName:"bash",toolArgs:({command:$command} | tojson)}') ;;
         pi)
           install=.pi/kendex/hooks
+          registration_env=(KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$transfer_project")
           payload=$(jq -nc --arg command "$command" --arg cwd "$cwd" '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$command}}') ;;
       esac
       status=0
-      if [ "$owner" = - ]; then
-        run_env=(COMMAND_SAFETY_UPLOAD_HOSTS=uploads.example.com)
-      elif [ -n "$owner" ]; then
-        run_env=(COMMAND_SAFETY_OWNER_COMMAND="$owner")
-      fi
-      env ${run_env[@]+"${run_env[@]}"} "$BASH" "$transfer_project/$install/$script" <<<"$payload" >/dev/null 2>"$scratch/stderr" || status=$?
+      env ${run_env[@]+"${run_env[@]}"} ${registration_env[@]+"${registration_env[@]}"} \
+        "$BASH" "$transfer_project/$install/$script" <<<"$payload" >/dev/null 2>"$scratch/stderr" || status=$?
       got=$(keyed_block "$scratch/stderr" command-safety)
       # keyed_block reads only the leading keyed lines; a report written
       # after a refusal's text would stand below them.
@@ -2985,11 +3002,10 @@ HOOK=$hook_source
 ln -s "$ROOT/skills" "$scratch/skills"
 . "$ROOT/hooks/tests/lib/assert.sh"
 # Env::global_skills_dir and the harness adapters emit these installed roots.
-# The hook reads no harness name: it walks up from its own directory, so the
-# table holds one row per depth of native and shared support, then partial
-# and unavailable support.
+# The table covers native and shared support in the carrier's Pi scope
+# and in the other harnesses' install layouts, then unavailable support.
 global_reader_rows() {
-  local label hook_dir library state expected key home installed project payload status marker native
+  local label hook_dir library state expected key home installed project payload status marker native pi_scope pi_root
   local selected_rows=("$@") selected_seen=() failed=0 before=$((PASS + FAIL))
   while IFS='|' read -r label hook_dir library state expected key; do
     row_selected "$label" || continue
@@ -3027,7 +3043,10 @@ global_reader_rows() {
     fi
     payload=$(jq -nc --arg cwd "$project" '{cwd:$cwd,tool_input:{command:"systemd-run --user --scope -p MemoryMax=64M cargo test"}}')
     status=0
-    env HOME="$home" "$BASH" "$installed" <<<"$payload" >/dev/null 2>"$ERR_FILE" || status=$?
+    pi_scope=""; pi_root=""
+    case "$hook_dir" in .pi/*) pi_scope=global; pi_root="$home/.pi/agent" ;; esac
+    env HOME="$home" KENDEX_HOOK_SCOPE="$pi_scope" KENDEX_HOOK_ROOT="$pi_root" \
+      "$BASH" "$installed" <<<"$payload" >/dev/null 2>"$ERR_FILE" || status=$?
     assert_eq "rc=$status first=$(first_line "$ERR_FILE")" "rc=$expected first=command-safety: $key" "$label installed reader"
     assert_eq "$([ -e "$marker" ] && echo ran || echo untouched)" untouched "$label project loader boundary"
     if [ "$state" = exit-two ]; then
@@ -3055,8 +3074,8 @@ LAYOUTS
 global_reader_rows
 reader_control_rows() { global_reader_rows "${reader_control_labels[@]}"; }
 reader_control_labels=(pi-shared codex-shared)
-skill_load_control global-reader "$HOOK" 'lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"' \
-  'lib=""' HOOK reader_control_rows 'pi-shared installed reader' 'codex-shared installed reader'
+skill_load_control global-reader "$HOOK" 'shared_root=${HOME:+$HOME/.agents}' \
+  'shared_root=""' HOOK reader_control_rows 'pi-shared installed reader' 'codex-shared installed reader'
 failed=$((failed + FAIL))
 passed=$((passed + PASS))
 printf '%s passed, %s failed\n' "$passed" "$failed"

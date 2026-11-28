@@ -8,6 +8,7 @@
 # safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, orch-runtime launch-job, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a shell or source script or orch-runtime launch-job forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>. Download, upload and push facts come from the same producer and Git argv walk, where a shell runs the text and never in a body an unknown receiver gets: a download stage, or a command carrying it in a substitution, piped within its pipeline to a stage that runs its input, any stage of a subshell or the first command of a brace group included, stdin script paths included, or in a substitution its enclosing shell or interpreter takes as its program word or input; curl, wget, scp and rsync argv read with their recorded argument options, an unlisted option read as a flag and an abbreviation of a sending or routing option, an assignment before the program word, NAME= or NAME+=, or before the exec, builtin, eval, shell or script that runs it, or an expanding or substituted host unresolved, through the words after a substitution that splits the command; a push judged in every reader directory with git remote -v and ls-remote --get-url, an expanding or substituted operand, an unread Git global word whose first later literal word that is no option or option argument is push, and Git configuration, a launch assignment or an inline alias its command sets, or a git remote or git config anywhere in the command that can change a remote, unresolved, for every push of the command, and a git config that can define an alias makes every other git word of the command such a push, as an alias-capable or unreadable launch configuration makes the git word it reaches. One direct, literal GIT_CONFIG_COUNT=1 key/value pair can rule out an alias when the key is outside alias, include and includeIf; a cd, env -C or git -C operand with an unquoted leading ~ leaves the push's repository unresolved, and a cd, pushd or popd the walk does not follow leaves the push's repository unresolved unless an absolute git -C sets it, and the directory of every relative environ read in the command unresolved unless an absolute env chdir sets it, such as builtin cd /proc/self; env -C /tmp cat environ, wherever the cd stands. The walk follows only a literal cd destination at the head of a stage, not one after a reserved word such as do or then. It does not follow one with no such destination, such as builtin cd, pushd, cd -P, cd "$DIR" or do cd, one after a relative environ read that a command inside reserved-word syntax makes directly, as its operand, file option or input redirect, in a stage that neither opens nor closes that syntax, such as while :; do cat environ; cd /proc/self; done, any cd in text eval, source or . runs in the same shell, such as eval 'cd /proc/self'; cat environ, or a relative cd that CDPATH can search in a command with a word naming CDPATH, such as CDPATH=/proc; cd self && cat environ. Each literal curl, wget, scp, rsync or git word after an unresolved launcher is judged as that program's head, and an interpreter's script operand counts only after no option. The plain-stage rule reports and does not refuse: a command these checks pass with a stage holding such a word, or git with a later push, that is not plain, literal words with no expansion, substitution, glob, brace or line continuation, in no group, subshell, substitution or compound command, in a pipeline of plain stages, gets a report=plain-stage notice with one would= line per check naming its program and cause. A word naming COMMAND_SAFETY_OWNER_COMMAND refuses except as a grep, rg or cat argument. Not reached: a receiver behind an unresolved launcher, a sender in a brace group or compound command, a later command of a brace group that reads the pipe, a push behind an unread Git global word that takes the next literal word as its argument, a download passed through a variable, output substitutions, forwarded receivers of a substitution, ssh config aliases, Git configuration an earlier command or a file write sets, variables or aliases an earlier command or file sets, an export, declare -x or typeset -x before an upload in the same command, the commands inside a sourced script or script file, a CDPATH the session's shell already holds, an alias that a configuration file a variable assigned before git names, such as GIT_CONFIG_GLOBAL or HOME, defines, other upload programs, a program that makes its own network calls, and runtime-built names.
 # timeout: 10
 # requires-skills: [commit-guards]
+# reads-registration: true
 # ---
 
 set -euo pipefail
@@ -3153,54 +3154,67 @@ if [ "$root_status" -ne 0 ]; then
   root=$cwd
 fi
 
-hook_dir="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || refuse hook unlocatable
-# The support library is the hook's own install's, found from where the hook
-# sits and never from a directory the payload names, so a command cannot
-# choose the code this hook sources. The harness root holding hooks/, or
-# kendex/hooks/ for Pi, may keep native skills/ beside it. A registered
-# project layout names the install scope whose shared .agents/skills come
-# next: <scope>/.claude, .codex, .github or .gemini /hooks, or
-# <scope>/.pi/kendex/hooks. HOME's shared .agents/skills come last, which is
-# where a global install keeps them: a harness root in no such form, such
-# as ~/.copilot or ~/.pi/agent, and a registered one whose scope is HOME
-# itself, such as ~/.claude/hooks. A harness home that CODEX_HOME,
-# COPILOT_HOME or PI_CODING_AGENT_DIR moves is a global root even where its
-# name is a project layout's, such as CODEX_HOME=/data/.codex, so a hook in
-# that home's hooks directory reads no scope. Codex and the Pi carrier run
-# the hook with the variable they found it by. Without it, such a hook looks
-# like a project install, and a scope holding no loader still reaches HOME's.
-scope=""
-case "$hook_dir" in
-  */.pi/kendex/hooks) scope=${hook_dir%/.pi/kendex/hooks} ;;
-  */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
+hook_dir=${BASH_SOURCE[0]%/*}
+# The Pi carrier's registration names the install so a global Pi root
+# relocated inside a checkout cannot use that checkout's support library.
+shared_root=${HOME:+$HOME/.agents}
+install_roots=()
+# A configured Codex or Copilot home can also end in kendex.
+install_harness=unknown
+case "${KENDEX_HOOK_SCOPE:-}:$hook_dir" in
+  :*/kendex/hooks | :kendex/hooks)
+    if [[ "$hook_dir" = "${CODEX_HOME:-}/hooks" ||
+          ( "${CODEX_HOME:-}" = /* && "$hook_dir" -ef "$CODEX_HOME/hooks" ) ]]; then
+      install_harness=codex
+    elif [[ -f "${BASH_SOURCE[0]%.sh}.json" ||
+            "$hook_dir" = "${COPILOT_HOME:-}/hooks" ||
+            ( "${COPILOT_HOME:-}" = /* && "$hook_dir" -ef "$COPILOT_HOME/hooks" ) ]]; then
+      install_harness=copilot
+    else
+      install_harness=pi
+    fi
+    ;;
 esac
-[ "$scope" != "${HOME:-}" ] || scope=""
-# Pi's own reading of its variable: trimmed, a leading ~ expanded against
-# HOME, used only when absolute (pi_global_root, crates/core/src/harness/pi.rs).
-pi_root=${PI_CODING_AGENT_DIR:-}
-pi_root=${pi_root#"${pi_root%%[![:space:]]*}"}
-pi_root=${pi_root%"${pi_root##*[![:space:]]}"}
-case "$pi_root" in \~ | \~/*) pi_root=${HOME:+$HOME${pi_root#\~}} ;; esac
-case "$pi_root" in /*) ;; *) pi_root="" ;; esac
-hook_real="$(cd -P -- "$hook_dir" && pwd -P)" || refuse hook unlocatable
-for configured in "${CODEX_HOME:+$CODEX_HOME/hooks}" "${COPILOT_HOME:+$COPILOT_HOME/hooks}" "${pi_root:+$pi_root/kendex/hooks}"; do
-  if [ -n "$configured" ] && [ "$(cd -P -- "$configured" 2>/dev/null && pwd -P)" = "$hook_real" ]; then
+case "${KENDEX_HOOK_SCOPE:-}:$install_harness" in
+  global:* | project:*)
+    pi_root=${KENDEX_HOOK_ROOT:-}
+    [ -n "$pi_root" ] || refuse settings no-loader
+    if [ "$KENDEX_HOOK_SCOPE" = project ]; then
+      install_roots=("$pi_root/.pi")
+      shared_root="$pi_root/.agents"
+    else
+      install_roots=("$pi_root")
+    fi
+    ;;
+  *:pi) refuse settings no-loader ;; # An older Pi carrier supplies no install.
+  *)
+    # Other harnesses can keep native skills alongside hooks and shared
+    # skills in the registered project. A relocated harness home remains
+    # global even where its path looks like a project install.
+    hook_dir="$(cd -- "$hook_dir" && pwd)" || refuse hook unlocatable
     scope=""
-    break
-  fi
-done
-install_roots=("${hook_dir%/hooks}")
-case "$hook_dir" in */kendex/hooks) install_roots[1]=${hook_dir%/kendex/hooks} ;; esac
-[ -z "$scope" ] || install_roots[${#install_roots[@]}]="$scope/.agents"
+    case "$hook_dir" in
+      */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
+    esac
+    [ "$scope" != "${HOME:-}" ] || scope=""
+    hook_real="$(cd -P -- "$hook_dir" && pwd -P)" || refuse hook unlocatable
+    for configured in "${CODEX_HOME:+$CODEX_HOME/hooks}" "${COPILOT_HOME:+$COPILOT_HOME/hooks}"; do
+      if [ -n "$configured" ] && [ "$(cd -P -- "$configured" 2>/dev/null && pwd -P)" = "$hook_real" ]; then
+        scope=""
+        break
+      fi
+    done
+    install_roots=("${hook_dir%/hooks}")
+    [ -z "$scope" ] || install_roots[${#install_roots[@]}]="$scope/.agents"
+    ;;
+esac
+[ -z "$shared_root" ] || install_roots[${#install_roots[@]}]="$shared_root"
 lib=""
 for at in "${install_roots[@]}"; do
   candidate="$at/skills/commit-guards/scripts/lib"
   if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then lib=$candidate; break; fi
 done
-if [ -z "$lib" ]; then
-  lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
-fi
-[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
+[ -n "$lib" ] || refuse settings no-loader
 GG_CHECK=command-safety
 # Keep nested support reads under errexit. A source on the left of || would
 # continue past a failed nested import. EXIT owns the advisory outcome, and
