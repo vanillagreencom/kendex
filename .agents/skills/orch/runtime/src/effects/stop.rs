@@ -587,9 +587,10 @@ impl Close<'_> {
                 // answer before its teardown shows in its `list`, so no
                 // list read after the close judges it.
                 Ok(HostClosed::Closed { line }) => observation["host_close"] = json!(line),
-                Ok(HostClosed::Refused { path }) => {
+                Ok(HostClosed::Refused { path, cause }) => {
                     observation["host_close"] = json!("refused");
                     observation["path"] = json!(path);
+                    observation["cause"] = json!(cause);
                     return Ok(self.hold(operation, observation));
                 }
                 Err(Asked::Failed(cause)) => {

@@ -785,11 +785,29 @@ pub fn send_text(
 /// What the provider's close answered: the archive line its close printed
 /// (`kept=PATH`, `kept=none` where it printed none, or `closed=absent
 /// item=ITEM` from a host that no longer holds the item), or its refusal
-/// (exit 3, `close-refused path=` naming the checkout it kept).
+/// (exit 3, `close-refused path=` naming the checkout it kept and a bounded
+/// stderr cause).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostClosed {
     Closed { line: String },
-    Refused { path: String },
+    Refused { path: String, cause: String },
+}
+
+fn close_refusal_cause(stderr: &str) -> String {
+    const MAX_BYTES: usize = 2048;
+    const ELISION: &str = " … ";
+    let line = crate::provider::cause_line(stderr);
+    if line.len() <= MAX_BYTES {
+        return line.to_owned();
+    }
+
+    // An item list can fill the record. Keep both the leading cause and
+    // the trailing repair instruction when the provider has to list paths.
+    let head_bytes = (MAX_BYTES - ELISION.len()) / 2;
+    let tail_bytes = MAX_BYTES - ELISION.len() - head_bytes;
+    let head = line.floor_char_boundary(head_bytes);
+    let tail = line.ceil_char_boundary(line.len() - tail_bytes);
+    format!("{}{ELISION}{}", &line[..head], &line[tail..])
 }
 
 /// `close --item ITEM [--merged]` under the close's bound, read by
@@ -822,6 +840,7 @@ pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<Hos
                         .map(|(_, p)| p.to_owned())
                 })
                 .unwrap_or_else(|| "unknown".to_owned()),
+            cause: close_refusal_cause(&stderr),
         }),
         _ => Err(Asked::Failed(format!(
             "host-close-failed {}",

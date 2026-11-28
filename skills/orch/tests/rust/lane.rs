@@ -2898,9 +2898,9 @@ const RUNNING_CLOSE: [&str; 3] = [
 
 /// One provider close case: its name, the provider's answers, then the
 /// close's word, its observed provider close and the record's status.
-type CloseCase = (
+type CloseCase<'a> = (
     &'static str,
-    &'static [(&'static str, &'static str)],
+    &'a [(&'static str, &'a str)],
     &'static str,
     &'static str,
     &'static str,
@@ -2919,7 +2919,16 @@ type CloseCase = (
 /// close unconfirmed with what it read, the item's files already gone.
 #[test]
 fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_items_files() {
-    let rows: [CloseCase; 8] = [
+    let cause_prefix = "lane-host-ssh: close-unpushed unpushed=stash:644c8259";
+    let fix = "fix=push the stash before closing";
+    let short_cause = format!("{cause_prefix} {fix}");
+    let short_stderr = format!("lane-host-ssh: checking checkout\n{short_cause}");
+    let long_cause = format!(
+        "{cause_prefix} paths={} {fix}",
+        "/srv/work/ééé ".repeat(250)
+    );
+    let long_stderr = format!("lane-host-ssh: checking checkout\n{long_cause}");
+    let rows: [CloseCase<'_>; 9] = [
         ("kept", &[], "closed", "kept=/srv/archive/KEN-1", "done"),
         (
             "listed started",
@@ -2954,7 +2963,14 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
         ),
         (
             "refused",
-            &[("CLOSE_STATUS", "3")],
+            &[("CLOSE_STATUS", "3"), ("CLOSE_ERROR", &short_stderr)],
+            "unconfirmed",
+            "refused",
+            "running",
+        ),
+        (
+            "refused with a long cause",
+            &[("CLOSE_STATUS", "3"), ("CLOSE_ERROR", &long_stderr)],
             "unconfirmed",
             "refused",
             "running",
@@ -2990,8 +3006,25 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
             result["observation"]["host_close"], host_close,
             "{case}: {result}"
         );
-        if case == "refused" {
-            assert_eq!(result["observation"]["path"], "/srv/clone", "{result}");
+        if host_close == "refused" {
+            let observation = &result["observation"];
+            assert_eq!(observation["path"], "/srv/clone", "{result}");
+            let saved = fleet.fleet();
+            let intent = &saved["intents"][0];
+            assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+            assert_eq!(intent["observation"], *observation, "{intent}");
+            let cause = observation["cause"]
+                .as_str()
+                .unwrap_or_else(|| panic!("provider close lost its cause: {observation}"));
+            if case == "refused" {
+                assert_eq!(cause, short_cause);
+            } else {
+                assert!(cause.len() <= 2048, "{} bytes", cause.len());
+                assert!(cause.starts_with(cause_prefix), "{cause}");
+                assert!(cause.ends_with(fix), "{cause}");
+                assert!(cause.contains(" … "), "{cause}");
+                assert!(!cause.contains('\u{fffd}'), "{cause}");
+            }
         }
         assert_eq!(fleet.lane("KEN-1")["status"], status, "{case}");
         assert!(

@@ -43,7 +43,8 @@ fi
 # _CAT_STATUS fails cat alone (for _CAT_ITEM or the exact _CAT_PATH when set),
 # and _CAT_STATE adds the provider's lane-stopped line. _TOUCH_STATUS fails the probe.
 # _CLOSE_STATUS fails close with the static provider's close-refused line (for
-# _CLOSE_ITEM alone when set). _PUT_STATUS fails put alone, the provider that
+# _CLOSE_ITEM alone when set), with _CLOSE_ERROR printed before that line.
+# _PUT_STATUS fails put alone, the provider that
 # accepted a lane's bytes and wrote none of them. _PUT_BYTES is the provider
 # whose put reports success and lands that literal instead: the file holds
 # bytes the caller never sent, which only a read-back tells apart.
@@ -84,7 +85,11 @@ case "$1" in
   # A close that succeeds prints the archive line the shipped provider
   # prints, LANE_HOST_STUB_CLOSE_LINE in its place when set (empty: none).
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
-    || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; }
+    || {
+      [[ -z "${LANE_HOST_STUB_CLOSE_ERROR:-}" ]] || printf '%s\n' "$LANE_HOST_STUB_CLOSE_ERROR" >&2
+      printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2
+      exit "$LANE_HOST_STUB_CLOSE_STATUS"
+    }
     : > "$LANE_HOST_STUB_LOG.closed"
     line="${LANE_HOST_STUB_CLOSE_LINE-kept=/srv/archive/$3}"
     [ -z "$line" ] || printf '%s\n' "$line"
