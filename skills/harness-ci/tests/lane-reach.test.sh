@@ -897,7 +897,14 @@ edit_file "$repo/tsconfig.json" './web/src/*' './lib/*'
 mkdir -p "$repo/lib"
 git -C "$repo" mv web/src/aliased.ts lib/aliased.ts
 git -C "$repo" commit -qam 'Vite resolves the same alias from TypeScript paths'
-git -C "$repo" checkout -qb fixture-vitest-setup-suffix
+git -C "$repo" checkout -qb fixture-vitest-scratch-path
+printf 'export {}\n' >"$repo/lib/stable.ts"
+edit_file "$repo/web/app/nested/check.test.ts" "import { value } from '@/aliased'" \
+  "import '@/stable'\nimport { value } from '@/aliased'"
+printf '%s\n' 'web web/fixtures/* # reason: fixtures are read at runtime' >"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'Vitest claims fixtures separately from its alias imports'
+git -C "$repo" checkout -qb fixture-vitest-setup-suffix fixture-vitest-ts-paths
 printf 'export const value = 42\n' >"$repo/lib/aliased.js.ts"
 edit_file "$repo/web/src/test-setup.ts" "'./setup-helper.ts'" "'@/aliased.js'"
 edit_file "$repo/web/app/nested/check.test.ts" "import { value } from '@/aliased'" 'const value = 42'
@@ -1460,7 +1467,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-alias-*|vitest-setup-import) base="$vitest_literal_base" ;;
     vitest-ts-paths-shadow) base="$(git -C "$repo" rev-parse fixture-vitest-ts-paths)" ;;
     vitest-ts-paths|vitest-computed-config|vitest-process|vitest-fetch|vitest-import-meta|vitest-node-builtin|vitest-file-url|\
-    vitest-setup-suffix|vitest-pruned-alias|vitest-comment-boundary)
+    vitest-setup-suffix|vitest-pruned-alias|vitest-comment-boundary|vitest-scratch-path)
       base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     agent-pair) base="$agent_pair_base" ;;
     command-pair) base="$command_pair_base" ;;
@@ -1539,7 +1546,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
-    runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*|vitest-setup-suffix|vitest-pruned-alias)
+    runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*|vitest-setup-suffix|\
+    vitest-pruned-alias|vitest-scratch-path)
       printf 'export const value = 43\n' >"$repo/$path" ;;
     shell-symlink) printf 'physical\n' >"$repo/$path" ;;
     dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
@@ -1564,7 +1572,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   git -C "$repo" commit -qm "$label"
   case "$label" in
   vitest-inherited|shared-runtime|runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*|\
-  vitest-setup-suffix|vitest-pruned-alias)
+  vitest-setup-suffix|vitest-pruned-alias|vitest-scratch-path)
     [ -x "$trusted/web/node_modules/.bin/vitest" ] && [ -x "$repo/web/node_modules/.bin/vitest" ]
     base_status=0 head_status=0
     (cd "$trusted/web" && ./node_modules/.bin/vitest run) >"$SANDBOX/base-vitest-log" 2>&1 || base_status=$?
@@ -1817,13 +1825,27 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     done
   fi
   case "$label" in
-    vitest-disabled-sibling|vitest-ts-paths|vitest-ts-paths-shadow)
+    vitest-disabled-sibling|vitest-ts-paths|vitest-ts-paths-shadow|vitest-scratch-path)
       # A refusal that keeps the lane eligible does not prove a reader hit.
       for log in action-log local-log; do
         assert_eq "$label $log web evidence" hit \
           "$(sed -n 's/^lane: name=web verdict=true .* evidence=\([a-z]*\)$/\1/p' "$SANDBOX/$log")"
       done ;;
   esac
+  if [ "$label" = vitest-scratch-path ]; then
+    scratch="$SANDBOX/node_modules-cache"
+    mkdir -p "$scratch"
+    (
+      unset GITHUB_REPOSITORY GITHUB_JOB GITHUB_WORKFLOW_REF
+      TMPDIR="$scratch" PATH="$tools:$PATH" GITHUB_REF="$push_ref" GITHUB_SHA="$head" GITHUB_EVENT_PATH="$SANDBOX/event" \
+        "$cli" --event "$event" --base "$base" --head "$head" --queue-only-default true \
+        --repo "$repo" --lanes-from "$trusted" --output "$SANDBOX/scratch-output"
+    ) >"$SANDBOX/stdout" 2>"$SANDBOX/scratch-log" || { cat "$SANDBOX/scratch-log"; exit 1; }
+    assert_eq "$label scratch path retains the lane despite its unrelated claim" true \
+      "$(verdict web "$SANDBOX/scratch-output")"
+    assert_eq "$label scratch path refusal" vitest-scratch-outside-changed-graph \
+      "$(sed -n 's/^lane-reach: job=web cause=\([^ ]*\).*$/\1/p' "$SANDBOX/scratch-log")"
+  fi
   if [ "$label" = queue-prerequisite ]; then
     assert_eq "$label has queue proof" queue_only=true "$(sed -n '/^queue_only=/p' "$SANDBOX/action")"
   fi
@@ -1909,6 +1931,7 @@ vitest-alias-read|web/src/aliased.ts|||true|
 vitest-alias-unread|web/spare-é.mjs|||false|
 vitest-ts-paths|lib/aliased.ts|||true|
 vitest-ts-paths-shadow|lib/aliased.js|||true|
+vitest-scratch-path|lib/aliased.ts|||true|
 vitest-setup-import|web/src/setup-helper.ts|||true|
 vitest-setup-suffix|lib/aliased.ts|||true|
 vitest-pruned-alias|web/src/node_modules-info.ts|||true|

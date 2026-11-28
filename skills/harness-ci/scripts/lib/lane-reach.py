@@ -958,8 +958,7 @@ class Evidence:
                               "vitest-module-unresolved")
                 # Vitest 4's getTestDependencies prunes paths containing
                 # node_modules, including regular files and their imports.
-                require_shape(is_setup or ("node_modules" not in imported and
-                                           "node_modules" not in str(self.work)),
+                require_shape(is_setup or "node_modules" not in imported,
                               "vitest-import-outside-changed-graph")
                 if self.package_path(imported):
                     # Package ownership also needs imports outside Vitest's changed graph.
@@ -985,6 +984,9 @@ class Evidence:
         paths = {path for path in paths if not ungraphed(path)}
         if not paths:
             return self.changed
+        # Vitest applies the same exclusion to absolute paths in the scratch
+        # checkout. Its location depends on this run's environment.
+        require("node_modules" not in str(self.checkout), "vitest-scratch-outside-changed-graph")
 
         def listing(options, env=None):
             rows = json.loads(command([str(binary), "list", "--filesOnly", "--json", *options],
