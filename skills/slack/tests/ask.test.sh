@@ -73,12 +73,24 @@ ask_deadline() { # ROOT ASK_ID
   printf 'It stands at <!date^%s^{date_short_pretty} at {time}|%s> unless you reply in this thread.' "$deadline" "$at"
 }
 
-create_tracker_ask() { # NAME FAILURE QUESTION [ASK_OPTIONS...]
+create_tracker_ask() { # NAME FAILURE QUESTION [referenced] [ASK_OPTIONS...]
   local name="$1" phase="$2" question="$3" scripts ask_rc=0 notice
   shift 3
   ROOT="$(sk_tracker_root "$name" Team '')" || return 1
   sk_bind "$ROOT"
   CH="$(sk_channel "$ROOT")" || return 1
+  TRACKER_REF_LINK=""
+  if [ "${1:-}" = referenced ]; then
+    shift
+    local ref_ts ref
+    sk_poll "$ROOT"
+    ref_ts="$(sk_inject "$CH" U001 'Earlier work-item request.')" || { bad "$name receives its referenced request"; return 1; }
+    sk_poll "$ROOT"
+    ref="$(jq -er 'select(.kind == "directive") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")" ||
+      { bad "$name records its referenced request"; return 1; }
+    TRACKER_REF_LINK="https://workspace.slack.com/archives/$CH/p${ref_ts/./}"
+    set -- "$@" --ref "$ref"
+  fi
   scripts="$ROOT/.agents/skills/mailbox/scripts"
   rm -- "${scripts:?}"
   cp -R "${SK_LANE_MAIL%/*}" "$scripts"
@@ -230,7 +242,7 @@ read-auth|{"method":"chat.getPermalink","error":"invalid_auth"}||2|0|retry|1
 read-first|{"method":"chat.getPermalink","drop":true}|{"method":"chat.getPermalink","error":"message_not_found"}|1|1|retry|1
 ROWS
 
-sk_mutant ref-link relay.py '            pieces \+= \[f"\\n\\n\[Referenced conversation\]\(\{permalink\}\)"\]' '            pieces += []'
+sk_mutant ref-link relay.py '            conversation_link = f"\\n\\n\[Referenced conversation\]\(\{permalink\}\)"' '            conversation_link = ""'
 referenced_ask referenced-control
 sk_assert_red "$(jq -cn --arg text "$POSTED" --arg link "$REF_LINK" '$text | contains($link)')" true \
   'control: dropping the link fails the referenced conversation assertion'
@@ -291,13 +303,15 @@ echo "=== slack oversized work-item ask ==="
 # Fits before linking. The production renderer expands each repeated issue
 # reference, which pushes the full Markdown body past the Slack API cap.
 LONG_TRACKER_ASK="$(awk 'BEGIN {print "Approve action?"; for (n=100; n<215; n++) print "- KEN-" n ": Review release notes, acceptance checks and remaining work."}')"
-if create_tracker_ask tracker-overflow '' "$LONG_TRACKER_ASK" --recommend approve --effect none; then
+if create_tracker_ask tracker-overflow '' "$LONG_TRACKER_ASK" referenced --recommend approve --effect none; then
   DEADLINE="$(ask_deadline "$ROOT" "$ASK")" || bad 'the oversized item ask records a deadline'
   sk_poll "$ROOT"
   OVERFLOW_POST="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\"))")"
   assert_eq "$(jq -r '.text' <<<"$OVERFLOW_POST")" \
-    "<@U001> <@U002> Question from overseer: Approve action? $LINK $DEADLINE" \
-    'after link expansion an oversized item ask opens a short Slack thread with the item link and deadline'
+    "<@U001> <@U002> Question from overseer: Approve action? $LINK $DEADLINE
+
+[Referenced conversation]($TRACKER_REF_LINK)" \
+    'the short root keeps the first line, item link, deadline and referenced conversation'
   OVERFLOW_TS="$(jq -r '.ts' <<<"$OVERFLOW_POST")"
   if [ -n "$OVERFLOW_TS" ]; then
     sk_inject "$CH" U001 hold "$OVERFLOW_TS" >/dev/null
@@ -323,12 +337,37 @@ if create_tracker_ask tracker-overflow-replacement '' "$LONG_TRACKER_ASK" --rese
   fi
 fi
 
-if create_tracker_ask tracker-overflow-line '' "${LONG_TRACKER_ASK//$'\n'/ }" --recommend approve --effect none; then
+if create_tracker_ask tracker-overflow-reminder '' "$LONG_TRACKER_ASK" --reserved; then
+  sk_poll "$ROOT"
+  ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\")) | .ts")"
+  if [ -n "$ASK_TS" ]; then
+    past_deadline
+    assert_eq "$(reminders)" 1 'an oversized reserved ask gets one reminder in its original thread'
+    assert_eq "$(sk_state ".messages.${CH}[] | select(.thread_ts == \"$ASK_TS\" and (.text | contains(\"Overdue, no default\"))) | .text")" \
+      "<@U001> <@U002> Overdue, no default: Approve action? $LINK" \
+      'the short in-thread reminder keeps the first line and item link'
+  else
+    bad 'the oversized reserved ask opens a thread for the reminder'
+  fi
+fi
+
+# The short form would fit with its first line if it omitted the permalink.
+LONG_TRACKER_LINE="Approve action? $(printf '%11700s' '' | tr ' ' x)"
+if create_tracker_ask tracker-overflow-line '' "$LONG_TRACKER_LINE" referenced --recommend approve --effect none; then
   DEADLINE="$(ask_deadline "$ROOT" "$ASK")" || bad 'the long-first-line item ask records a deadline'
   sk_poll "$ROOT"
   assert_eq "$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question from overseer:\")) | .text")" \
-    "<@U001> <@U002> Question from overseer: $LINK $DEADLINE" \
-    'a first line that exceeds the cap after linking leaves the item link and deadline'
+    "<@U001> <@U002> Question from overseer: $LINK $DEADLINE
+
+[Referenced conversation]($TRACKER_REF_LINK)" \
+    'the permalink takes precedence over the first line when the short root would exceed the cap'
+fi
+
+if create_tracker_ask tracker-overflow-unconfirmed comment "$LONG_TRACKER_ASK" --recommend approve --effect none; then
+  sk_poll "$ROOT"
+  assert_eq "$(asks "$CH" 'Question from overseer:')|$(jq -r --arg id "$ASK" \
+    'select(.t == "out" and .id == $id and .state == "refused") | .reason' "$(sk_journal "$ROOT")")" \
+    '0|text-too-long' 'tracker comment failure leaves the oversized ask refused without a short post'
 fi
 
 SECRET_ASK="$(printf 'Approve action?\n%12000s\n%s%s' '' 'xoxb-' '0123456789abcdefghij')"
@@ -461,12 +500,13 @@ sk_mutant reserved-late relay.py 'if envelope\.get\("reserved"\) is True and at_
 reserved_ask control-late 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: without the first-post rule a late reserved ask is posted twice"
 
-sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None, presentation=retained, ask_root=\(envelope, header\)\)' \
+sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None, presentation=retained,\s+ask_post=\(envelope, header\), conversation_link=conversation_link\)' \
   'ts = "1.000001"\n        self.bind_presentation(envelope, {"ts": ts}, "ask", retained)'
 reserved_ask control-unposted 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: an ask journaled open but never sent fails the posted assertion"
 
-sk_mutant reserved-rebind relay.py 'ask_root=\(envelope, root_header\) if thread_ts is None else None' 'ask_root=None'
+sk_mutant reserved-rebind relay.py 'if ask_post is not None and root is not None and thread_ts is None:' \
+  'if ask_post is not None and root is not None and thread_ts is None and kind != "overdue":'
 reserved_ask control-rebind 30
 sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
 sk_poll "$ROOT"

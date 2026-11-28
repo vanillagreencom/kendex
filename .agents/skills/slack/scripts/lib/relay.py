@@ -1285,13 +1285,13 @@ class RootRelay:
     def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
               attach: str = "", admission: Optional[Callable[[], bool]] = None,
               notice_followup: bool = False, presentation: bool = False,
-              ask_root: Optional[Tuple[Dict, str]] = None) -> Optional[str]:
+              ask_post: Optional[Tuple[Dict, str]] = None, conversation_link: str = "") -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
         the text as its comment, or the text posted as standard Markdown.
         Slack's refusal goes to `post_refused`. Questions must fit one
-        message. A tracker-backed root can use a short form after its full
+        message. A tracker-backed ask or reminder can use a short form after its full
         text passes the secret check. Long reports continue under the original root,
         with acknowledged progress synced after each part. An ambiguous
         write never retries. Returns the
@@ -1302,15 +1302,15 @@ class RootRelay:
             text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
             if kind in ("ask", "overdue"):
-                if len(text) > MARKDOWN_LIMIT and ask_root is not None:
-                    ask, header = ask_root
+                if len(text) > MARKDOWN_LIMIT and ask_post is not None:
+                    ask, header = ask_post
                     if ask.get("tracker_posted") is True:
                         question = ask.get("text", "").split("\n", 1)[0]
-                        tail = (str(ask["issue"]), deadline_clause(ask))
-                        written = " ".join(part for part in (header, question, *tail) if part)
+                        tail = (str(ask["issue"]), deadline_clause(ask) if thread_ts is None else "")
+                        written = " ".join(part for part in (header, question, *tail) if part) + conversation_link
                         text, body_arg = outbound(self.path, written)
                         if len(text) > MARKDOWN_LIMIT:
-                            written = " ".join(part for part in (header, *tail) if part)
+                            written = " ".join(part for part in (header, *tail) if part) + conversation_link
                             text, body_arg = outbound(self.path, written)
                         secret_check(text.encode(), f"id={env_id}")
                 markdown_checked(text, f"id={env_id} kind={kind} fix=shorten-question-or-link-detail-in-file-issue-or-report")
@@ -1349,8 +1349,8 @@ class RootRelay:
                 self.thread_refused(err, thread_ts)
             self.post_refused(err, envelope, kind)
             return None
-        if ask_root is not None and root is not None:
-            ask, _ = ask_root
+        if ask_post is not None and root is not None and thread_ts is None:
+            ask, _ = ask_post
             excerpt = written if isinstance(written, str) else "".join(
                 piece if isinstance(piece, str) else piece.text for piece in written)
             self.bind_presentation(ask, {"ts": root, "text": excerpt}, "ask", presentation)
@@ -1483,6 +1483,7 @@ class RootRelay:
         pieces = self.ask_pieces(envelope, header)
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
+        conversation_link = ""
         if thread_ts is not None:
             try:
                 permalink = self.api.get("chat.getPermalink", channel=self.channel, message_ts=thread_ts)["permalink"]
@@ -1490,8 +1491,10 @@ class RootRelay:
                 self.post_refused(err, envelope, "ask", read=True)
                 return False
             # The ask needs its own thread so an owner reply answers this ask.
-            pieces += [f"\n\n[Referenced conversation]({permalink})"]
-        ts = self._send(envelope, "ask", pieces, None, presentation=retained, ask_root=(envelope, header))
+            conversation_link = f"\n\n[Referenced conversation]({permalink})"
+            pieces.append(conversation_link)
+        ts = self._send(envelope, "ask", pieces, None, presentation=retained,
+                        ask_post=(envelope, header), conversation_link=conversation_link)
         if ts is None:
             return False
         if retained:
@@ -1509,12 +1512,12 @@ class RootRelay:
         reminder = dict(envelope, id=overdue_id(ask_id))
         thread_ts = self.state.post_thread(ask_id)
         header = f"{mention(self.binding)} Overdue, no default"
-        root_header = f"{header}. Question from {envelope.get('from', 'overseer')}:"
+        header = f"{header}:" if thread_ts is not None else f"{header}. Question from {envelope.get('from', 'overseer')}:"
         # A new thread may be the owner's first sight of the question, so it
         # gets the full presentation when it fits.
         pieces: List[Union[str, Verbatim]] = (
-            [f"{header}: {envelope.get('text', '')}"] if thread_ts is not None
-            else self.ask_pieces(envelope, root_header))
+            [f"{header} {envelope.get('text', '')}"] if thread_ts is not None
+            else self.ask_pieces(envelope, header))
         binding = self.state.threads.get(self.state.by_envelope.get(ask_id, ""))
         established = (envelope.get("presentation") or {}).get("presenter") == self.presenter or (
             binding is not None and binding.presenter == self.presenter)
@@ -1525,7 +1528,7 @@ class RootRelay:
                 return
             envelope = dict(envelope, presentation={"presenter": self.presenter})
         landed = self._send(reminder, "overdue", pieces, thread_ts, presentation=retained,
-                            ask_root=(envelope, root_header) if thread_ts is None else None)
+                            ask_post=(envelope, header))
         if landed is None:
             return
         if retained:
