@@ -91,6 +91,10 @@ if [ -z "${KENDEX_HOOK_SCOPE+set}${KENDEX_HOOK_ROOT+set}" ]; then
       kendex_hook_tail=/.pi$kendex_hook_tail
     fi
   fi
+  if [ "$kendex_hook_scope" = both ]; then
+    printf '%s\n' 'kendex-hook-scope-overlap: hook=worktree-session-claim carrier=pi-hooks>=0.19.3' 'The hook did not run: PI_CODING_AGENT_DIR names this project'\''s .pi, so one Pi registry file is both the project'\''s and the global one, and this pi-hooks carrier does not say which registration started the hook. The hook cannot tell which install'\''s skills and settings to use. Update pi-hooks to 0.19.3 or later, which names the registration, or point PI_CODING_AGENT_DIR at a directory outside the project.' >&2
+    exit 2
+  fi
   case $kendex_hook_scope in
     project | global)
       kendex_hook_root=${kendex_hook_at:0:${#kendex_hook_at}-${#kendex_hook_tail}}
