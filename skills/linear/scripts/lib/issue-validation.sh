@@ -525,15 +525,15 @@ require_issue_header_shape() {
 # A post-merge reading holding a comparator before a number is numeric and
 # must name its figure, comparator, number and unit; any other reading is an
 # outcome check whose pass condition is its text. RETIRE_JSON maps a box
-# number to `waived` or `superseded`, with its EVIDENCE_JSON text as the
-# authority and reason, or the replacement ID and the criterion it now holds.
+# number to `waived`, `superseded` or `failed`, with its EVIDENCE_JSON text as
+# the authority and reason, replacement ID and criterion, or repair ID and reason.
 # A retired box loses its checkbox and keeps its text, so it is never read as
 # passed and holds no completion state. A ticked box cannot retire, and an
 # open branch box still refuses as unmet: only an open post-merge box retires.
-# A retired line followed by its deeper Reason: or Replacement: line keeps its
-# number as a slot no selection reaches, so every later box keeps the number a
-# caller read before the retirement. Naming the same retirement again is a
-# no-op, which lets a retry of a written completion finish; any other
+# A retired line followed by its deeper Reason:, Replacement: or Repair: line
+# keeps its number as a slot, so every later box keeps the number a
+# caller read before the retirement. Replaying the same retirement preserves
+# its text and exposes failed repair targets for revalidation. Any other
 # selection of a slot refuses as done-when-retirement.
 # Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON] [RETIRE_JSON]
 done_when_parse() {
@@ -542,6 +542,8 @@ done_when_parse() {
     [[ $# -lt 5 ]] || retire="$5"
     jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" --argjson evidence "$evidence" --argjson retire "$retire" '
         def fence_run: (try capture("^[ \\t]*(?<run>`{3,}|~{3,})").run catch null) // null;
+        def retirement_labels: {Waived: "Reason", Superseded: "Replacement", Failed: "Repair"};
+        def issue_id_pattern: "[A-Z][A-Z0-9]*-[1-9][0-9]*";
         def utc_epoch:
             . as $stamp
             | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then
@@ -549,6 +551,7 @@ done_when_parse() {
               else null end;
         ($merged | if . == "" then null else utc_epoch end) as $merge_epoch
         | ($desc | gsub("\r\n"; "\n") | split("\n")) as $lines
+        | ("^(?<indent>[ \t]*)[-*] (?<kind>" + (retirement_labels | keys | join("|")) + "): \\S") as $slot_pattern
         | reduce range(0; $lines | length) as $i
             ({out: [], section: false, boxes: [], slots: 0, retired: [], outside: [], fence: null, ticked: 0, changed: false, skip: -1};
             $lines[$i] as $line
@@ -567,15 +570,21 @@ done_when_parse() {
                 .outside += [{line: ($i + 1), checked: ($line | test("^\\s*[-*] \\[[xX]\\]")),
                               text: ($line | sub("^\\s*[-*] \\[[ xX]\\]\\s*"; ""))}]
               else . end
-            # A slot-shaped line without its deeper reason line is an ordinary
+            # A slot-shaped line without its deeper detail line is an ordinary
             # line: every branch yields one value, so the reduce state is never
             # emptied by a failed match.
             | (if (.section | not) or $fenced then null else
-                ((try ($line | capture("^(?<indent>[ \t]*)[-*] (?<kind>Waived|Superseded): \\S")) catch null) // null) as $slot
+                ((try ($line | capture($slot_pattern)) catch null) // null) as $slot
                 | if $slot == null then null else
-                    (($lines[$i + 1] // "" | try capture("^(?<indent>[ \t]+)" + (if $slot.kind == "Waived" then "Reason" else "Replacement" end) + ": (?<text>.*)$") catch null) // null) as $reason
-                    | if $reason != null and ($reason.indent | length) > ($slot.indent | length)
-                      then {kind: ($slot.kind | ascii_downcase), text: $reason.text} else null end end end) as $slot_record
+                    (($lines[$i + 1] // "" | try capture("^(?<indent>[ \t]+)" + retirement_labels[$slot.kind] + ": (?<text>.*)$") catch null) // null) as $detail
+                    | if $detail == null or ($detail.indent | length) <= ($slot.indent | length) then null
+                      elif $slot.kind == "Failed" then
+                        if ($detail.text | test("^" + issue_id_pattern + "$")) then
+                            (($lines[$i + 2] // "" | try capture("^(?<indent>[ \t]+)Reason: (?<text>\\S.*)$") catch null) // null) as $reason
+                            | {kind: "failed", repair: $detail.text,
+                               text: ($detail.text + (if $reason.indent == $detail.indent then " " + $reason.text else "" end))}
+                        else null end
+                      else {kind: ($slot.kind | ascii_downcase), text: $detail.text} end end end) as $slot_record
             | if $slot_record != null then
                 .slots += 1 | .retired += [$slot_record + {number: .slots}] | .out += [$line]
               elif .section and ($fenced | not) and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
@@ -610,8 +619,11 @@ done_when_parse() {
                 | ($retire[$n | tostring] // null
                     | if . == null then null else
                         {kind: ., text: ($evidence[$n | tostring] // "")}
-                        | if .kind == "superseded" then
-                            . + ((try (.text | capture("^(?<replacement>[A-Z][A-Z0-9]*-[1-9][0-9]*) (?<criterion>\\S.*)$")) catch null) // {})
+                        | if .kind == "superseded" or .kind == "failed" then
+                            ((try (.text | capture("^(?<id>" + issue_id_pattern + ") (?<detail>\\S.*)$")) catch null) // null) as $target
+                            | if $target == null then .
+                              elif .kind == "failed" then . + {repair: $target.id, reason: $target.detail}
+                              else . + {replacement: $target.id, criterion: $target.detail} end
                           else . end end) as $retired
                 | ($fields.deadline // "" | utc_epoch) as $deadline_epoch
                 | ((try ($fields.deadline | capture("^\\+(?<hours>[0-9]+)h$").hours | tonumber) catch null) // null) as $deadline_hours
@@ -631,8 +643,10 @@ done_when_parse() {
                                deadline_rule: $deadline_rule, deadline_end: $deadline_end, numeric: $numeric, reading_rule: $reading_rule,
                                retired: $retired} + $fields + {trigger: $trigger} + $trigger_fields)]
                 | if $retired != null then
-                    .out += [($line | sub("\\[ \\]\\s*"; (if $retired.kind == "waived" then "Waived: " else "Superseded: " end))),
-                             $indent + (if $retired.kind == "waived" then "  Reason: " else "  Replacement: " end) + $retired.text]
+                    (($retired.kind | .[0:1] | ascii_upcase) + $retired.kind[1:]) as $label
+                    | .out += [($line | sub("\\[ \\]\\s*"; $label + ": ")),
+                               $indent + "  " + retirement_labels[$label] + ": " + ($retired.repair // $retired.text)]
+                    | if $retired.kind == "failed" then .out += [$indent + "  Reason: " + ($retired.reason // "")] else . end
                     | .changed = true
                   elif $tick then .out += [$line | sub("\\[ \\]"; "[x]")] | .ticked += 1
                   elif $open and $trigger_fields.trigger_kind == "merge" and $deadline_hours != null
@@ -663,12 +677,20 @@ done_when_parse() {
                   else empty end]
                 + [$r.boxes[] | select(.retired != null)
                     | select(.checked or (.retired.text | test("\\S") | not)
-                        or (.retired.kind == "superseded" and (.retired | has("replacement") | not)))
+                        or (.retired.kind == "superseded" and .retired.replacement == null)
+                        or (.retired.kind == "failed" and .retired.repair == null))
                     | {box: .number, rule: "done-when-retirement"}]
                 + [$r.retired[] | . as $s | ($s.number | tostring) as $key
                     | select(($met != "all" and any($met[]; . == $s.number))
                         or ($retire | has($key) and ($retire[$key] != $s.kind or ($evidence[$key] // "") != $s.text)))
                     | {box: $s.number, rule: "done-when-retirement"}])}
+        | if $retire == {} then . else
+            .retirement_targets = [
+                ($r.boxes[] | select(.retired.replacement != null or .retired.repair != null)
+                    | {box: .number, source: .reading} + .retired),
+                ($r.retired[] | select(.kind == "failed" and $retire[.number | tostring] == "failed")
+                    | {box: .number, kind, repair})]
+          end
         | .child_box = ([.boxes[] | select(.text | test("^every child (is )?done or cancell?ed\\.?\\s*$"; "i")) | .number] | first)
         | .missing_evidence_boxes as $missing | .child_box as $child
         | .container_open_boxes = [.boxes[] | select(.number != $child)

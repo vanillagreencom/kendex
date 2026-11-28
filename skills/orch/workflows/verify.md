@@ -62,6 +62,7 @@ On `idle-after-return` or a recovery event for an existing reading lane, take st
 **Completion.**
 
 - Complete a proved box, a merged item and a container through the steps of [oversee-events.md § Verification](../references/oversee-events.md#verification): the evidence comment and file, `linear.sh issues complete` with the merge's `--post-merge-at`, `orch-runtime container-close` for a container, and the parent's close.
+- For a recorded failed check on a Linear item, keep the box open until its repair item is filed. Once filed, write `[N]: [REPAIR_ID] [REASON]` to the evidence file and run `.agents/skills/linear/scripts/linear.sh issues complete [ITEM] --post-merge-at [MERGED_AT] --done-when-failed [N] --evidence-file [FILE]`. Cite the recorded failure in the reason.
 - A GitHub item, `[OWNER/REPO]#[N]`, takes that section's GitHub form in their place.
 - Run them from the base checkout, outside any confined lane. In a confined lane `container-close` writes nothing; the overseer's route owns the close.
 

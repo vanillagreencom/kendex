@@ -349,8 +349,8 @@ Complete Options:
                         "p95 create latency <= 300 ms". Any other reading is
                         an outcome check, its text the pass condition.
                         A box that is met is ticked with its evidence. A
-                        failed or inconclusive reading is never ticked: name
-                        the box in no selection, and the item stays Verifying.
+                        failed or inconclusive reading is never ticked. An
+                        open post-merge box keeps the item Verifying.
   --done-when-met <all|N[,N...]>
                          Tick the "## Done when" checklist boxes the caller
                          verified as met, in the same issueUpdate that sets
@@ -383,12 +383,22 @@ Complete Options:
                          done-when-transfer-unread. The box
                          keeps its text as "- Superseded: ..." with a
                          "Replacement:" line.
-                         One box takes one of --done-when-met, -waived and
-                         -superseded; "all" takes no retirement beside it.
+  --done-when-failed <N[,N...]>
+                         Retire open post-merge boxes with recorded failures
+                         and repair items. Each evidence-file line is
+                         "N: REPAIR_ID REASON". The repair must be another
+                         live or Done item (not canceled, duplicate, archived
+                         or trashed), or the call refuses. The box keeps its
+                         text as "- Failed: ..." with "Repair:" and "Reason:"
+                         lines, and is never ticked.
+
+                         A box takes one disposition. "--done-when-met all"
+                         takes no retirement beside it.
                          A retired box keeps its number, so later boxes keep
-                         theirs. Naming the same retirement again changes
-                         nothing, so a retry finishes; any other selection
-                         of it refuses with done-when-retirement.
+                         theirs. Replaying the same retirement preserves the
+                         record and rechecks a failed box's repair. Any other
+                         selection of a retired box refuses with
+                         done-when-retirement.
   --evidence-file <path>  Evidence for --done-when-met, one N: text line per box,
                          and the text of each retired box.
                          Writes each Evidence: line with the tick and state.
@@ -3427,13 +3437,14 @@ complete_issue() {
     local issue_id="$1"
     shift
 
-    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--done-when-waived <N[,N...]>] [--done-when-superseded <N[,N...]>] [--evidence-file <path>] [--post-merge-at <UTC>] [--synced-description]"
+    local usage="issues.sh complete <issue-id> [--summary <text> | --summary-file <path>] [--done-when-met <all|N[,N...]>] [--done-when-waived <N[,N...]>] [--done-when-superseded <N[,N...]>] [--done-when-failed <N[,N...]>] [--evidence-file <path>] [--post-merge-at <UTC>] [--synced-description]"
     local synced_description="false"
     local summary=""
     local summary_file=""
     local done_when_met=""
     local done_when_waived=""
     local done_when_superseded=""
+    local done_when_failed=""
     local post_merge_at=""
     local evidence_file=""
     local output_format=""
@@ -3491,12 +3502,16 @@ complete_issue() {
             fi
             shift
             ;;
-        --done-when-waived | --done-when-superseded)
+        --done-when-waived | --done-when-superseded | --done-when-failed)
             if [[ ! "${2:-}" =~ ^[1-9][0-9]{0,3}(,[1-9][0-9]{0,3})*$ ]]; then
                 jq -cn --arg flag "$1" --arg value "${2:-}" '{error: ($flag + " takes comma-separated box numbers from 1, got: " + $value)}' >&2
                 return 1
             fi
-            if [ "$1" = --done-when-waived ]; then done_when_waived="$2"; else done_when_superseded="$2"; fi
+            case "$1" in
+                --done-when-waived) done_when_waived="$2" ;;
+                --done-when-superseded) done_when_superseded="$2" ;;
+                --done-when-failed) done_when_failed="$2" ;;
+            esac
             shift 2
             ;;
         --summary)
@@ -3572,13 +3587,16 @@ complete_issue() {
     fi
     # A retired box is never ticked: one box takes one disposition.
     local retire_json='{}'
-    if [[ -n "$done_when_waived$done_when_superseded" ]]; then
-        retire_json=$(jq -cn --arg waived "$done_when_waived" --arg superseded "$done_when_superseded" --argjson met "${met_json:-[]}" '
-            [$waived, $superseded | if . == "" then [] else split(",") | map(tonumber) end] as [$w, $s]
-            | if ($w + $s | unique | length) != ($w + $s | length) or $met == "all" or any($met[]; IN(($w + $s)[])) then null
-              else reduce (($w[] | [., "waived"]), ($s[] | [., "superseded"])) as [$n, $kind] ({}; .[$n | tostring] = $kind) end') || return 1
+    if [[ -n "$done_when_waived$done_when_superseded$done_when_failed" ]]; then
+        retire_json=$(jq -cn --arg waived "$done_when_waived" --arg superseded "$done_when_superseded" \
+            --arg failed "$done_when_failed" --argjson met "${met_json:-[]}" '
+            [{waived: $waived, superseded: $superseded, failed: $failed} | to_entries[]
+                | .key as $kind | .value | select(. != "") | split(",")[] | {key: ., value: $kind}] as $selections
+            | ($selections | from_entries) as $retire
+            | if ($retire | length) != ($selections | length) or $met == "all" or any($met[]; tostring | in($retire))
+              then null else $retire end') || return 1
         if [ "$retire_json" = null ]; then
-            jq -cn '{error: "done-when-disposition-overlap", fix: "Name each box in one of --done-when-met, --done-when-waived and --done-when-superseded."}' >&2
+            jq -cn '{error: "done-when-disposition-overlap", fix: "Name each box in one of --done-when-met, --done-when-waived, --done-when-superseded and --done-when-failed."}' >&2
             return 1
         fi
     fi
@@ -3650,30 +3668,31 @@ complete_issue() {
     # The transferred criterion is the retired box's own reading, so a wrong
     # box number cannot retire one obligation on another's transfer.
     # Linear resolves a moved issue's historical identifier, so only the stable
-    # id tells the source from its replacement. An archived or trashed item is
-    # one no one works, whatever its state.
-    local transfers transfer transfer_id transfer_result transfer_description transfer_checklist source_uuid
+    # id tells the source from its replacement or repair.
+    local targets target target_id target_result target_valid transfer_description transfer_checklist source_uuid
     source_uuid=$(jq -er '.issue.id | strings' <<<"$issue_result") || return 1
-    transfers=$(jq -c '.boxes[] | select(.retired.kind == "superseded")
-        | {box: .number, replacement: .retired.replacement, criterion: .retired.criterion, source: .reading}' <<<"$tick") || return 1
-    while IFS= read -r transfer; do
-        [ -n "$transfer" ] || continue
-        transfer_id=$(jq -r '.replacement' <<<"$transfer") || return 1
-        transfer_checklist='{"boxes":[]}'
-        transfer_result=$(get_issue "$transfer_id" --format=raw) || return 1
-        if jq -e --arg source "$source_uuid" '.issue | .id != $source and .trashed != true and .archivedAt == null
-            and (.state.type | strings | IN("canceled", "duplicate") | not)' <<<"$transfer_result" >/dev/null; then
-            transfer_description=$(jq -r '.issue.description // ""' <<<"$transfer_result") || return 1
+    targets=$(jq -c '.retirement_targets[]?' <<<"$tick") || return 1
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        target_id=$(jq -r '.replacement // .repair' <<<"$target") || return 1
+        target_result=$(get_issue "$target_id" --format=raw) || return 1
+        target_valid=$(jq -c --arg source "$source_uuid" '.issue | .id != $source and .trashed != true and .archivedAt == null
+            and (.state.type | type == "string" and (IN("canceled", "duplicate") | not))' <<<"$target_result") || return 1
+        if [ "$target_valid" = true ] && jq -e '.kind == "superseded"' <<<"$target" >/dev/null; then
+            transfer_description=$(jq -r '.issue.description // ""' <<<"$target_result") || return 1
             transfer_checklist=$(done_when_parse "$transfer_description" '[]') || return 1
+            target_valid=$(jq -c --argjson transfer "$target" '$transfer.criterion == $transfer.source
+                and any(.boxes[]; .text == $transfer.criterion or .reading == $transfer.criterion)' <<<"$transfer_checklist") || return 1
         fi
-        if ! jq -e --argjson transfer "$transfer" '$transfer.criterion == $transfer.source
-            and any(.boxes[]; .text == $transfer.criterion or .reading == $transfer.criterion)' <<<"$transfer_checklist" >/dev/null; then
-            jq -cn --arg issue "$issue_id" --argjson transfer "$transfer" \
-                '{error: "done-when-transfer-unread", issue: $issue, box: $transfer.box, replacement: $transfer.replacement,
-                  fix: "Name the reading of this box as the criterion, and a live replacement item whose Done when holds it as a box. Issue state unchanged."}' >&2
+        if [ "$target_valid" != true ]; then
+            jq -cn --arg issue "$issue_id" --argjson target "$target" \
+                '$target | {issue: $issue, box} + if .kind == "failed" then
+                    {error: "done-when-repair-unread", repair, fix: "Name a live or Done repair item. Issue state unchanged."}
+                  else {error: "done-when-transfer-unread", replacement,
+                    fix: "Name the reading of this box as the criterion, and a live replacement item whose Done when holds it as a box. Issue state unchanged."} end' >&2
             return 1
         fi
-    done <<<"$transfers"
+    done <<<"$targets"
     local superseded_ids=()
     local supersedes_block=0 supersedes_line
     local supersedes_entry='^- ([A-Z][A-Z0-9]*-[1-9][0-9]*) \(at-completion\):[[:blank:]]+[^[:blank:]].*$'
@@ -3761,6 +3780,9 @@ complete_issue() {
             if [ -n "$done_when_superseded" ]; then
                 retry+=" --done-when-superseded $done_when_superseded"
             fi
+            if [ -n "$done_when_failed" ]; then
+                retry+=" --done-when-failed $done_when_failed"
+            fi
             if [ -n "$evidence_file" ]; then
                 retry+=" --evidence-file $evidence_file"
             fi
@@ -3792,6 +3814,9 @@ complete_issue() {
             fi
             if [ -n "$done_when_superseded" ]; then
                 retry_options=$(jq -c --arg value "$done_when_superseded" '. + ["--done-when-superseded", $value]' <<<"$retry_options") || return 1
+            fi
+            if [ -n "$done_when_failed" ]; then
+                retry_options=$(jq -c --arg value "$done_when_failed" '. + ["--done-when-failed", $value]' <<<"$retry_options") || return 1
             fi
             if [ -n "$evidence_file" ]; then
                 retry_options=$(jq -c --arg value "$evidence_file" '. + ["--evidence-file", $value]' <<<"$retry_options") || return 1

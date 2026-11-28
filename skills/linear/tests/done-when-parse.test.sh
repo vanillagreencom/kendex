@@ -27,6 +27,13 @@ assert_eq 'the inline description parses to its boxes' \
   '[{"number":1,"checked":true,"post_merge":false},{"number":2,"checked":false,"post_merge":true}]'
 assert_eq 'an open post-merge box reads Verifying' "$(jq -r '.completion_state' <<<"$out")" Verifying
 
+# The verification watch reads .boxes and must not see the failed check.
+retired="${description/'- [ ] Post-merge'/'- Failed: Post-merge'}"$'  Repair: CC-730\n- [x] Later proof\n  Evidence: the result\n'
+parsed="$("$LINEAR" done-when parse --description "$retired")"
+assert_eq 'the failed retirement takes its slot without entering the verification boxes' \
+  "$(jq -c '[.completion_state, [.boxes[] | [.number, .text]]]' <<<"$parsed")" \
+  '["Done",[[1,"Branch proof"],[3,"Later proof"]]]'
+
 # From a file, byte for byte the same answer.
 printf '%s' "$description" > "$TMP_ROOT/description.md"
 from_file="$(cd "$TMP_ROOT" && "$LINEAR" done-when parse --description-file "$TMP_ROOT/description.md")"
