@@ -1447,6 +1447,11 @@ sys.exit(result.returncode)
                 result, page = self.run_cli()
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 row, = [row for row in page["rows"] if row["what"] == "Asked at " + name]
+                for sender in ((), ("--sender", "jarvis")):
+                    self.mail(root, "send", "Still needs the owner's answer " + str(sender), "--re", asks[name], *sender)
+                    result, page = self.run_cli()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    row, = [row for row in page["rows"] if row["what"] == "Asked at " + name]
                 if name != "local":
                     # The answer lands, its acknowledgement is lost, and the
                     # identical retry names the landed answer.
@@ -1468,7 +1473,8 @@ sys.exit(result.returncode)
                 # The console carries the owner's own words, so each answer
                 # records the owner as its sender.
                 answers = [(envelope.get("sender"), envelope["re"], envelope["closes"], envelope["text"])
-                           for envelope in self.box(root, "to-lane") if envelope["kind"] == "answer"]
+                           for envelope in self.box(root, "to-lane")
+                           if envelope["kind"] == "answer" and envelope.get("sender") == "owner"]
                 self.assertEqual(answers, [("owner", asks[name], False, "Second option"),
                                            ("owner", done, False, owner_asks.DONE_CLAIM + "\n\nMerged")])
                 result, page = self.run_cli()
@@ -1581,6 +1587,7 @@ sys.exit(result.returncode)
     def test_answer_to_a_closed_ask_adds_nothing(self):
         # A delegate's close that lands between the list and the answer.
         ask = self.mail(self.home, "ask", "Question", "--to", "owner", "--options", "a,b", "--reserved")
+        self.direct_presentation(self.home, ask)
         self.command([LIB.parents[2] / "mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask],
                      self.home).check_returncode()
         with patch.dict(os.environ, dict(self.env, JARVIS_BASH=BASH), clear=True):
@@ -1588,7 +1595,8 @@ sys.exit(result.returncode)
             session.path = session.path.with_name("owner-asks.json")
             session.deadline = owner_asks.time.monotonic() + 60
             sources = owner_asks.Sources(session, {"JARVIS_MAIN_HOST": ""})
-            route = {"source": "mailbox", "destination": "local", "root": str(self.home), "ask": ask}
+            route = {"source": "mailbox", "destination": "local", "root": str(self.home), "ask": ask,
+                     "presenter": "slack:C123"}
             try:
                 delivered = sources.deliver(route, "Too late", "late-key", False)
             except owner_asks.Unavailable as error:
@@ -1778,12 +1786,10 @@ sys.exit(result.returncode)
                 self.assertFalse({"ListComments", "GetIssueWithBundle"} & set(operations))
                 self.assertEqual((page["activeCount"], page["snoozedCount"]), (posted + assigned, 0))
                 self.assertEqual(bool(page["rows"]), view == "active")
-                # Mailbox asks with posting evidence link their own Slack thread.
+                # Remote mailbox receipts alone cannot confirm an approval link.
                 if view == "active":
                     self.assertEqual(page["rows"][0]["what"], "Asked on " + continuation_issue)
-                self.assertEqual({row["what"]: row["link"]["url"] for row in page["rows"]},
-                                 {row["what"]: "https://workspace.slack.test/archives/C123/" + row["what"].split()[-1]
-                                  for row in page["rows"]})
+                self.assertTrue(all(row["link"] is None for row in page["rows"]))
 
     # ssh -o BatchMode=yes -o ConnectTimeout=N DEST COMMAND, as forward.host_call spells it, run here.
     SSH = '#!' + BASH + '\nset -euo pipefail\nshift 4\nshift\nexec ' + BASH + ' -c "$1"\n'

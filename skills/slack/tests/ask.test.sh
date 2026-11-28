@@ -202,7 +202,7 @@ while IFS='|' read -r name fault second poll_rc delivered state retried; do
       "$REF_LINK" "$name retains the referenced conversation link on retry"
   fi
 done <<'ROWS'
-post-api|{"method":"chat.postMessage","error":"internal_error"}||1|1|retry|1
+post-api|{"method":"chat.postMessage","error":"invalid_blocks"}||1|1|retry|1
 post-lost|{"method":"chat.postMessage","drop":true}||0|1|unknown|0
 post-auth|{"method":"chat.postMessage","error":"invalid_auth"}||2|0|retry|1
 read-lost|{"method":"chat.getPermalink","drop":true}||1|1|retry|1
@@ -288,10 +288,14 @@ assert_eq "$(reminder_ts)|$(asks "$CH" 'Cut the 2.0.0 release?')" "|0" \
 reserved_ask reserved-deleted 30
 sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
 sk_poll "$ROOT"
+sk_ctl /_test/fault '{"method":"chat.postMessage","accepted":true,"error":"fatal_error"}' >/dev/null
 past_deadline
+assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread_ts')" "$(reminder_ts)" \
+  "the recovered replacement is the confirmed approval thread"
+sk_lm "$ROOT" resolve --item overseer --id "$ASK" >/dev/null
 reply_to_reminder
 assert_eq "$([ "$(reminder_ts)" != "$ASK_TS" ] && echo moved)|$(reminder_options)|$(answers_to_ask)" "moved|true|1" \
-  "a reserved ask whose thread Slack deleted is reminded with its options in a new thread, and a reply there answers the ask"
+  "a late reply in the replacement thread answers its closed original ask"
 
 sk_mutant reserved-tail relay.py 'if envelope.get\("reserved"\) is True:' 'if False:'
 reserved_ask control-tail 30
@@ -327,7 +331,7 @@ sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces,
 reserved_ask control-unposted 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: an ask journaled open but never sent fails the posted assertion"
 
-sk_mutant reserved-rebind relay.py 'self\._out\(envelope, "ask", "open", thread=landed,' 'None and self._out(envelope, "ask", "open", thread=landed,'
+sk_mutant reserved-rebind relay.py 'self\.bind_presentation\(envelope, \{"ts": landed, "text": excerpt\}, "ask"\)' 'None'
 reserved_ask control-rebind 30
 sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
 sk_poll "$ROOT"
@@ -344,5 +348,34 @@ past_deadline
 sk_assert_red "$([ -n "$(reminder_ts)" ] && echo reminded)|$(reminder_options)" "reminded|true" \
   "control: a replacement reminder built from the question text alone shows no options"
 sk_bin_reset
+
+ROOT="$(sk_new_root pre-presentation-writer)"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+legacy="$ROOT/.agents/skills/mailbox/scripts"
+rm -- "$legacy"
+cp -R "${SK_LANE_MAIL%/*}" "$legacy"
+mv -- "$legacy/lane-mail" "$legacy/lane-mail-current"
+cat >"$legacy/lane-mail" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  present) printf 'lane-mail: verb-invalid=present\n' >&2; exit 2 ;;
+esac
+for arg in "$@"; do
+  if [ "$arg" = --presenter ]; then printf 'lane-mail: option-unknown=--presenter\n' >&2; exit 2; fi
+done
+exec "${BASH_SOURCE[0]%/*}/lane-mail-current" "$@"
+SH
+chmod +x "$legacy/lane-mail"
+ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text legacy 'Question in a legacy checkout?')" \
+  --options yes,no --reserved)"
+ASK="${ASK#id=}"
+sk_poll "$ROOT"
+TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\") | .ts")"
+REPLY="$(sk_inject "$CH" U001 'I will confirm separately.' "$TS")"
+sk_poll "$ROOT"
+assert_eq "$(asks "$CH" 'Question in a legacy checkout?')|$(jq -r --arg d "$CH:$REPLY" \
+  'select(.delivery_id == $d) | [.re,.sender] | join("|")' "$(sk_box "$ROOT")/to-lane.jsonl")" "1|$ASK|owner" \
+  "the relay uses its compatible presentation writer in an older bound checkout"
 
 sk_summary

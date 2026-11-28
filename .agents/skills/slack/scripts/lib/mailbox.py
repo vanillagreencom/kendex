@@ -62,9 +62,12 @@ class LaneMail:
         if not os.access(self.script, os.X_OK):
             raise Refusal("orch-missing", str(root))
 
-    def _run(self, *args: str) -> Tuple[int, str, str]:
+    def _run(self, *args: str, presenter_bound: bool = False) -> Tuple[int, str, str]:
+        # The presentation verbs and their receipts travel with the relay.
+        # Destination-owned code still handles ordinary directives and replies.
+        script = MAILBOX_SCRIPTS / "lane-mail" if presenter_bound else self.script
         try:
-            result = run_bounded([str(self.script), *args], self.root, LANE_MAIL_TIMEOUT_SECONDS)
+            result = run_bounded([str(script), *args], self.root, LANE_MAIL_TIMEOUT_SECONDS)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired as err:
             raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
@@ -266,9 +269,10 @@ class LaneMail:
         assert self.store is not None, "an envelope to judge comes from a mailbox read"
         return bool(self._position_rule("passed")(position, envelope, self.snapshots))
 
-    def present(self, ask_id: str, presenter: str, thread_url: str = "") -> Optional[Dict]:
-        args = ("--thread-url", thread_url) if thread_url else ()
-        code, out, err = self._run("present", "--item", "overseer", "--id", ask_id, "--presenter", presenter, *args)
+    def present(self, ask_id: str, presenter: str, thread_url: str = "", thread_ts: str = "") -> Optional[Dict]:
+        args = ("--thread-url", thread_url, "--thread-ts", thread_ts) if thread_url else ()
+        code, out, err = self._run("present", "--item", "overseer", "--id", ask_id, "--presenter", presenter, *args,
+                                   presenter_bound=True)
         if code == 0:
             try:
                 return json.loads(out)
@@ -287,7 +291,8 @@ class LaneMail:
         send = ("send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id)
         try:
             binding = ("--presenter", presenter) if presenter else ()
-            code, out, err = self._run(*send, "--sender", "owner", *binding)
+            code, out, err = (self._run(*send, "--sender", "owner", *binding, presenter_bound=True) if presenter
+                              else self._run(*send, "--sender", "owner"))
             # A bound root whose installed mailbox package predates --sender
             # refuses it before it appends anything. The same delivery then
             # lands with no sender and reads as unrecorded. Remove this retry

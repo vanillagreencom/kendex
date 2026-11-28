@@ -29,7 +29,7 @@ Jarvis's own questions enter the page when sent. An overseer's question enters w
 
 The main home's mailbox `owner-tracker-settings` command supplies the existing posting configuration judgement. An unconfigured tracker adds no tracker requests. A configured tracker uses Linear `comments owner-requests` with that judgement's email and label. Each comment mentioning the resolved owner's canonical profile URL is a separate request. Its immutable comment identity, author, creation time, parent and server URL remain the original request metadata. No owner, team, account, profile URL or view name is a package default.
 
-A presented mailbox ask links to its confirmed Slack thread. Before readback, it shows an unconfirmed status and has a null link. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask without a presentation links to its tracker mirror when one exists. An unread source makes the list unavailable.
+A presented mailbox ask links to its Slack thread when the configured Jarvis-home relay confirms the exact binding. For a delegated ask, the local presentation notice also has to name its destination, repository root and ask id. A direct ask in another checkout stays accessible with an unconfirmed thread. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask without a presentation links to its tracker mirror when one exists. An unread source makes the list unavailable.
 
 Cross-source suppression requires confirmed tracker posting and equality of the request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
 
@@ -65,7 +65,7 @@ The main records the request before it sends. A send whose outcome is unknown, a
 - A mailbox answer is sent again under the same delivery identity. lane-mail names the answer already standing and appends nothing.
 - A tracker reply is read by its comment identity first, and sent again under that identity only where Linear has no such comment.
 
-An answer through a presentation already bound to an ask can arrive after closure. The mailbox includes the original question beside the owner's words. Other mailbox answers to closed asks are refused with state `closed`.
+A Slack reply through a presentation already bound to an ask can arrive after closure. The mailbox includes the original question beside the owner's words. A Console Reply or Done received after closure is refused with state `closed`.
 
 ## Presenting an overseer's ask
 

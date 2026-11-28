@@ -443,7 +443,15 @@ class Sources:
                     comment = posted.get(ask["tracker_comment"])
                     if comment is not None:
                         mailbox["links"][ask["id"]] = comment
-        return {"config": config, "tracker": self.open_tracker(tracker, mailboxes, requests), "mailboxes": mailboxes, "posted": posted}
+        relay_threads = {}
+        if any(mailbox["own"] and any((row.get("presentation") or {}).get("thread")
+                                      for row in mailbox["outward"]["rows"]) for mailbox in mailboxes):
+            try:
+                relay_threads = self.caller("slack", "slack", ["listen", "--root", self.session.home, "--presentation-threads"])
+            except Unavailable as error:
+                diagnostic(error, "owner-asks-presentation-threads")
+        return {"config": config, "tracker": self.open_tracker(tracker, mailboxes, requests), "mailboxes": mailboxes,
+                "posted": posted, "relay_threads": relay_threads}
 
     def stable(self, requests):
         first, second = self.collect(requests), self.collect(requests)
@@ -471,7 +479,7 @@ class Sources:
         if delivery is None:
             delivery = "owner-ask-" + key
         args = ["--re", route["ask"], "--delivery-id", delivery, "--sender", "owner"]
-        if route.get("presenter"):
+        if key is None and route.get("presenter"):
             args += ["--presenter", route["presenter"]]
         target = self.target(route["destination"])
         result = self.mailbox(target, route["root"], "send", args, data=body, check=False)
@@ -507,7 +515,9 @@ class Sources:
         receipt = json.loads(self.mailbox(target, root, "present", args).stdout)
         if receipt["presenter"] != presenter:
             original = self.event(target, root, "to-overseer", ask_id)
-            return {"v": 1, "kind": "already-presented", "presentation": original["presentation"]}
+            return {"v": 1, "kind": "already-presented",
+                    "presentation": {key: value for key, value in original["presentation"].items()
+                                     if key not in ("thread", "thread_ts")}}
         if receipt.get("reserve"):
             self.mailbox(target, root, "reserve", ["--id", ask_id])
         pending = self.mailbox(target, root, "pending", ["--to", "owner"]).stdout
@@ -602,10 +612,22 @@ def source_rows(source):
                      "link": link, "threadRef": digest(thread)}
         routes[key] = route
 
-    presented_threads = {row["presentation"]["presenter"]: row["presentation"]["thread"]
-                         for mailbox in source["mailboxes"] if mailbox.get("own")
-                         for row in mailbox["outward"]["rows"]
-                         if row.get("kind") == "notice" and (row.get("presentation") or {}).get("thread")}
+    def confirmed_thread(envelope_id, presentation):
+        binding = source.get("relay_threads", {}).get(envelope_id)
+        if binding and (binding["ts"], binding["presenter"]) == (presentation.get("thread_ts"),
+                                                                presentation.get("presenter")):
+            return binding["url"]
+        return None
+
+    presented_threads = {}
+    for mailbox in source["mailboxes"]:
+        if mailbox.get("own"):
+            for row in mailbox["outward"]["rows"]:
+                presentation = row.get("presentation") or {}
+                route = presentation.get("route")
+                if row.get("kind") == "notice" and route:
+                    key = (route["destination"], route["root"], route["ask"], presentation["presenter"])
+                    presented_threads[key] = confirmed_thread(row["id"], presentation)
     for mailbox in source["mailboxes"]:
         destination, root = mailbox["destination"], mailbox["root"]
         for ask in mailbox["asks"]:
@@ -613,20 +635,20 @@ def source_rows(source):
             if ask["id"] in mailbox.get("answered", ()) or not (mailbox.get("own") or presentation):
                 continue
             presenter = presentation.get("presenter")
-            thread = presentation.get("thread") or presented_threads.get(presenter)
+            thread = presented_threads.get((destination, root, ask["id"], presenter))
+            if mailbox.get("own"):
+                thread = confirmed_thread(ask["id"], presentation)
             original = mailbox["links"].get(ask["id"]) if not presentation else None
             link = {"label": "Slack thread", "url": thread} if thread else (
                 {"label": "Original ask", "url": original["url"]} if original else None)
             identity = ["mailbox", destination, root, ask["id"]]
             route = {"source": "mailbox", "destination": destination, "root": root, "ask": ask["id"]}
-            if presenter:
-                route["presenter"] = presenter
             add(identity, "fleet-approval" if ask.get("draft") else "jarvis-ask",
                 ask["text"], {"id": ask["from"], "name": ask["from"]}, ask["at"], link, identity, route)
             if ask.get("reserved") or ask.get("draft"):
                 rows[digest(identity)]["statusText"] = (
                     "Type yes in the Slack thread after the asker reads back the exact action." if thread else
-                    "Type yes in Slack after the asker reads back the exact action. The thread is unconfirmed.")
+                    "The Slack approval thread is unconfirmed. Wait for the asker to read back the exact action.")
             elif presentation and not thread:
                 rows[digest(identity)]["statusText"] = "The Slack thread is unconfirmed."
     tracker = source["tracker"]

@@ -246,8 +246,8 @@ def owner_tracker_record($outcomes):
   else . end
   | if .presentation != null then
       .id as $id
-      | (first($outcomes[] | select(.re == $id and .kind == "owner-presented")) // null) as $post
-      | if $post != null then .presentation.thread = $post.thread else . end
+      | ([$outcomes[] | select(.re == $id and .kind == "owner-presented")] | last) as $post
+      | if $post != null then .presentation += {thread: $post.thread, thread_ts: $post.thread_ts} else . end
     elif .kind == "directive" and .parent.envelope != null then
       .id as $id
       | if any($outcomes[]; .re == $id and .kind == "owner-delivered")

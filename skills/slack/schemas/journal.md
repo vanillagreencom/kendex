@@ -31,6 +31,7 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 
 - Repeat setup and owner changes retain `bound_at`. Only a journal reset starts a new time.
 - A relay whose `SLACK_OWNERS` differs from `owners` re-resolves the ids and rewrites the binding before it delivers anything more.
+- `listen --presentation-threads` gives Jarvis the current presentation stamps and Slack permalinks for the configured channel. A missing thread has no entry. Jarvis matches a stamp and presenter to the mailbox receipt before using the relay's link.
 
 ## Queue delivery
 
@@ -130,6 +131,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 - `state` is `open` for an ask not yet closed, and `resolved` for a completed post, not question closure.
 - `thread` is the stamp the post is under, the ask's own for an ask.
 - `presenter` identifies an ask or presentation notice whose first receipt binds its replies. A delegated presentation remains a notice in the journal and uses the notice id in the parent pointer.
+- A later `out` line with `permalink` records the link Slack returned for that presentation's channel and thread stamp.
 - A forwarded directive's root is a `notice` line under the directive's own `id`. Its `thread` is the root's stamp, which the directive's notices post under.
 
 **`out`, `state` = `file`**
@@ -156,6 +158,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 
 - `--status` shows it. It is never repeated.
 - An ask or presentation notice carries its envelope id in Slack message metadata. A history read, bot event or targeted read of a reply's parent can confirm the root. Replay binds it as the original ask or notice. That readback supplies the thread link for the mailbox.
+- A replacement root for a deleted approval thread follows the same rule. The new binding replaces the confirmed permalink and keeps the original ask and presenter.
 
 **`out`, `state` = `retry`**
 

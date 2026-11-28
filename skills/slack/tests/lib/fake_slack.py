@@ -377,6 +377,9 @@ class Handler(BaseHTTPRequestHandler):
                             return self.send_cut(fault["cut"], self.ws.files[path[len("/_files/") :]][0])
                         self.response_cut = fault["cut"]
                         break
+                    if fault.get("accepted") and method == "chat.postMessage":
+                        self.post_fault = fault
+                        break
                     if fault.get("chunked"):
                         return self.send_chunked(*self.ws.files[path[len("/_files/") :]])
                     if fault.get("status"):
@@ -571,6 +574,9 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return None
         message = {"user": BOT, "bot_id": BOT_ID, "text": body[0], "body_arg": body[1]}
+        fault = getattr(self, "post_fault", {})
+        if fault.get("message_ts"):
+            message["ts"] = fault["message_ts"]
         if "metadata" in params:
             message["metadata"] = params["metadata"]
         message["reply_broadcast"] = params.get("reply_broadcast", False)
@@ -578,6 +584,8 @@ class Handler(BaseHTTPRequestHandler):
             message["thread_ts"] = params["thread_ts"]
         self.ws.channels.setdefault(params["channel"], {"id": params["channel"], "name": params["channel"], "members": [BOT], "is_private": True})
         message = self.ws.add_message(params["channel"], message)
+        if fault.get("error"):
+            return self.send_json({"ok": False, "error": fault["error"]})
         self.send_json({"ok": True, "channel": params["channel"], "ts": message["ts"]})
 
     def m_chat_update(self, params):

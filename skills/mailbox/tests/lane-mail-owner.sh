@@ -1702,6 +1702,15 @@ new_repo shared_presentation
 F="$(text presentation 'Which part can go ahead?')"
 lm ask --item overseer --to owner --file "$F" --options first,both --reserved
 ASK="${OUT#id=}"
+ORIGIN="$LANE"
+new_repo presentation_foreign
+lm present --item overseer --root "$ORIGIN" --id "$ASK" --presenter foreign
+assert_eq "${ERR%%=*}" "lane-mail: lane-foreign" "a different checkout cannot claim the original ask"
+LANE="$ORIGIN"
+BOX="$LANE/tmp/lane-mail/overseer"
+mkdir "$LANE/subdir"
+lm present --item overseer --root "$LANE/subdir" --id "$ASK" --presenter subdir
+assert_eq "${ERR%%=*}" "lane-mail: root-not-checkout" "presentation requires a checkout root"
 lm present --item overseer --id "$ASK" --presenter jarvis-first
 FIRST="$OUT"
 lm present --item overseer --id "$ASK" --presenter slack:C123

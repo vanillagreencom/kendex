@@ -145,6 +145,8 @@ class Thread:
     active: float = 0.0
     missing: bool = False
     presenter: str = ""
+    channel: str = ""
+    permalink: str = ""
     # Per reader generation, the newest message of this thread it was delivered.
     reads: Dict[int, str] = field(default_factory=dict)
     # Answers deliver their own text, without the earlier thread context.
@@ -275,6 +277,9 @@ class State:
             self.threads[thread_ts].active = max(self.threads[thread_ts].active, parse_at(str(line["at"])))
             if line.get("presenter"):
                 self.threads[thread_ts].presenter = str(line["presenter"])
+                self.threads[thread_ts].channel = str(line["channel"])
+            if "permalink" in line:
+                self.threads[thread_ts].permalink = str(line["permalink"])
             if "parent" in line:
                 self.threads[thread_ts].parent = dict(line["parent"], **(self.threads[thread_ts].parent or {}))
             self.by_envelope[env_id] = thread_ts
@@ -330,6 +335,18 @@ def read_journal(root: Path) -> State:
             except (ValueError, KeyError, TypeError) as err:
                 raise Refusal("journal-invalid", f"{path}:{number}") from err
     return state
+
+
+def presentation_threads(root: Path) -> Dict:
+    """The bound relay's current, known presentation stamps for Jarvis."""
+    if not (root_dir(root) / BINDING).is_file():
+        return {}
+    binding = read_binding(root)
+    state = read_journal(root)
+    return {env_id: {"ts": thread.ts, "presenter": thread.presenter, "url": thread.permalink}
+            for env_id, ts in state.by_envelope.items()
+            for thread in (state.threads[ts],)
+            if thread.permalink and thread.presenter and thread.channel == binding.channel and not thread.missing}
 
 
 class Journal:

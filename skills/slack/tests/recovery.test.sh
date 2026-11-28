@@ -68,24 +68,70 @@ sk_bind "$ROOT"
 CH="$(sk_channel "$ROOT")"
 sk_poll "$ORIGIN"
 sk_poll "$ROOT"
-ASK="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text original 'Choose the first change or both.')" \
-  --options first,both --reserved)"
+printf '%s' '{"recipient":"release@example.test","medium":"email","text":"Release exactly this note."}' >"$SK_TMP/approved-draft"
+ASK="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text original 'Send this release draft?')" \
+  --draft "$SK_TMP/approved-draft")"
 ASK="${ASK#id=}"
-sk_lm "$ORIGIN" present --item overseer --id "$ASK" --presenter jarvis-fixture >/dev/null
-sk_lm "$ORIGIN" pending --item overseer --to owner |
-  jq --arg root "$ORIGIN" '{destination: "local", root: $root, ask: ., introduction: "Please review the original question."}' >"$SK_TMP/presentation"
-sk_lm "$ROOT" present --item overseer --file "$SK_TMP/presentation" >/dev/null
+mkdir -p "$SK_TMP/jarvis-bin"
+jq -cn --arg root "$ROOT" --arg origin "$ORIGIN" \
+  '[{folder:$root,state:"ok",worktree:null},{folder:$origin,state:"ok",worktree:null}]' >"$SK_TMP/jarvis-registry"
+cat >"$SK_TMP/jarvis-bin/kendex" <<'SH'
+#!/bin/sh
+[ "$*" = "project list --json" ] || exit 97
+cat "$FIXTURE_REGISTRY"
+SH
+chmod +x "$SK_TMP/jarvis-bin/kendex"
+jarvis() {
+  (cd "$ROOT" && env -i HOME="$SK_TMP/home" PATH="$SK_TMP/jarvis-bin:$PATH" LANG=C \
+    XDG_CONFIG_HOME="$SK_TMP/config" XDG_DATA_HOME="$SK_TMP/data" \
+    XDG_STATE_HOME="${JARVIS_FIXTURE_STATE:-$SK_TMP/state}" XDG_CACHE_HOME="$SK_TMP/cache" \
+    AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    FIXTURE_REGISTRY="$SK_TMP/jarvis-registry" "$BASH" "$SK_ROOT/skills/jarvis/scripts/jarvis-session" owner-asks "$@")
+}
+NOTICE="$(printf '%s\n' 'Please review the original question.' |
+  jarvis present --home "$ROOT" --destination local --root "$ORIGIN" --id "$ASK" --reserved | jq -r .notice)" || exit 1
 sk_poll "$ORIGIN"
-assert_eq "$(asks "$(sk_channel "$ORIGIN")" 'Choose the first change or both.')" 0 "the second presenter leaves the original unposted"
-sk_ctl /_test/fault '{"method":"chat.postMessage","cut":"length"}' >/dev/null
+assert_eq "$(asks "$(sk_channel "$ORIGIN")" 'Send this release draft?')" 0 "the second presenter leaves the original unposted"
+sk_lm "$ORIGIN" present --item overseer --id "$ASK" --presenter "$NOTICE" \
+  --thread-url 'https://untrusted.example.test/approval' >/dev/null
+PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/preview" jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -cr '[.activeCount,.rows[0].link]' <<<"$PAGE")" '[1,null]' \
+  "a source checkout cannot set the delegated approval link"
+OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
+sk_ctl /_test/fault "$(jq -cn --arg ts "$OLD_TS" \
+  '{method:"chat.postMessage",accepted:true,error:"internal_error",message_ts:$ts}')" >/dev/null
 sk_recovery "$ROOT" poll
-TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"jarvis-fixture\") | .ts")"
-REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$TS")"
+sk_event "$ROOT" "$CH" "$OLD_TS"
 sk_poll "$ROOT"
-assert_eq "$(sk_lm "$ROOT" events --item overseer --box to-lane | jq -cRs '
-  [split("\n")[] | fromjson? | select(.kind == "directive") | [.from, .parent.envelope, .delivery_id, .text]]')" \
-  "[[\"owner\",\"jarvis-fixture\",\"$CH:$REPLY\",\"Only the first change.\"]]" \
-  "a forwarded notice recovers its original mailbox binding after a lost post response"
+sk_lm "$ROOT" present --item overseer --id "$NOTICE" --presenter "$NOTICE" \
+  --thread-url 'https://untrusted.example.test/same-stamp' --thread-ts "$OLD_TS" >/dev/null || exit 1
+OTHER="$(sk_lm "$ORIGIN" ask --item overseer --to owner --file "$(sk_text other 'Which other changes?')" \
+  --options yes,no --reserved)"
+sk_lm "$ORIGIN" present --item overseer --id "${OTHER#id=}" --presenter "$NOTICE" >/dev/null
+PAGE="$(jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -r '.rows[] | select(.what == "Which other changes?") | .link' <<<"$PAGE")" null \
+  "a different ask cannot borrow the home thread by copying its presenter"
+assert_eq "$(jq -r '.rows[] | select(.what == "Send this release draft?") | .link.url' <<<"$PAGE")" \
+  "https://workspace.slack.test/archives/$CH/p${OLD_TS/./}" "the relay link wins over a mailbox URL with the same stamp"
+ROW="$(jq -r '.rows[] | select(.what == "Send this release draft?") | .id' <<<"$PAGE")"
+CONSOLE="$(jq -c '{requestId:"console",expectedRevision:.revision,text:"Read the exact wording back."}' <<<"$PAGE" |
+  jarvis reply --home "$ROOT" --id "$ROW")" || exit 1
+assert_eq "$(jq -r .kind <<<"$CONSOLE")" accepted "the installed Console Reply accepts the presented draft"
+REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$OLD_TS")"
+sk_poll "$ROOT"
+jarvis deliver --home "$ROOT" >/dev/null || exit 1
+jarvis deliver --home "$ROOT" >/dev/null || exit 1
+assert_eq "$(asks "$CH" 'Send this release draft?')" 1 "the ambiguous response never posts a second delegated notice"
+assert_eq "$(sk_lm "$ORIGIN" events --item overseer | jq -cs --arg ask "$ASK" --arg slack "$CH:$REPLY" '
+  (map(select(.id == $ask))[0]) as $original
+  | [$original.text,$original.options,$original.draft.recipient,$original.draft.text_hash,
+     [ .[] | select(.kind == "answer" and .re == $ask)
+        | [.sender, (if .delivery_id == $slack then "slack"
+                      elif (.delivery_id | startswith("owner-ask-")) then "console" else "unknown" end), .text] ]]')" \
+  "$(python3 -c 'import hashlib,json; print(json.dumps(["Send this release draft?",["approve","deny"],"release@example.test",
+    hashlib.sha256(b"Release exactly this note.").hexdigest(),
+    [["owner","console","Read the exact wording back."],["owner","slack","Only the first change."]]], separators=(",",":")))')" \
+  "an offline reply to an aged thread and a Console Reply retain both sources on the original draft ask"
 
 # A failed pre-send append sends nothing. The next run can still post it.
 ROOT="$(sk_new_root disk-full)"

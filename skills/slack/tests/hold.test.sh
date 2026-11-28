@@ -418,7 +418,7 @@ while read -r name control reserved expires; do
   stale
   case "$control" in
     every-ask) sk_mutant every-ask relay.py 'kind in \("notice", "ask"\) and' 'kind == "notice" and' ;;
-    overdue) sk_mutant skipped-overdue relay.py '\n\s+and \(env_id in state\.by_envelope or env_id in state\.unknown\)' '' ;;
+    overdue) sk_mutant skipped-overdue relay.py '\n\s+and env_id in state\.by_envelope\n(\s+and env_id not in answered)' '\n\1' ;;
   esac
   if [ "$expires" = before ]; then
     jq -c --arg id "$READ_ASK" 'if .id == $id then .deadline = "2000-01-01T00:00:00Z" else . end' "$(sk_box "$R")/to-overseer.jsonl" > "$SK_TMP/expired.jsonl"
@@ -1096,7 +1096,7 @@ while read -r name replacement; do
   DIRECTIVE="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$R")/to-lane.jsonl")"
   sk_lm "$R" notice --item overseer --to owner --ref "$DIRECTIVE" --file "$(sk_text "$name-reply" "Reply in $name.")" >/dev/null
   notice "$R" "$name-unrelated" "Unrelated in $name."
-  sk_mutant "$name" relay.py 'self\.post_events\(\[routed for routed in self\.routes\(self\.mail\.events\(\)\) if routed\[1\] == "reply"\]\)' "$replacement"
+  sk_mutant "$name" relay.py 'self\.post_events\(\[routed for routed in self\.routes\(self\.mail\.events\(\)\)\s+if routed\[1\] in \("reply", "presentation", "confirm"\)\]\)' "$replacement"
   sk_poll "$R" "$HOLD"
   case "$name" in
     no-held-reply) sk_assert_red "$RC=$(count "$CHANNEL" "Reply in $name.")=$(sk_state ".messages.${CHANNEL}[] | select(.text | contains(\"Reply in $name.\")) | .thread_ts")" "0=1=$TS" "control: dropping held replies fails the reply row" ;;

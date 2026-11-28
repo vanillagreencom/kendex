@@ -42,7 +42,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail attach-check --attach PATH
        lane-mail resolve --item overseer --id MSGID [--text PATH [--sender WHO] | --default] [options]
        lane-mail reserve --item overseer --id MSGID
-       lane-mail present --item overseer --id MSGID --presenter KEY [--reserved | --thread-url URL] [--root ROOT]
+       lane-mail present --item overseer --id MSGID --presenter KEY [--reserved | --thread-url URL [--thread-ts TS]] [--root ROOT]
        lane-mail present --item overseer (--file NOTICE | --id MSGID --owner-delivered) [--root ROOT]
        lane-mail replace --item overseer --id MSGID [--root ROOT]
        lane-mail peer ask|send --repo REPO [--host] [options]
@@ -453,8 +453,8 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               The append lock makes the first presenter and time final.
               --reserved records that the presenter must reserve the ask
               before posting. A second presenter reads the first receipt.
-              --thread-url URL records a confirmed thread for that presenter,
-              on the original ask or its local presentation notice.
+              --thread-url URL and --thread-ts TS record the relay's current
+              thread for that presenter, on the ask or its presentation notice.
               --file NOTICE writes the delegate's presentation notice once.
               The file carries destination, root, the original ask envelope
               and a separate introduction. It produces a notice id.
@@ -1137,7 +1137,7 @@ fi
 if [ "$VERB" = present ]; then
   for given in $OPTS_GIVEN; do
     case "$given" in
-      --item | --id | --root | --file | --presenter | --thread-url | --reserved | --owner-delivered) ;;
+      --item | --id | --root | --file | --presenter | --thread-url | --thread-ts | --reserved | --owner-delivered) ;;
       *) refuse option-unknown "$given" ;;
     esac
   done
@@ -1270,6 +1270,9 @@ for given in $OPTS_GIVEN; do
       # final newline, which would split the watch's one-line event.
       jq -en --arg source "$DATA_SOURCE" '$source | test("\\A[!-~]+\\z")' >/dev/null || refuse source-invalid "$DATA_SOURCE" ;;
     --thread-ts | --parent)
+      if [ "$given:$VERB:$ITEM" = --thread-ts:present:overseer ] && [ -n "$THREAD_URL" ]; then
+        continue
+      fi
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     # The sender rides the answer envelope alone: a send that answers an
     # owner ask, or a resolve that records one.
@@ -1327,7 +1330,7 @@ sys.exit(0 if valid else 1)
 fi
 
 # Slack's relay produces both pointer fields together on threaded directives.
-if [ -n "$THREAD_TS$PARENT" ]; then
+if [ "$VERB" != present ] && [ -n "$THREAD_TS$PARENT" ]; then
   [ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || refuse option-conflict '--thread-ts,--parent'
   PARENT_JSON="$(jq -ce --arg ts "$THREAD_TS" '
     select(type == "object" and .ts == $ts and (.author == "owner" or .author == "bot")
@@ -2052,7 +2055,7 @@ lm_root_own() { # ROOT own|checkout
     # Compaction retains existing rows and delivers no new envelope. Cursor
     # and liveness records belong to reads. Validate only envelope appends.
     case "$VERB" in
-      ask | notice | send | resolve | peer | peer-receive)
+      ask | notice | send | resolve | present | peer | peer-receive)
         top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || top=""
         canonical="$(cd -P -- "$1" 2>/dev/null && pwd -P)" || canonical=""
         [ -z "$top" ] || top="$(cd -P -- "$top" 2>/dev/null && pwd -P)" || top=""
@@ -2063,7 +2066,8 @@ lm_root_own() { # ROOT own|checkout
         ;;
     esac
   fi
-  if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] || [ "$VERB" = replace ]; then
+  if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] ||
+     [ "$VERB" = present ] || [ "$VERB" = replace ]; then
     LANE_ROOT="$(mailbox_common_root "$1" 2>/dev/null)" || LANE_ROOT=""
     { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"
   fi
@@ -2712,8 +2716,11 @@ lm_guard_owner_answer() { # FILE
 # Claim and confirm under the file's append lock. A second caller reads the
 # first receipt without changing who may post the question.
 lm_guard_presentation() { # FILE
-  jq -cRn --arg id "$MSGID" --arg kind "$PRESENT_KIND" '
-    first(inputs | fromjson? | objects | select(.kind == $kind and .re == $id)) // empty' \
+  jq -cRn --arg id "$MSGID" --arg kind "$PRESENT_KIND" --arg url "$THREAD_URL" --arg ts "$THREAD_TS" '
+    [inputs | fromjson? | objects | select(.kind == $kind and .re == $id)] as $receipts
+    | if $kind == "owner-presented" then
+        $receipts[-1] | select(.thread == $url and (.thread_ts // "") == $ts)
+      else $receipts[0] // empty end' \
     <"$1" >"$WORK_DIR/presentation.earlier" || return 2
   [ ! -s "$WORK_DIR/presentation.earlier" ]
 }
@@ -3766,6 +3773,7 @@ case "$VERB" in
     elif [ -n "$THREAD_URL" ]; then
       [ -n "$PRESENTER" ] || refuse option-required --presenter
       [ "$RESERVED" -eq 0 ] || refuse option-conflict '--thread-url,--reserved'
+      [ -z "$THREAD_TS" ] || [[ "$THREAD_TS" =~ ^[0-9]+\.[0-9]+$ ]] || refuse option-conflict --thread-ts
       lm_ask_find "$MSGID" notice:owner || refuse ref-unknown "$MSGID"
       jq -e --arg presenter "$PRESENTER" --arg url "$THREAD_URL" '
         .presentation.presenter == $presenter and ($url | test("\\Ahttps://[^[:space:]]+\\z"))' <<<"$ASK_JSON" >/dev/null ||
@@ -3781,12 +3789,14 @@ case "$VERB" in
     fi
     NOW="$(date -u +%s)" || refuse write-failed "$PRESENT_BOX"
     LINE="$(jq -cn --arg kind "$PRESENT_KIND" --arg id "$MSGID" --arg presenter "$PRESENTER" \
+      --arg stamp "$THREAD_TS" --arg nonce "$$-$RANDOM" \
       --arg thread "$THREAD_URL" --arg reserve "$RESERVED" --argjson reserved "$PRESENT_RESERVED" --argjson now "$NOW" '
         {id: ($id + "-" + $kind), kind: $kind, re: $id, at: ($now | todate), text: ""}
         + (if $presenter != "" then {presenter: $presenter} else {} end)
         + (if $reserve == "1" then {reserve: true} else {} end)
         + (if $kind == "owner-presentation" then {reserved: $reserved} else {} end)
-        + (if $thread != "" then {thread: $thread} else {} end)')" || refuse write-failed "$PRESENT_BOX"
+        | if $thread != "" then .id += "-" + $nonce | .thread = $thread else . end
+        | if $stamp != "" then .thread_ts = $stamp else . end')" || refuse write-failed "$PRESENT_BOX"
     if ! lm_append_local "$PRESENT_BOX" "$LINE" lm_guard_presentation; then
       LINE="$(cat -- "$WORK_DIR/presentation.earlier")" || refuse file-unreadable "$PRESENT_BOX"
     fi

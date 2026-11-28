@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import textwrap
@@ -15,6 +16,7 @@ from inbound import read_event, submit
 from refusals import EXPLAIN, Refusal, notice, print_refusal
 from relay import listen
 from settings import load
+from store import presentation_threads
 
 HELP = """\
 Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
@@ -62,7 +64,8 @@ listen    the relay: SLACK_INBOUND selects socket (the default) or queue
           An attached report lands as its file with the notice as its mrkdwn
           comment. A post Slack refuses fails the poll and is made again on
           the next one; an envelope post whose response was lost is
-          journaled unknown and never repeated. An ask or presentation notice
+          journaled unknown and never repeated. An ambiguous write error
+          leaves an owner question in the same state. An ask or presentation notice
           gains a thread link once Slack confirms its post, including through
           message readback after a lost response. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
@@ -80,6 +83,8 @@ listen    the relay: SLACK_INBOUND selects socket (the default) or queue
           longest wait; a missing or unreadable tmp/slack/binding.json
           reports state=failing cause=binding-missing|binding-unreadable,
           whatever the connection, with fix=slack setup --take CHANNEL --root DIR
+  --presentation-threads
+          JSON binding evidence for Jarvis from one root's configured relay
 deliver   read one inner Slack message event from stdin: a JSON object with
           type=message, channel, ts, user, text and optional files/thread_ts.
           The hosted receiver authenticates and unwraps callbacks; this verb
@@ -228,8 +233,10 @@ def build() -> Parser:
     p.add_argument("--take")
     p = verbs.add_parser("listen", add_help=False)
     p.add_argument("--root", action="append")
-    p.add_argument("--once", action="store_true")
-    p.add_argument("--status", action="store_true")
+    listen_mode = p.add_mutually_exclusive_group()
+    listen_mode.add_argument("--once", action="store_true")
+    listen_mode.add_argument("--status", action="store_true")
+    listen_mode.add_argument("--presentation-threads", action="store_true")
     p = verbs.add_parser("deliver", add_help=False)
     p.add_argument("--root", required=True)
     p = verbs.add_parser("post", add_help=False)
@@ -273,6 +280,11 @@ def run(argv: List[str]) -> int:
         roots = roots_of(args.root)
         if args.status:
             return verbs.status(roots, time.time())
+        if args.presentation_threads:
+            if len(roots) != 1:
+                raise Refusal("usage", "--presentation-threads needs one --root")
+            print(json.dumps(presentation_threads(roots[0]), separators=(",", ":")))
+            return 0
         settings = load(need_app_token=not args.once)
         return listen(roots, settings, verbs.api_for(settings), args.once)
     if args.verb == "post":
