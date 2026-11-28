@@ -1276,13 +1276,10 @@ def select():
 
     for name in changes:
         path = PurePosixPath(name)
-        source = name.removeprefix(".agents/")
-        skill = shipped_skill(PurePosixPath(source))
-        # The tracked skill marker proves a project placement even when a
-        # new companion render was left out of the generated inventory.
-        if skill and source in entries and "/".join((".agents", *skill, marker)) in entries:
-            print("project-render", name, sep="\t")
         shipped = shipped_skill(path)
+        # The installed marker proves the source has a project placement.
+        if shipped and "/".join((".agents", *shipped, marker)) in entries:
+            print("project-render", name, sep="\t")
         if name in inputs or shipped:
             print("read", name, sep="\t")
             # Markdown a skill ships beside its marker: the skill text
@@ -1355,14 +1352,13 @@ reads() { # DOCS
     function select_target(r) {
       selected[crate[r] " --" selector[r] (selector[r] == "lib" ? "" : " " name[r])] = 1
     }
-    # The core library checks each shipped declaration and compares the
-    # committed project renders against their sources. Its skills and
-    # .agents read rows otherwise cover files only its corpus walks see.
+    # The core library keeps its existing reach over the .agents tree.
+    # Source Markdown reaches it through a declaration or render placement.
     function own_skill_markdown(path, r) {
       if (crate[r] != "kendex-core" || selector[r] != "lib") return 0
       if (read[r] == "skills")
         return path ~ /^skills\/[^/]+\/SKILL\.md$/ || ((".agents/" path) in render) || (path in project_render)
-      return read[r] == ".agents" && ((path in render) || (path in project_render))
+      return read[r] == ".agents"
     }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
