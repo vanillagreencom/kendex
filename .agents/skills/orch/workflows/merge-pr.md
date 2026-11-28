@@ -710,6 +710,7 @@ Legend: ✅ merged  ⏭️ skipped (user)  ❌ skipped (error)
 
 ## 7. Return
 
-- The merge is complete once § 5 steps 1-6 have run.
+- A confirmed merge takes § 5 through step 6 with the skips its route names. If a lane resumes past an unfinished step 6, run that step and present § 6 before returning. A quick change takes [micro.md § 5](micro.md#5-return) for close-out.
+- When this is the lane's final return after a confirmed merge, follow [§ Lane finish](../references/skill-rules.md#lane-finish).
 - A run outside a lane whose issue worktree still stands, with no cause on § 6's worktree line, has not finished.
 - A run that handed back at a verdict other than a merge reports that verdict and ends. It does not resume.

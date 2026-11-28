@@ -1,6 +1,6 @@
 # Watch delivery
 
-Read when an overseer starts, follows or stops the fleet watch, and when a lane arms its mailbox monitor. Read § Stop only at [oversee.md § 5](../workflows/oversee.md#5-stop). A lane reads § Lane mailbox monitor from [skill-rules.md § Lane mail](skill-rules.md#lane-mail).
+Read when an overseer starts, follows or stops the fleet watch, and when a lane arms its mailbox monitor or finishes. Read § Stop only at [oversee.md § 5](../workflows/oversee.md#5-stop). A lane reads § Lane mailbox monitor from [skill-rules.md § Lane mail](skill-rules.md#lane-mail) and [§ Lane finish](skill-rules.md#lane-finish).
 
 Oversight stands from the watch's first launch until [oversee.md § 5](../workflows/oversee.md#5-stop). Every watch line reaches this session as the watch writes it. Where the harness has no asynchronous wake, the turn is the wait:
 
@@ -127,6 +127,7 @@ After a stop, the [oversee.md § 5](../workflows/oversee.md#5-stop) handoff's Wa
 
 A lane whose harness has an Arm in the table below arms one standing monitor on its own mailbox as its first step. It arms it from its worktree on its own host; a hosted lane arms it inside its sandbox. The launch closes every brief of such a lane with the line that tells it to ([lane-directive.md § Brief file](lane-directive.md#brief-file)).
 
+- Keep the harness handle for the monitor and each background shell command the lane starts.
 - The monitor runs `.agents/skills/mailbox/scripts/lane-mail watch --item [ISSUE_ID]`. It announces unread mail, including answers no wait has read, on lines opening `lane-mail: mail=[ISSUE_ID]`. `lane-mail --help` owns when it announces.
 - Each announcement wakes an idle lane. The woken turn runs the `lane-mail inbox` command printed under it, and acts on every envelope it prints, answers and directives alike.
 - The ask gate's `lane-mail wait` hands earlier unread envelopes to the lane on stderr before it advances the read cursor past the answer it prints on stdout. Act on those envelopes; the watch and the inbox do not hand them over again.
@@ -143,6 +144,8 @@ The overseer wakes no lane on a `lane-mail send` receipt's `monitor=` word: the 
 | Codex | None: [codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox). | None. |
 | Pi | None: the `pi-hooks` mail wake starts a turn in the idle lane when unread mail lands ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)). | None. |
 | Copilot CLI | The watch command with `--once`, run as a background shell command. It exits 0 at its first announcement, and that exit starts a new turn in the idle session (measured on Copilot CLI 1.0.88). The lane also reads mail at its hook points and its `lane-mail inbox` wait points ([copilot-runtime.md § Wake and lane mail](copilot-runtime.md#wake-and-lane-mail)). | After each exit 0, once the `lane-mail inbox` command it printed has run; the fresh watch announces what still stands unread. Status 2 is a refusal. |
+
+The re-arm rules apply while the lane still has work. At lane finish, stop any running mailbox monitor by its harness handle and confirm that it exited. Use the handles for the lane's remaining background shell commands to wait for their exit or stop them and confirm their exit. This shell cleanup also applies on harnesses with no mailbox monitor.
 
 The prompt hook hands Claude Code, Codex and Copilot CLI lanes unread mail, and opens their local turn row.
 

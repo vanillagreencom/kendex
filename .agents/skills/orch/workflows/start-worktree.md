@@ -301,6 +301,8 @@ End every agent still active in `child_sessions`, then close their records:
 
 **Skip if** no pull request was created. When CI is not passing, or submit-pr's § 6.1 reported `MERGE_READY = false`, return the stop § 5.1 recorded and stop.
 
+On either merge route below, run [merge-pr.md § 5 step 6](merge-pr.md#5-execute-the-merge) after a confirmed merge, including from a hosted lane. Follow [merge-pr.md § 7](merge-pr.md#7-return) to return.
+
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto
 ```
