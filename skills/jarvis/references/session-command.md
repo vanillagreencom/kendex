@@ -15,10 +15,10 @@ Read by section, only for the step that needs it: [Session command](#session-com
   - The setting is read only when `jarvis-session start` builds a fresh launch or hands an adopted session over. That launch gives each named harness the full-bypass permission words orch writes for overseers: `--dangerously-skip-permissions` on Claude Code, `--dangerously-bypass-approvals-and-sandbox` on Codex and `--allow-all` on Copilot CLI. Every other start keeps the recorded posture.
   - Pi has no such word.
   - An adopted start, one with `--adopt-pane`, records the posture the adopted session was started under, read from its own launch words. Where those cannot be read, as on a host with no `/proc`, it keeps the posture already recorded for that same pane and process where that record names one, and records the harness's native defaults otherwise.
-  - Its successor launches under that posture, or under the full bypass where the setting names its harness. A `succeed` retry carries the adopted session's recorded posture.
-  - Succession does not read the setting. A `succeed` successor carries its predecessor's recorded posture.
-  - After a bypass start, a successor on another harness launches under the full bypass. After a native start, succession's walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` skips every entry of another harness.
-  - After a bypass start, per-account setup, such as Claude Code bypass consent, applies to every account that preference's harnesses can pick.
+  - An adopted start that hands over to the same harness keeps the adopted posture. When `JARVIS_UNATTENDED_HARNESSES` names the adopted harness, the immediate handover requests full bypass.
+  - A `succeed` successor on the same harness keeps the predecessor's recorded posture and native permission words.
+  - For a successor on another harness, the walk over `AGENT_RUNTIME_CONTROLLER_PREFERENCE` requires the target's bypass word. When `AGENT_RUNTIME_LAUNCH_PERMISSION` is set, its `bypass` value authorizes the move. When the setting is unset, the predecessor needs a transferable full-bypass posture.
+  - Per-account setup, such as Claude Code bypass consent, applies to every account that the preference can pick for a bypass launch.
   - The [settings example](../kendex.settings.toml.example) states its empty default.
 - Start the controller through `.agents/skills/jarvis/scripts/jarvis-session start --home HOME --harness claude|codex|copilot|pi --account DIR --mode resume|new --origin manual`.
   - Use the Jarvis package installed in HOME.
