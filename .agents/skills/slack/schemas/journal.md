@@ -172,6 +172,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 **`out`, `state` = `refused`**
 
 - `reason` is the refusal key: `secret-value`, `file-unreadable`, `text-too-long`, `text-not-literal` or `continuation-changed`.
+- `overdue-history-unknown` suppresses a historical reminder when the mailbox confirms the ask's thread but the journal has lost its posting history. The relay omits this deliberate suppression from its failed-post status.
 
 **`resolved`**
 

@@ -62,6 +62,75 @@ assert_eq "$(asks "$CH" 'Continue the original work?')" 1 "the relay never repea
 assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread != null')" true \
   "a Slack readback confirms the thread on the ask"
 
+# The mailbox receipt outlives the journal for both inbound entry paths.
+for route in catch-up aged live; do
+  ROOT="$(sk_new_root "lost-journal-$route")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  if [ "$route" = aged ]; then
+    STAMPS="$(python3 -c 'import time; now = time.time(); print(*(f"{now - days * 86400:.6f}" for days in (10, 9, 8)))')" || exit 1
+    read -r BOUND_TS OLD_TS ASK_TS <<<"$STAMPS" || exit 1
+    sk_rebind_at "$ROOT" "$BOUND_TS" || exit 1
+  fi
+  sk_poll "$ROOT"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "lost-journal-$route" 'Continue the direct ask?')" \
+    --options yes,no --reserved)" || exit 1
+  ASK="${ASK#id=}"
+  if [ "$route" = aged ]; then
+    sk_ctl /_test/fault "$(jq -cn --arg ts "$ASK_TS" '{method:"chat.postMessage",accepted:true,message_ts:$ts}')" >/dev/null || exit 1
+  fi
+  sk_poll "$ROOT"
+  TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\") | .ts")"
+  if [ "$route" = aged ]; then
+    assert_eq "$TS" "$ASK_TS" "the direct ask thread predates the ordinary catch-up horizon"
+  fi
+  BINDING="$(sk_lm "$ROOT" events --item overseer | jq -c --arg id "$ASK" \
+    'select(.id == $id) | [.presentation.presenter, .presentation.thread_ts]')" || exit 1
+  assert_eq "$BINDING" "[\"slack:$CH\",\"$TS\"]" "$route: the direct ask has a confirmed mailbox binding"
+  if [ "$route" = live ]; then
+    sk_lm "$ROOT" resolve --item overseer --id "$ASK" --text "$(sk_text lost-journal-close 'Close the work.')" >/dev/null || exit 1
+    sk_poll "$ROOT"
+  fi
+  if [ "$route" = aged ]; then
+    BOX="$(sk_box "$ROOT")/to-overseer.jsonl"
+    jq -c --arg id "$ASK" 'if .id == $id then .deadline = .at else . end' "$BOX" >"$SK_TMP/expired.jsonl" || exit 1
+    mv -- "$SK_TMP/expired.jsonl" "$BOX" || exit 1
+    sk_poll "$ROOT"
+    assert_eq "$RC|$(asks "$CH" 'Overdue, no default')" '0|1' "the aged ask has a posted reminder"
+    mv -- "$(sk_journal "$ROOT")" "$SK_TMP/lost-journal-overdue.aside" || exit 1
+    sk_poll "$ROOT"
+    assert_eq "$RC|$(asks "$CH" 'Overdue, no default')|$(jq -c .refused "$ROOT/tmp/slack/status.json")" \
+      '0|1|[]' "restoring an overdue ask before it has an answer keeps its single reminder and healthy status"
+  fi
+  mv -- "$(sk_journal "$ROOT")" "$SK_TMP/lost-journal-$route.aside" || exit 1
+  REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$TS")"
+  if [ "$route" = aged ]; then
+    OLD_PARENT="$(sk_inject "$CH" U002 'Ordinary old topic.' '' "\"ts\":\"$OLD_TS\"")"
+    OLD_REPLY="$(sk_inject "$CH" U002 'Reply to ordinary old topic.' "$OLD_PARENT")"
+  fi
+  for attempt in first replay; do
+    case "$route/$attempt" in
+      catch-up/first|aged/first) sk_poll "$ROOT" ;;
+      live/first) sk_event "$ROOT" "$CH" "$REPLY" ;;
+      */replay)
+        mv -- "$(sk_journal "$ROOT")" "$SK_TMP/lost-journal-$route.replay" || exit 1
+        sk_event "$ROOT" "$CH" "$REPLY"
+        ;;
+    esac
+    ROWS="$(sk_lm "$ROOT" events --item overseer --box to-lane | jq -cRs --arg delivery "$CH:$REPLY" '
+      [split("\n")[] | fromjson? | select(.delivery_id == $delivery) | [.kind, .re, .sender, .text]]')" || exit 1
+    assert_eq "$RC|$ROWS" "0|[[\"answer\",\"$ASK\",\"owner\",\"Only the first change.\"]]" \
+      "$route/$attempt: delivery leaves one owner answer to the original ask"
+  done
+  sk_poll "$ROOT"
+  POSTS="$(sk_state "[.messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\")] | length")" || exit 1
+  assert_eq "$RC|$POSTS" '0|1' "$route: polling after journal loss never reposts the original ask"
+  if [ "$route" = aged ]; then
+    assert_eq "$(jq -cs --arg delivery "$CH:$OLD_REPLY" 'map(select(.delivery_id == $delivery))' \
+      "$(sk_box "$ROOT")/to-lane.jsonl")" '[]' "catch-up still skips replies under ordinary aged threads"
+  fi
+done
+
 ROOT="$(sk_new_root jarvis-home)"
 sk_bind "$ROOT"
 CH="$(sk_channel "$ROOT")"
