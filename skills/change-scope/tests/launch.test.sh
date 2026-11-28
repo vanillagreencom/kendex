@@ -211,19 +211,20 @@ while read -r glob outside folders; do
   read -r -a folder_paths <<<"$folders"
   for path in "${folder_paths[@]}"; do
     for entry in "$path" "$path/"; do
-      assert_eq "configured extglob $glob reaches under $entry" "standard cause=repository-standard-path rc=0" \
+      assert_eq "configured glob $glob reaches under $entry" "standard cause=repository-standard-path rc=0" \
         "$(run_arm --production 1 --path "$entry")"
     done
   done
   for entry in "$outside" "$outside/"; do
-    assert_eq "configured extglob $glob leaves $entry micro" "micro cause=estimate-within-micro rc=0" \
+    assert_eq "configured glob $glob leaves $entry micro" "micro cause=estimate-within-micro rc=0" \
       "$(run_arm --production 1 --path "$entry")"
   done
-done <<'EXTGLOBS'
+done <<'REPOSITORY_GLOBS'
 runtime/!(kept).ts unrelated runtime/generated
 src/@(generated/api)/*.rs unrelated src/generated
 @(runtime|cli)/*.rs docs/neutral runtime cli
-EXTGLOBS
+runtime/generated?api/*.rs runtime-other runtime/generated
+REPOSITORY_GLOBS
 rm -- "$WORK/kendex.settings.toml"
 
 # Expected delta floors the estimate; a body with no count is standard.

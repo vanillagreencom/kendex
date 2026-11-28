@@ -96,13 +96,13 @@ change_class_descendant_match() { # DIRECTORY GLOB SCOPE
   case "$scope:$rest" in
     catalog:\*/*) rest="${rest#\*/}"; scope=any-depth ;;
     catalog:\**/*) rest="${rest#\*}"; scope=any-depth ;;
-    repository:*[?*+@!]\(*)
+    repository:*[?\[\\]* | repository:*[?*+@!]\(*)
       # The component matcher keeps literal roots with a suffix of literal
       # path characters, slashes and plain stars.
       local literal_roots='^@\([[:alnum:]_.-]+(\|[[:alnum:]_.-]+)+\)/[[:alnum:]_.*/-]*$'
       if [[ ! "$rest" =~ $literal_roots ]]; then
-        # Extended globs can consume slashes inside an operator. Keep the
-        # repository's literal directory prefix when that boundary is unclear.
+        # Wildcard syntax can consume or hide a slash. Keep the repository's
+        # literal directory prefix when the component boundary is unclear.
         prefix="${rest%%[?*+@!]\(*}"
         prefix="${prefix%%[*?\[\\]*}"
         case "$prefix" in */*) prefix="${prefix%/*}/" ;; *) prefix="" ;; esac
