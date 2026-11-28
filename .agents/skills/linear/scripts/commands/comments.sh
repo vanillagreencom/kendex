@@ -262,11 +262,11 @@ bulk_list_comments() {
     local result
     result=$(linear_issue_refs_read "$fields" "$id_json") || return 1
 
-    jq -s --arg format "$FORMAT" "$COMMENT_SAFE_JQ"'
+    jq -s --arg format "$FORMAT" "$COMMENT_SAFE_JQ$OWNER_RULING_JQ"'
         .[0] as $ids | .[1].refs as $refs
         | (.[1].nodes | map({key: .identifier, value: .comments.nodes}) | from_entries) as $read
         | reduce $ids[] as $i ({}; .[$i] = $read[$refs[$i]])
-        | if $format == "raw" then . else map_values(map(comment_safe)) end' <<<"$id_json"$'\n'"$result"
+        | if $format == "raw" then . else map_values(map(comment_safe | .ruling = owner_ruling)) end' <<<"$id_json"$'\n'"$result"
 }
 
 bulk_get_comments() {

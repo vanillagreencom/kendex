@@ -231,7 +231,7 @@ owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]
 # reader of the folded ask judges the one `reserved` field.
 OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_private:
   .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation" or .kind == "replacement"
-    or .kind == "owner-presentation" or .kind == "owner-presented" or .kind == "owner-delivered";
+    or .kind == "owner-presentation" or .kind == "owner-presented" or .kind == "owner-delivered" or .kind == "tracker-settled";
 def owner_tracker_public:
   select(owner_private | not);
 def owner_ask_reserved($private):
@@ -262,6 +262,7 @@ def owner_tracker_record($outcomes):
     | if $record.tracker_action_line == false then .tracker_action_line = false else . end
     | if $record.kind == "tracker-failed" then .tracker_cause = $record.cause else . end
     | if $record.failed_question != null then .failed_question = $record.failed_question else . end
+    | if any($outcomes[]; .re == $ask.id and .kind == "tracker-settled") then .tracker_settled = true else . end
   else . end
   | if .kind == "ask" and .to == "owner" then
       . as $ask | ([$outcomes[] | select(.kind == "replacement" and .re == $ask.id)] | last) as $replacement
@@ -365,6 +366,11 @@ owner_tracker_questions() { # TRACKER COMMENTS_REF
       then . else error("owner-questions-invalid") end'
 }
 
+owner_tracker_settle() { # TRACKER COMMENTS_REF QUESTION
+  "$1" comments create "$2" --parent "$3" --owner-ruling --no-attribution \
+    --body 'This question closed with no answer.' | jq -e '.success == true' >/dev/null
+}
+
 # The owner label and the owner assignee on an item, set from the item's
 # open owner asks: present while one stands there, absent once none stands.
 # The ask post, its rollback and the asking watch's close (`lane-mail
@@ -390,23 +396,10 @@ owner_tracker_questions() { # TRACKER COMMENTS_REF
 # failed step and its tracker stderr in WORK/tracker.err.
 owner_tracker_gate() { # MODE TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM]
   local mode="$1" tracker="$2" work="$3" issue="$4" ref="$5" asks="$6" owner="${7:-}" item="${8:-}"
-  local questions='[]' plan field value failed held=false
+  local questions='[]' plan field value held=false
   OWNER_TRACKER_HELD=false
   if [[ -z "$owner" ]]; then
     owner="$(owner_tracker_owner "$tracker" "$work")" || { OWNER_TRACKER_GATE_CAUSE=owner-read; return 1; }
-  fi
-  if [[ "$mode" == remove ]] && jq -e 'any(.[]; .state == "withdrawn" and .tracker_comment != null)' <<<"$asks" >/dev/null; then
-    questions="$(owner_tracker_questions "$tracker" "$ref" 2>"$work/tracker.err")" ||
-      { OWNER_TRACKER_GATE_CAUSE=questions-read; return 1; }
-    failed="$(jq -r --argjson questions "$questions" '.[] | select(.state == "withdrawn") | .tracker_comment
-      | select(. as $id | any($questions[]; .id == $id))' <<<"$asks")" ||
-      { OWNER_TRACKER_GATE_CAUSE=prepare; return 1; }
-    while IFS= read -r value; do
-      [[ -n "$value" ]] || continue
-      "$tracker" comments create "$ref" --parent "$value" --owner-ruling --no-attribution \
-        --body 'This question closed with no answer.' 2>"$work/tracker.err" | jq -e '.success == true' >/dev/null ||
-        { OWNER_TRACKER_GATE_CAUSE=failed-question; return 1; }
-    done <<<"$failed"
   fi
   for field in assignee labels held; do
     [[ "$mode" == remove || "$field" != held ]] || break
@@ -495,7 +488,6 @@ owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWN
   OWNER_TRACKER_CAUSE=comment
   comment_error="$work/tracker-comment.err"
   comment_id=""
-  OWNER_TRACKER_COMMENT="$question"
   # No attribution line, so the comment opens with the owner's mention.
   if "$tracker" comments create "$comment_issue" --owner-question "$ask_id" --no-attribution --body-file "$comment_file" >"$work/tracker.out" 2>"$work/tracker-comment.err"; then
     if comment_id="$(jq -er 'select(.success == true) | .data.comment.id // ""' "$work/tracker.out" 2>"$work/tracker-comment.err")"; then
@@ -513,7 +505,12 @@ owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWN
       comment_error="$work/tracker.out"
     fi
   fi
+  OWNER_TRACKER_COMMENT="$question"
   owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
+  if [[ -n "$comment_id" ]]; then
+    owner_tracker_settle "$tracker" "$comment_issue" "$comment_id" 2>"$work/tracker.err" ||
+      owner_tracker_unwritten "$issue" rollback-failed-question "$work/tracker.err"
+  fi
   return 1
 }
 
@@ -539,6 +536,9 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
   question="$("$tracker" comments owner-questions --id "$ask_id" 2>"$work/tracker.err" | jq -er 'strings | select(length > 0)')" || {
     OWNER_TRACKER_CAUSE=question-id; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
+  # Read standing roots before the description snapshot used for rollback.
+  owner_tracker_questions "$tracker" "$comment_issue" >"$work/pre-post-questions" 2>"$work/pre-post.err" ||
+    : >"$work/pre-post-questions"
   current="$(owner_tracker_item "$tracker" "$issue" 2>"$work/tracker.err")" || {
     OWNER_TRACKER_CAUSE=labels-read; owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE"; return 0;
   }
@@ -586,10 +586,13 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
       owner_tracker_unwritten "$issue" rollback-unowned
     else
       original_description="$(jq -r '(.description // "") + "."' <<<"$current")" || return 1
-      if ! owner_tracker_questions "$tracker" "$comment_issue" >"$work/rollback-questions" 2>"$work/tracker-rollback.err"; then
+      if [[ ! -s "$work/pre-post-questions" ]]; then
+        owner_tracker_unwritten "$issue" rollback-questions "$work/pre-post.err"
+      elif ! owner_tracker_questions "$tracker" "$comment_issue" >"$work/rollback-questions" 2>"$work/tracker-rollback.err"; then
         owner_tracker_unwritten "$issue" rollback-questions "$work/tracker-rollback.err"
-      elif jq -e --arg failed "$question" --arg original "${original_description%.}" '
-          any(.[]; .id != $failed and (.id as $id | $original | contains("`Owner question: " + $id + "`") | not))' \
+      elif ! jq -e --slurpfile before "$work/pre-post-questions" --arg failed "$question" --arg original "${original_description%.}" '
+          all(.[]; .id as $id | $id == $failed or any($before[0][]; .id == $id)
+            or ($original | split("\n")[0] | endswith("`Owner question: " + $id + "`")))' \
           "$work/rollback-questions" >/dev/null; then
         owner_tracker_unwritten "$issue" rollback-unowned
       elif ! "$tracker" issues update "$issue" --description "${original_description%.}" \
@@ -598,7 +601,7 @@ owner_tracker_ask() { # TRACKER ENVELOPE WORK DIRECTORY ASKER
       fi
     fi
   fi
-  asks="$(jq -c --arg id "$OWNER_TRACKER_COMMENT" '.[0] |= (.state = "withdrawn" | .tracker_comment = ($id | select(length > 0) // null))' <<<"$asks")" || return 1
+  asks="$(jq -c '.[0].state = "withdrawn"' <<<"$asks")" || return 1
   owner_tracker_gate remove "$tracker" "$work" "$issue" "$comment_issue" "$asks" "$owner" ||
     owner_tracker_unwritten "$issue" "rollback-$OWNER_TRACKER_GATE_CAUSE" "$work/tracker.err"
   return 0

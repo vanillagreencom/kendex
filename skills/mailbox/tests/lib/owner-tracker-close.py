@@ -78,7 +78,7 @@ elif args[:2] == ["comments", "owner-questions"]:
     ruled = {row["parent_id"] for row in threads if row.get("ruling")}
     print(json.dumps([{"id": row["id"], "reserved": True, "legacy_asks": []}
                       for row in threads if row.get("ruling") is False and row["id"] not in ruled]))
-elif args[:2] == ["comments", "create"]:
+elif args[:2] == ["comments", "create"] or args[:2] == ["comments", "bulk-list"]:
     if "--owner-ruling" in args and (root / "settlement-blocked").exists():
         print("tracker: refused=settlement", file=sys.stderr)
         sys.exit(1)
@@ -116,13 +116,16 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
     # Linear's bodyData for the saved comment: the owner's mention is a
     # suggestion_userMentions node carrying the owner's user id.
     node = {"type": "suggestion_userMentions", "attrs": {"id": "owner", "label": "owner.person"}}
-    if row in ("mention-missing", "settlement-retried"):
+    if row in ("mention-missing", "settlement-retried", "settlement-aged"):
         node = {"type": "text", "text": comments[-1].splitlines()[0]}
     elif row == "mention-other":
         node = {"type": "suggestion_userMentions", "attrs": {"id": "someone-else", "label": "someone.else"}}
     doc = {"type": "doc", "content": [{"type": "paragraph", "content": [node]}]}
     print(json.dumps({"comment": {"bodyData": json.dumps(doc)}}))
 elif args[:2] == ["issues", "update"]:
+    if "--assignee" in args and (root / "repair-blocked").exists():
+        print("tracker: refused=assign", file=sys.stderr)
+        sys.exit(1)
     if "--description" in args and (root / "synced").exists():
         print("linear: refused=synced-description issue=KEN-7 github=acme/app#7 override=--synced-description", file=sys.stderr)
         sys.exit(1)
@@ -158,8 +161,6 @@ elif args[:2] == ["issues", "bulk-get"]:
 elif args[:2] == ["issues", "list"]:
     print(json.dumps([dict(id="KEN-7", uuid="uuid-KEN-7", **item)]
                      if item["assignee"] == "Owner Person" and "owner-gated" in item["labels"] else []))
-elif args[:2] == ["comments", "bulk-list"]:
-    print(json.dumps({"KEN-7": threads}))
 elif args[:2] == ["comments", "react"]:
     print(json.dumps({"success": True, "data": {"reaction": {"emoji": "eyes"}}}))
 elif args[:2] == ["graphql", "--query"] and args[2].startswith(("query OwnerItem(", "query OwnerAskItem(")):
@@ -180,6 +181,16 @@ import sys
 data = next(line[len("data = "):] for line in sys.stdin.read().splitlines() if line.startswith("data = "))
 payload = json.loads(json.loads(data))
 root = Path(os.environ["TRACKER_CASE"])
+threads_path = root / "threads.json"
+threads = json.loads(threads_path.read_text())
+if payload["query"].startswith("query IssueRefs("):
+    nodes = [{"id": row["id"], "body": row["body"], "createdAt": row["created_at"],
+              "user": {"name": "Participant", "email": row["user_email"]},
+              "parent": {"id": row["parent_id"]} if row["parent_id"] else None} for row in threads]
+    page = {"hasNextPage": False, "endCursor": None}
+    issue = {"id": "uuid-KEN-7", "identifier": "KEN-7", "comments": {"nodes": nodes, "pageInfo": page}}
+    print(json.dumps({"data": {"issues": {"nodes": [issue], "pageInfo": page}}}) + "___HTTP_CODE___200", end="")
+    sys.exit(0)
 if payload["query"].startswith("query GetIssue("):
     print(json.dumps({"data": {"issue": {"id": "uuid-KEN-7"}}}) + "___HTTP_CODE___200", end="")
     sys.exit(0)
@@ -187,16 +198,15 @@ if not payload["query"].lstrip().startswith("mutation CreateComment"):
     print(json.dumps({"errors": [{"message": "unexpected fixture query"}]}) + "___HTTP_CODE___200", end="")
     sys.exit(0)
 comments_path = root / "comments.json"
-threads_path = root / "threads.json"
-threads = json.loads(threads_path.read_text())
 question = payload["variables"]["input"]
 body = question["body"]
 parent = question.get("parentId")
 if parent is None:
     (root / "question-id").write_text(question["id"])
     comments_path.write_text(json.dumps(json.loads(comments_path.read_text()) + [body]))
+email = "owner@example.test" if (root / "personal-credential").exists() else "app@example.test"
 threads.append({"id": question["id"], "parent_id": parent, "body": body,
-                "ruling": parent is not None, "user_email": "app@example.test",
+                "ruling": parent is not None, "user_email": email,
                 "created_at": f"2026-11-22T00:{len(threads):02}:00Z"})
 threads_path.write_text(json.dumps(threads))
 comment = {"id": question["id"], "body": body, "createdAt": "2026-11-22T00:00:00Z",
@@ -211,7 +221,13 @@ def run(source, scratch, bash, only=None):
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
              "rollback_labels": True, "comment_form": True, "mention": True,
-             "settlement": True, "rollback_pair": True, "cross_project": True}
+             "settlement": True, "rollback_pair": True, "cross_project": True,
+             "personal_ruling": True, "settlement_retention": True, "repair_refusal": True,
+             "rollback_roots": True}
+    if only in (None, "rollback-roots"):
+        facts["rollback_roots"] = rollback_roots(scratch, bash)
+    if only == "rollback-roots":
+        return facts
     # One copy of the real linear scripts, with no orch beside it, so its
     # attribution line reads unknown rather than this checkout's session.
     linear = Path(tempfile.mkdtemp(dir=scratch)) / "linear"
@@ -223,11 +239,11 @@ def run(source, scratch, bash, only=None):
     for row, posted in (("label-failed", False), ("comment-failed", False),
                         ("comment-edited", False), ("rollback-read", False),
                         ("rollback-failed", False), ("posted", True), ("publish-first", True),
-                        ("late-label", True), ("late-assignee", True), ("late-synced", True),
+                        ("late-label", True), ("late-assignee", True), ("late-synced", True), ("repair-refused", True),
                         ("comment-refused", False), ("comment-preexisting", False),
                         ("comment-label-edit", False), ("mention-missing", False),
                         ("mention-other", False), ("mention-unread", False),
-                        ("settlement-retried", False)):
+                        ("settlement-retried", False), ("settlement-aged", False)):
         if only is not None and row != only:
             continue
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
@@ -257,8 +273,10 @@ def run(source, scratch, bash, only=None):
             previous_comments = ["An existing comment stays."]
             comments_path.write_text(json.dumps(previous_comments))
             (root / "threads.json").write_text("[]")
-            if row == "settlement-retried":
+            if row.startswith("settlement-"):
                 (root / "settlement-blocked").touch()
+            if row == "mention-missing":
+                (root / "personal-credential").touch()
             message = root / "question"
             message.write_text("Approve the change?\n")
             env = {"PATH": os.environ["PATH"], "HOME": str(root), "TMPDIR": str(root),
@@ -295,15 +313,15 @@ def run(source, scratch, bash, only=None):
                     and any(line.startswith("Reply to this comment") for line in lines)
                     and lines[-1] == "Requested by the " + root.name + " overseer"
                     and ask_id not in after_comments[-1] and "ask=" not in after_comments[-1])
-            elif row.startswith("mention-") or row == "settlement-retried":
+            elif row.startswith(("mention-", "settlement-")):
                 facts["comments"] &= after_comments[:1] == previous_comments and len(after_comments) == 2
             else:
                 facts["comments"] &= after_comments == previous_comments
             if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit",
-                       "mention-missing", "mention-other", "mention-unread", "settlement-retried"):
+                       "mention-missing", "mention-other", "mention-unread", "settlement-retried", "settlement-aged"):
                 facts["rollback_owned"] &= original != written and after_ask["description"] == original
                 expected_labels = ["added-later", "skills"] if row == "comment-label-edit" else ["skills"]
-                if row != "settlement-retried":
+                if not row.startswith("settlement-"):
                     facts["rollback_labels"] &= after_ask["labels"] == expected_labels
                 if row == "comment-refused":
                     response_file = Path(ask.stderr.partition("error-file=")[2].strip())
@@ -330,8 +348,19 @@ def run(source, scratch, bash, only=None):
                         and not any(json.loads(line).get("kind") == "tracker-posted" for line in box))
                 if row.startswith("mention-"):
                     threads = json.loads((root / "threads.json").read_text())
-                    facts["settlement"] &= (pending.get("failed_question") == reserved
-                        and [thread["parent_id"] for thread in threads] == [None, reserved])
+                    settled = (pending.get("failed_question") == reserved
+                               and [thread["parent_id"] for thread in threads] == [None, reserved])
+                    facts["settlement"] &= settled
+                    if row == "mention-missing":
+                        facts["personal_ruling"] &= settled
+                        if settled:
+                            reply = tracker_reply("personal-reply", reserved, threads[1]["body"])
+                            (root / "threads.json").write_text(json.dumps([*threads, reply]))
+                            read = mailbox_rows(invoke("owner-answers", "--item", "overseer"))
+                            facts["personal_ruling"] &= (
+                                threads[1]["user_email"] == "owner@example.test"
+                                and [(r["comment"], r["ask"]) for r in read if r["kind"] == "delivered"]
+                                == [(reply["id"], ask_id)])
             elif row == "comment-edited":
                 facts["rollback_unowned"] &= (after_ask["description"] == later
                     and after_ask["labels"] == ["skills"]
@@ -373,7 +402,7 @@ def run(source, scratch, bash, only=None):
                 error_file = Path(error_path) if error_path else None
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
                     and error_file.read_bytes() == b"tracker: refused=write\n")
-            if row == "settlement-retried":
+            if row.startswith("settlement-"):
                 threads_path = root / "threads.json"
                 failed_root = json.loads(threads_path.read_text())[0]
                 reply = tracker_reply("failed-question-reply", reserved, "Answer the original question")
@@ -413,36 +442,79 @@ def run(source, scratch, bash, only=None):
             facts["close_untracked"] &= (after_close == before_close
                 and all(args[:3] == ["comments", "bulk-list", "KEN-7"] or args[:2] == ["comments", "react"]
                         for args in closing))
-            if row == "settlement-retried":
-                (root / "settlement-blocked").unlink()
-                env["TRACKER_ROW"] = "posted"
-                later_ask = invoke("ask", "--item", "overseer", "--to", "owner", "--issue", "KEN-7",
-                                   "--do", "Approve the later change", "--wait", "5",
-                                   "--options", "approve,hold", "--recommend", "approve",
-                                   "--effect", "none", "--file", str(message))
-                later_id = later_ask.stdout.strip().split("=", 1)[1]
-                later_question = (root / "question-id").read_text()
-                invoke("resolve", "--item", "overseer", "--id", later_id, "--text", str(message))
-                subprocess.run([str(tracker), "comments", "create", "KEN-7", "--parent", later_question,
-                                "--owner-ruling", "--no-attribution", "--body", "This question closed with no answer."],
-                               env=env, check=True, capture_output=True, text=True, timeout=15)
-                first_close = invoke("owner-gate", "--item", "overseer", "--id", later_id)
-                second_close = invoke("owner-gate", "--item", "overseer", "--id", later_id)
-                threads = json.loads(threads_path.read_text())
-                settled = (
-                    first_close.stdout == second_close.stdout == "owner-gate: held=false\n"
-                    and threads[:3] == [failed_root, reply, flat]
-                    and [(r["id"], r["parent_id"]) for r in threads if r["parent_id"] == reserved]
-                    == [(reply["id"], reserved), (ruling_id(reserved), reserved)]
-                    and json.loads(state.read_text())["labels"] == ["skills"]
-                    and json.loads(state.read_text())["assignee"] == "")
-                if not settled:
-                    print(f"{row}: close proof failed: {first_close.stdout!r}, {threads!r}, {state.read_text()}", file=sys.stderr)
-                facts["settlement"] &= settled
-            if row == "publish-first" or row.startswith("late-"):
-                facts["cross_project"] &= cross_project(
+            if row.startswith("settlement-"):
+                settled = settled_after_close(root, mail, env, tracker, message, row, ask_id, reserved)
+                facts["settlement_retention" if row == "settlement-aged" else "settlement"] &= settled
+            if row == "publish-first" or row.startswith("late-") or row == "repair-refused":
+                facts["repair_refusal" if row == "repair-refused" else "cross_project"] &= cross_project(
                     root, mail, env, tracker, message, row, ask_id, reserved, body)
     return facts
+
+
+def independent_checkout(root, env, name="other-project"):
+    other = root / name
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
+        subprocess.run(["git", "-C", str(other), "config", key, value], check=True)
+    other_env = {**env, "HOME": str(other), "TMPDIR": str(other), "TRACKER_ROW": "posted"}
+    other_env.update({key: str(other / key) for key in
+                      ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")})
+    return other, other_env
+
+
+def settled_after_close(root, mail, env, tracker, message, row, failed_ask, failed_question):
+    item_path = root / "item.json"
+    threads_path = root / "threads.json"
+    original = json.loads(threads_path.read_text())
+
+    def call(args, cwd=root, environment=env):
+        result = subprocess.run(args, cwd=cwd, env=environment, capture_output=True, text=True,
+                                check=True, timeout=20)
+        return result.stdout
+
+    def age_and_compact():
+        date = shutil.which("date", path=env["PATH"])
+        clock = root / "future"
+        clock.mkdir(exist_ok=True)
+        (clock / "date").write_text(f'#!/bin/sh\nif [ "$*" = "-u +%s" ]; then echo $(( $("{date}" -u +%s) + 2592000 )); '
+                                   f'else exec "{date}" "$@"; fi\n')
+        (clock / "date").chmod(0o755)
+        call([*mail, "inbox", "--item", "overseer"])
+        call([*mail, "compact", "--item", "overseer"],
+             environment={**env, "PATH": str(clock) + os.pathsep + env["PATH"]})
+
+    age_and_compact()
+    before_repair = call([*mail, "events", "--item", "overseer"])
+    (root / "settlement-blocked").unlink()
+    if row == "settlement-retried":
+        other, other_env = independent_checkout(root, env)
+        later = call([*mail, "ask", "--item", "overseer", "--to", "owner", "--issue", "KEN-7",
+                      "--do", "Approve the later change", "--wait", "5", "--options", "approve,hold",
+                      "--recommend", "approve", "--effect", "none", "--file", str(message)],
+                     other, other_env).strip().split("=", 1)[1]
+        later_question = (root / "question-id").read_text()
+        newer_marks = json.loads(item_path.read_text())
+
+    repair = call([*mail, "owner-answers", "--item", "overseer"])
+    if row == "settlement-retried":
+        assert json.loads(item_path.read_text()) == newer_marks
+        call([*mail, "resolve", "--item", "overseer", "--id", later, "--text", str(message)], other, other_env)
+        call([str(tracker), "comments", "create", "KEN-7", "--parent", later_question,
+              "--owner-ruling", "--no-attribution", "--body", "This question closed with no answer."], other, other_env)
+        assert call([*mail, "owner-gate", "--item", "overseer", "--id", later], other, other_env) == "owner-gate: held=false\n"
+    after_repair = call([*mail, "events", "--item", "overseer"])
+    age_and_compact()
+    after_compact = call([*mail, "events", "--item", "overseer"])
+    threads = json.loads(threads_path.read_text())
+    return (
+        failed_ask in before_repair and failed_question in before_repair
+        and repair.splitlines()[-1] == "owner-answers: read=read"
+        and '"tracker_settled":true' in after_repair and failed_ask not in after_compact
+        and threads[:len(original)] == original
+        and [r["id"] for r in threads if r["parent_id"] == failed_question and r.get("ruling")]
+        == [ruling_id(failed_question)]
+        and json.loads(item_path.read_text())["labels"] == ["skills"]
+        and json.loads(item_path.read_text())["assignee"] == "")
 
 
 def cross_project(root, mail, env, tracker, message, order, old_ask, old_question, body):
@@ -455,13 +527,7 @@ def cross_project(root, mail, env, tracker, message, order, old_ask, old_questio
     subprocess.run([str(tracker), "comments", "create", "KEN-7", "--parent", old_question,
                     "--owner-ruling", "--no-attribution", "--body", "This question closed with no answer."],
                    env=env, check=True, capture_output=True, text=True, timeout=15)
-    other = root / "other-project"
-    subprocess.run(["git", "init", "-q", str(other)], check=True)
-    for key, value in (("gc.auto", "0"), ("maintenance.auto", "false")):
-        subprocess.run(["git", "-C", str(other), "config", key, value], check=True)
-    other_env = {**env, "HOME": str(other), "TMPDIR": str(other)}
-    other_env.update({key: str(other / key) for key in
-                      ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")})
+    other, other_env = independent_checkout(root, env)
     synced = order == "late-synced"
     if synced:
         (root / "synced").touch()
@@ -474,7 +540,7 @@ def cross_project(root, mail, env, tracker, message, order, old_ask, old_questio
         new_ask_id = posted.stdout.strip().split("=", 1)[1]
     else:
         (root / "before-clear.json").write_text(json.dumps(
-            {"flag": "--clear-assignee" if order == "late-assignee" else "--labels",
+            {"flag": "--clear-assignee" if order in ("late-assignee", "repair-refused") else "--labels",
              "args": new_ask, "cwd": str(other), "env": other_env}))
     gate = subprocess.run([*mail, "owner-gate", "--item", "overseer", "--id", old_ask],
                           cwd=root, env=env, check=True, capture_output=True, text=True, timeout=20)
@@ -485,17 +551,24 @@ def cross_project(root, mail, env, tracker, message, order, old_ask, old_questio
     threads = json.loads(threads_path.read_text())
     threads_path.write_text(json.dumps([*threads, new_reply]))
     item = json.loads(state.read_text())
-    if order == "late-assignee":
+    if order in ("late-assignee", "repair-refused"):
         assert item["assignee"] == "" and "owner-gated" in item["labels"], (order, item)
     elif order.startswith("late-"):
         assert "owner-gated" not in item["labels"] and item["assignee"] == "Owner Person", (order, item)
     before_repair = len((root / "calls.jsonl").read_bytes())
+    if order == "repair-refused":
+        (root / "repair-blocked").touch()
     result = subprocess.run([*mail, "owner-answers", "--item", "overseer"], cwd=other, env=other_env,
                             check=True, capture_output=True, text=True, timeout=20)
     seen = [(r["comment"], r["ask"]) for r in mailbox_rows(result) if r["kind"] == "delivered"]
     updates = [json.loads(line) for line in
                (root / "calls.jsonl").read_bytes()[before_repair:].splitlines()]
     marker = f"**Owner, what you do:** Review the newer change `Owner question: {question}`\n\n"
+    if order == "repair-refused":
+        return (result.stdout.splitlines()[-1] == "owner-answers: read=read"
+                and "cause=repair-assign" in result.stderr
+                and seen == [(new_reply["id"], new_ask_id)]
+                and json.loads(state.read_text()) == item)
     return (
         gate.stdout == "owner-gate: held=true\n"
         and result.stdout.splitlines()[-1] == "owner-answers: read=read"
@@ -563,6 +636,38 @@ def action_window(root, bash):
          "cwd": str(newer), "env": environment(newer)}))
     return {"mail": str(mail), "tracker": str(tracker), "newer": str(newer), "message": str(message),
             "env": env, "old_ask": old_ask, "old_question": old_question, "body": body}
+
+
+def rollback_roots(scratch, bash):
+    for arrived in ("before-baseline", "after-baseline"):
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            fixture = action_window(root, bash)
+            hook = root / "before-clear.json"
+            newer = json.loads(hook.read_text())
+            state = root / "item.json"
+            if arrived == "before-baseline":
+                hook.unlink()
+                subprocess.run(newer["args"], cwd=newer["cwd"], env=newer["env"], check=True,
+                               capture_output=True, text=True, timeout=15)
+            original = json.loads(state.read_text())
+            third, env = independent_checkout(root, fixture["env"], "failed-project")
+            args = newer["args"].copy()
+            args[args.index("--do") + 1] = "Approve the failed attempt"
+            failed = subprocess.run(args, cwd=third, env={**env, "TRACKER_ROW": "mention-missing"},
+                                    check=True, capture_output=True, text=True, timeout=25)
+            current = json.loads(state.read_text())
+            threads = json.loads((root / "threads.json").read_text())
+            failed_root = threads[-2]
+            assert threads[-1]["parent_id"] == failed_root["id"]
+            if arrived == "before-baseline":
+                assert current == original, (arrived, original, current)
+            else:
+                assert "cause=rollback-unowned" in failed.stderr
+                assert current["description"].startswith(
+                    f"**Owner, what you do:** Approve the failed attempt `Owner question: {failed_root['id']}`\n\n")
+                assert current["labels"] == original["labels"] and current["assignee"] == original["assignee"]
+    return True
 
 
 if __name__ == "__main__":

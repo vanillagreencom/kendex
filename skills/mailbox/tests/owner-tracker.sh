@@ -63,6 +63,10 @@ close_rows() {
   assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
   assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
   assert_eq "$(jq '.settlement' <<<"$CLOSE_FACTS")" true 'failed publication preserves its reply binding and settles once under the original question'
+  assert_eq "$(jq '.personal_ruling' <<<"$CLOSE_FACTS")" true 'personal credentials do not import an automated ruling as an owner reply'
+  assert_eq "$(jq '.settlement_retention' <<<"$CLOSE_FACTS")" true 'compaction keeps an unresolved tracker exchange and releases it after repair'
+  assert_eq "$(jq '.rollback_roots' <<<"$CLOSE_FACTS")" true 'rollback restores earlier marks and defers when a new question stood after its baseline'
+  assert_eq "$(jq '.repair_refusal' <<<"$CLOSE_FACTS")" true 'a refused gate repair still delivers the already read owner reply'
   assert_eq "$(jq '.cross_project' <<<"$CLOSE_FACTS")" true 'both arrival orders preserve replies and the next pass repairs stale owner marks'
 }
 
