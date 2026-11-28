@@ -1407,7 +1407,7 @@ def claimed_paths(work):
     return claimed
 
 
-def job_reads(evidence, job, workflow_words, ordinary, readers, pending_shell):
+def job_reads(evidence, job, workflow_words, ordinary, readers):
     """Fill ordinary with the job's shell reads and readers with one read set
     per graph reader, so a shape refusal keeps what was proved before it.
     Return each graph reader's covered paths."""
@@ -1417,7 +1417,8 @@ def job_reads(evidence, job, workflow_words, ordinary, readers, pending_shell):
     inherited = workflow_words + job_words
     default = job.get("defaults", {}).get("run", {})
     step_inputs = []
-    for step_number, step in enumerate(job["steps"]):
+    checked_shell = {}
+    for step in job["steps"]:
         condition = step.get("if", "true")
         require(isinstance(condition, str) and LITERAL_CONDITION.fullmatch(expression(condition.strip())),
                 "opaque-step-condition")
@@ -1442,14 +1443,27 @@ def job_reads(evidence, job, workflow_words, ordinary, readers, pending_shell):
         # code inputs before any earlier refusal can let a claim stand in.
         step_inputs.append((step_words, directory, step_reads, step_visited, directory_error))
         # A claim-backed refusal can end the regular scan before a script runs.
-        for line_number, line in enumerate(step.get("run", "").splitlines()):
+        for line in step.get("run", "").splitlines():
             try:
                 args = shell_tokens(line)
             except ComputedCommand:
                 continue
             if (variable_runner and not uses_action and shell_invocation(args)
                     and all(literal(word) or word == ":" for word in args)):
-                pending_shell.add((step_number, line_number))
+                if directory_error is not None:
+                    raise OpaqueRunner() from directory_error
+                if step.get("shell", default.get("shell", "bash")) != "bash":
+                    raise OpaqueRunner()
+                invocation = directory, tuple(args)
+                if invocation not in checked_shell:
+                    reads = set()
+                    try:
+                        evidence.shell_command(args, directory, reads, set(), variable_runner)
+                    except Unreadable as error:
+                        if not is_shape(error):
+                            raise
+                        raise OpaqueRunner() from error
+                    checked_shell[invocation] = reads
             if args[:1] == ["vercel"] and all(literal(word) or word == ":" for word in args):
                 reject_vercel(args)
             if len(args) > 1 and args[0] == "npm":
@@ -1466,7 +1480,7 @@ def job_reads(evidence, job, workflow_words, ordinary, readers, pending_shell):
     opaque_action = None
     npm_shape = None
     require_shape(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
-    for step_number, (step, inputs) in enumerate(zip(job["steps"], step_inputs)):
+    for step, inputs in zip(job["steps"], step_inputs):
         step_words, directory, step_reads, step_visited, directory_error = inputs
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
                                    "shell", "with", "timeout-minutes", "if", "env"}, "opaque-step")
@@ -1482,7 +1496,7 @@ def job_reads(evidence, job, workflow_words, ordinary, readers, pending_shell):
         if directory_error is not None:
             raise directory_error
         visited.update(step_visited)
-        for line_number, line in enumerate(step["run"].splitlines()):
+        for line in step["run"].splitlines():
             node_line = re.match(r"\s*(?:npm|vercel)(?:\s|$)", line)
             if npm_shape and not node_line:
                 continue
@@ -1515,13 +1529,12 @@ def job_reads(evidence, job, workflow_words, ordinary, readers, pending_shell):
                         raise
                     # A later install can expose unproved lock inputs.
                     npm_shape = npm_shape or error
+            elif variable_runner and shell_invocation(args):
+                ordinary.update(checked_shell[directory, tuple(args)])
             else:
                 evidence.shell_command(args, directory, ordinary, visited, variable_runner)
-                pending_shell.discard((step_number, line_number))
     if npm_shape:
         raise npm_shape
-    if pending_shell:
-        raise OpaqueRunner()
     require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
     return covered
 
@@ -1752,15 +1765,10 @@ def derived(evidence, claimed, settings, declared, nightly, render_refusal):
 
     def job_reach(name, lane):
         ordinary, readers = set(), []
-        pending_shell = set()
         try:
-            covered = job_reads(evidence, jobs[name], workflow_words, ordinary, readers, pending_shell)
+            covered = job_reads(evidence, jobs[name], workflow_words, ordinary, readers)
             unresolved = set().union(*(evidence.changed - paths for paths in covered))
         except UNAVAILABLE as error:
-            # A shape refusal can stop the scan before a literal invocation's
-            # script or its sources can be checked for runner inputs.
-            if pending_shell and is_shape(error):
-                error = OpaqueRunner()
             cause = str(error).splitlines()
             diagnostic = f"lane-reach: job={name} cause={cause[0] if cause else type(error).__name__}"
             if not isinstance(error, NamedUnreadable):
