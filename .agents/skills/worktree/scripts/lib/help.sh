@@ -1032,12 +1032,13 @@ bounded Git call receives the record of every delete.
 Output, one stdout record per branch named for the item:
   worktree-branch-deleted: <branch>
   worktree-branch-kept: <branch> <tip> <cause> [<detail>]
-<cause> is unmerged, recovery, symbolic, unread (a read the judgement of
-that branch needed failed, or the budget ran out; <detail> names the read:
-is-ancestor, merge-tree, base-tree or deadline) or delete-failed (<detail>
-names Git's exit status and the first line it printed).
+<cause> is unmerged, recovery, symbolic, unread or delete-failed.
+For unread, <detail> names the failed read (is-ancestor, merge-tree or
+base-tree) or is deadline when the 60-second budget ran out.
+For delete-failed, <detail> gives Git's exit status and first output line.
 
-Exit 0 once every branch named for the item is judged, kept ones included.
+Exit 0 once the release has reported each deletion or keep, including
+branches left unjudged and kept as unread deadline.
 Exit 2 where a read judged no branch, with worktree-branch-release-unread:
 <cause> on stderr: no branch was deleted. Exit 1 on a usage error.
 EOF
