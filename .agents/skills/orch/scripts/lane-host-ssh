@@ -421,19 +421,44 @@ READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
 # tells whether its first line starts at a row boundary.
 SESSION_ROWS_BYTES = 1024 * 1024
 READ_SESSION_ROWS = MAILBOX_GUARD + r'''
-test -e "$1" || exit 2
+if ! test -e "$1"; then
+  # test cannot distinguish a missing entry from a failed lookup. Use the
+  # C-locale OS error only on this path, where cat must distinguish them.
+  if ! lookup=$(LC_ALL=C ls -d -- "$1" 2>&1); then
+    case "$lookup" in *': No such file or directory') exit 2 ;; esac
+    printf '%s\n' "$lookup" >&2
+  fi
+  printf 'lane-host-ssh: session-rows-lookup-failed path=%s\n' "$1" >&2
+  exit 1
+fi
 test -f "$1" || { printf 'lane-host-ssh: session-rows-not-regular\n' >&2; exit 1; }
 exec 3< "$1" || exit 1
 umask 077
 scratch=$(mktemp -d) || exit 1
 trap 'rm -rf -- "${scratch:?}"' EXIT
 mkfifo "$scratch/count-in" || exit 1
-wc -l < "$scratch/count-in" > "$scratch/count" &
+# The parent holds the FIFO open until the pipeline returns. The counter
+# drops its copy after opening stdin, so it reaches EOF even if tee never starts.
+exec 4<> "$scratch/count-in" || exit 1
+(
+  exec 5< "$scratch/count-in"
+  exec 4>&-
+  wc -l <&5 > "$scratch/count" || {
+    cat <&5 > /dev/null
+    exit 1
+  }
+) &
 counter=$!
 transfer=0
-tee "$scratch/count-in" <&3 | tail -c "$(($2 + 1))" > "$scratch/window" || transfer=$?
-wait "$counter" || exit 1
-test "$transfer" -eq 0 || exit 1
+tee "$scratch/count-in" <&3 4>&- | tail -c "$(($2 + 1))" 4>&- > "$scratch/window" || transfer=$?
+exec 4>&-
+count_status=0
+wait "$counter" || count_status=$?
+if test "$transfer" -ne 0; then
+  printf 'lane-host-ssh: session-rows-transfer-failed exit=%s\n' "$transfer" >&2
+  exit 1
+fi
+test "$count_status" -eq 0 || exit 1
 
 size=$(wc -c < "$scratch/window") || exit 1
 if test "$size" -gt "$2"; then

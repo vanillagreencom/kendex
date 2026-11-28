@@ -1165,6 +1165,44 @@ rc=0
         missing = read()
         self.assertEqual((missing.returncode, missing.stdout), (2, b""))
 
+    @unittest.skipIf(os.geteuid() == 0, "root can traverse directories without search permission")
+    def test_session_rows_refuse_an_unsearchable_item_directory(self):
+        path = self.root / "lane/tmp/lane-mail/TEST-1/session-rows.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'{"event":"Stop"}\n')
+        args = ("cat", "--item", "TEST-1", "--session-rows", str(path))
+        path.parent.chmod(0o600)
+        try:
+            blocked = self.call(*args)
+        finally:
+            path.parent.chmod(0o700)
+        self.assertEqual((blocked.returncode, blocked.stdout), (1, b""), blocked.stderr)
+        self.assertIn(b"session-rows-lookup-failed", recorded_cause(blocked.stderr).split())
+
+        path.unlink()
+        path.parent.rmdir()
+        missing = self.call(*args)
+        self.assertEqual((missing.returncode, missing.stdout), (2, b""), missing.stderr)
+
+    def test_session_row_counter_exits_when_the_writer_never_opens_its_pipe(self):
+        path = self.root / "lane/tmp/lane-mail/TEST-1/session-rows.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'{"event":"Stop"}\n')
+        remote_bin = self.root / "remote-bin"
+        self.executable(remote_bin / "tee", "#!/bin/sh\nexit 127\n")
+        args = [str(self.script), "cat", "--item", "TEST-1", "--session-rows", str(path)]
+        with subprocess.Popen(args, cwd=self.root, env={**self.env, "SSH_TEST_REMOTE_BIN": str(remote_bin)},
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              start_new_session=True) as provider:
+            try:
+                stdout, stderr = provider.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(provider.pid, signal.SIGKILL)
+                provider.communicate()
+                self.fail("The provider remained blocked after the writer exited")
+            self.assertEqual((provider.returncode, stdout), (1, b""), stderr)
+            self.assertIn(b"session-rows-transfer-failed exit=127", recorded_cause(stderr))
+
     def test_fresh_clone_uses_host_github_protocol(self):
         self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
         self.assertIn("gh repo clone owner/repo " + self.row["clone"], (self.root / "calls").read_text())

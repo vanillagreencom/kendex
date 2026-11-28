@@ -2369,7 +2369,8 @@ done
         wake(&mut baseline).events.as_slice(),
         [watch::Event::WakeUnconfirmed { resume, .. }] if resume.as_deref() == Some("server_error")
     ));
-    let earlier = fleet.mark("KEN-1").unwrap().resume;
+    let retained = fleet.mark("KEN-1").unwrap();
+    let earlier = retained.resume.clone();
     let deadline = Instant::now() + secs(5);
     while omit_prompt.exists() {
         assert!(
@@ -2460,6 +2461,64 @@ done
             "{call}"
         );
     }
+
+    // A legacy lane record stores a different root from the confirmed
+    // journal. The inbox receipt's cursor belongs to the recorded file.
+    let recorded = host.worktree().join("recorded-root");
+    let recorded_rows = recorded.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+    std::fs::create_dir_all(recorded_rows.parent().unwrap()).unwrap();
+    let digest = agent_runtime::session::text_digest(inbox_line());
+    let cursor = agent_runtime::rows::complete_line_count(&std::fs::read_to_string(&rows).unwrap());
+    let row = json!({"event": "UserPromptSubmit", "digest": digest});
+    let history = "{\"event\":\"Stop\"}\n".repeat(usize::try_from(cursor).unwrap());
+    std::fs::write(&recorded_rows, format!("{history}{row}\n")).unwrap();
+    let mut lane_record = fleet.read_fleet();
+    lane_record["lanes"][0]["mail_root"] = json!(recorded);
+    lane_record["lanes"][0]["mail_root_confirmed"] = json!(false);
+    fleet.write_fleet(&lane_record);
+
+    let mut wakes = WakeRecord::default();
+    let key = format!(
+        "retired-resume:KEN-1:{}:{}",
+        retained.turns_before,
+        earlier.unwrap()
+    );
+    wakes.set(&key, retained.clone());
+    let unread = "unread-at-recorded-root";
+    wakes.set(
+        "KEN-1",
+        WakeMark {
+            unread: unread.to_owned(),
+            turns_before: cursor,
+            line_digest: digest,
+            outcome: None,
+            resume: None,
+            ..retained
+        },
+    );
+    std::fs::write(fleet.record_file(), serde_json::to_vec(&wakes).unwrap()).unwrap();
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: unread.into(),
+    });
+    let before = host.calls().len();
+    let pass = wake(&mut baseline);
+    assert!(
+        matches!(
+            pass.events.as_slice(),
+            [.., watch::Event::WakeDelivered { target, resume: None }] if target == "KEN-1"
+        ),
+        "{pass:?}"
+    );
+    assert_eq!(count_reads(before), 1);
+    assert!(
+        host.calls()[before..]
+            .iter()
+            .any(|call| call.ends_with(recorded_rows.to_str().unwrap()))
+    );
+    assert_eq!(typed().lines().count(), 7);
 }
 
 /// A baseline holding the lanes duty's resume row `value` for `lane`.

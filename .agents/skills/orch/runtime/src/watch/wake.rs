@@ -1221,10 +1221,7 @@ impl Wake {
                         SavedReceipt {
                             key: &lane.item,
                             resume: Some(&resume.cause),
-                            snapshot: receipt_rows
-                                .get(&lane.item)
-                                .and_then(Option::as_ref)
-                                .map(|(_, rows)| rows),
+                            snapshot: None,
                         },
                         &mut record,
                         &mut produced,
@@ -1311,10 +1308,6 @@ impl Wake {
             if provider_resumes.contains(&name) || covered_unread.contains(&name) {
                 continue;
             }
-            let snapshot = receipt_rows
-                .get(&name)
-                .and_then(Option::as_ref)
-                .map(|(_, rows)| rows);
             let target = if name == OVERSEER_TARGET {
                 fleet
                     .overseer
@@ -1336,7 +1329,7 @@ impl Wake {
                         SavedReceipt {
                             key: &name,
                             resume: None,
-                            snapshot,
+                            snapshot: None,
                         },
                         &mut record,
                         &mut produced,
@@ -1354,7 +1347,7 @@ impl Wake {
             let Some(target) = target else {
                 continue;
             };
-            self.serve(&target, &state, tick, &mut record, &mut produced, snapshot)?;
+            self.serve(&target, &state, tick, &mut record, &mut produced)?;
         }
         Ok(produced)
     }
@@ -1442,22 +1435,11 @@ impl Wake {
         tick: &Tick,
         record: &mut WakeRecord,
         produced: &mut Produced,
-        snapshot: Option<&hosted::Answer<hosted::SessionRows>>,
     ) -> Result<()> {
         if let Some(mark) = record.get(&target.name)
             && mark.stands_for(unread, &target.pane, target.server)
         {
-            self.repeat_at(
-                target,
-                SavedReceipt {
-                    key: &target.name,
-                    resume: None,
-                    snapshot,
-                },
-                mark.clone(),
-                record,
-                produced,
-            )
+            self.repeat(target, mark.clone(), None, record, produced)
         } else {
             self.first_pass(target, unread, None, tick, record, produced)
         }
