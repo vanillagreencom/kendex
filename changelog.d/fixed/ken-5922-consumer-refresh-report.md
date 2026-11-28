@@ -1,1 +1,0 @@
-- Consumer refresh reports retired settings from the rendered catalog and names the kendex changes in its pull request or direct landing commit.

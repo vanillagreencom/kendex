@@ -6,6 +6,34 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
+## [1.24.1] - 2026-11-28
+
+### Changed
+
+- A consumer refresh whose render rewrites the refresh caller `.github/workflows/kendex-refresh.yml` now lands through the landing app with no pull request, CI run or review, like any other proved render. The shared workflow requests Workflows write beside Contents write for the landing token, since GitHub refuses an app's push that changes a workflow file without it. A landing app or installation that lacks Workflows write fails the mint, and every update keeps the rolling pull request.
+
+  You do: give the landing app Workflows read and write in its settings, and accept the new permission on each installation.
+
+### Removed
+
+- Consumer refresh no longer skips the render on a run whose inputs match a saved record. Every scheduled, dispatched and manual Refresh kendex run takes the full refresh path, and no run saves the current-inputs record artifact. The shared release workflow no longer outputs `route`, and the shipped caller template no longer reads it and grants its token only the permissions its jobs use: Actions write for the release job and Contents read for the refresh job.
+
+  You do: nothing
+
+### Fixed
+
+- When a source changed since its last comparison, `kendex check` offers a manual rerun when needed. The suggested command checks the same project and leaves its install record untouched.
+- In a copy that follows its default branch and is behind origin's, `kendex check` now names `git pull --ff-only` instead of `kendex refresh` for a package that reads behind, where origin's copy records that package at another commit. The pull brings that record, and a refresh would write a record the copy must not commit. The check offers the pull only where it settles the line: the checkout is on the default branch, has no commits of its own, and its install record is the committed one. Otherwise it keeps naming the refresh. Where the report names the pull, its `Next:` step is that pull, not a project refresh: the refresh rewrites the install record, and git then refuses the pull. Where kendex cannot tell which fix applies, because git cannot answer or origin's copy of the install record cannot be read, the line names neither and says so, and `kendex check --verbose` shows the cause. The check reads only what this clone last fetched. In `kendex check --json`, this fix carries the remedy verb `pull`.
+- When a catalog has yet to be downloaded, kendex names `kendex source refresh` as the fix.
+- A consumer refresh whose render would land through the landing app but meets a busy merge queue no longer opens a pull request. The run prints `refresh-land=skipped value=queued` and `refresh-state=deferred reason=queued`. A later refresh run that meets an empty queue lands the render with no pull request, CI run or review, where the repository's rulesets take the landing push.
+- Consumer refresh reports retired settings from the rendered catalog and names the kendex changes in its pull request or direct landing commit.
+- Retained refresh drafts link to an oversized catalog report only when the linked commit contains the report from the current run.
+- Every Pi hook kendex installs names its install, project or global, to a pi-hooks carrier older than 0.19.3, which names none. `ui-copy-note` reads its skills from that install today. Where `PI_CODING_AGENT_DIR` points at a project's `.pi`, one hook file is both installs, and such a carrier cannot say which one started it. In that project `ui-copy-note` then reports `kendex-hook-scope-overlap`, names pi-hooks 0.19.3 and skips its note. Every other kendex hook finds its install from its own path and runs as before. A catalog hook that reads that install declares `reads-registration: true`. In that project such a hook exits 2 under the same key, unless its `safety` line opens `Advisory reader.`.
+
+  You do: if `ui-copy-note` reports `kendex-hook-scope-overlap`, update pi-hooks to 0.19.3 or later, or point `PI_CODING_AGENT_DIR` at a directory outside the project.
+- Update download errors report the correct attempt count across curl versions.
+- Warnings about unfetched installed versions carry a typed `source-refresh` remedy in the desktop bindings. The Updates page and `kendex updates` render the existing advice from the drift report's shared templates.
+
 ## [1.24.0] - 2026-11-24
 
 ### Changed
@@ -3171,7 +3199,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.24.0..HEAD
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.24.1..HEAD
+[1.24.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.24.1
 [1.24.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.24.0
 [1.23.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.23.0
 [1.22.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.2
