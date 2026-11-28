@@ -1,1 +1,0 @@
-- Update download errors report the correct attempt count across curl versions.

@@ -1,3 +1,0 @@
-- A consumer refresh whose render rewrites the refresh caller `.github/workflows/kendex-refresh.yml` now lands through the landing app with no pull request, CI run or review, like any other proved render. The shared workflow requests Workflows write beside Contents write for the landing token, since GitHub refuses an app's push that changes a workflow file without it. A landing app or installation that lacks Workflows write fails the mint, and every update keeps the rolling pull request.
-
-  You do: give the landing app Workflows read and write in its settings, and accept the new permission on each installation.
