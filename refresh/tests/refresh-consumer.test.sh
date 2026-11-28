@@ -1826,22 +1826,47 @@ for report_case in pull landed legacy catch-up; do
       grep -qF -- "$manifest_entry" "$report" &&
       grep -qF -- "$changelog_entry Closes kendex reference 124." "$report" &&
       ! grep -qE '#12[34]|Older catalog entry outside the recorded range' "$report" &&
-      { [ "$report_case" = catch-up ] || ! grep -qF 'Newer catalog entry outside the recorded range' "$report"; }; then
+      { [ "$report_case" = catch-up ] || ! grep -qF 'Newer catalog entry outside the recorded range' "$report"; } &&
+      { [ "$report_case" != pull ] || ! grep -qF '/commit/' "$report"; }; then
     ok "$report_case reports the exact catalog interval"
   else bad "$report_case changelog from recorded commits" "$OUT"; fi
   if [ "$report_case" = catch-up ] && [ "$RC" -eq 0 ]; then
-    # An older runner could have published this tree without the report.
-    retained="$(git -C "$repo" commit-tree "$published^{tree}" -p "$land_base" -m 'chore: refresh kendex renders')"
-    git -C "$repo" push -q --force origin "$retained:refs/heads/kendex/refresh"
     : >"$TMP/state/pr-draft"
-    : >"$TMP/state/calls"
-    run_refresh "catalog-report-$report_case" withheld render
-    if [ "$RC" -eq 0 ] && grep -qxF "refresh-state=held pr=1 class=render head=$retained" <<<"$OUT" &&
-        grep -qF 'The retained commit predates the catalog report.' "$TMP/state/body" &&
-        ! grep -qF '/commit/' "$TMP/state/body" &&
-        ! grep -qE '^git push|^pr merge ' "$TMP/state/calls"; then
-      ok 'catch-up draft retains its older commit and reports the unavailable catalog report'
-    else bad 'catch-up draft report on a retained commit' "$OUT"; fi
+    for retained_report in missing warning extended matching; do
+      reset_default
+      case "$retained_report" in
+        missing) printf 'chore: refresh kendex renders\n' >"$TMP/retained-message" ;;
+        warning)
+          printf 'chore: refresh kendex renders\n\n## Kendex changelog\n\nCould not read the recorded kendex catalog changes.\n' >"$TMP/retained-message" ;;
+        extended)
+          # An older commit can contain this entire report plus another range's warning.
+          awk '/^## Consumer settings$/ {print "<p>Could not read kendex changes for an earlier range.</p>\n"} {print}' \
+            "$commit_report" >"$TMP/retained-message" ;;
+        matching)
+          # The catalog report still matches if the settings in the commit differ.
+          sed '/^## Consumer settings$/,$d' "$commit_report" >"$TMP/retained-message"
+          printf '## Consumer settings\n\n- <code>OLD_SETTING</code>: retired; no package reads it.\n' >>"$TMP/retained-message" ;;
+      esac
+      retained="$(git -C "$repo" commit-tree "$published^{tree}" -p "$land_base" -F "$TMP/retained-message")"
+      git -C "$repo" push -q --force origin "$retained:refs/heads/kendex/refresh"
+      : >"$TMP/state/calls"
+      rm -f -- "$TMP/state/body"
+      run_refresh "catalog-report-$report_case" withheld render
+      no_link_note='The full report exceeds GitHub’s limit.'
+      expected_location="$no_link_note"
+      unexpected_location='/commit/'
+      if [ "$retained_report" = matching ]; then
+        expected_location="https://github.com/acme/test/commit/$retained"
+        unexpected_location="$no_link_note"
+      fi
+      if [ "$RC" -eq 0 ] && grep -qxF "refresh-state=held pr=1 class=render head=$retained" <<<"$OUT" &&
+          [ -f "$TMP/state/body" ] && [ "$(wc -c <"$TMP/state/body")" -le 65536 ] &&
+          grep -qF "$expected_location" "$TMP/state/body" &&
+          ! grep -qF "$unexpected_location" "$TMP/state/body" &&
+          ! grep -qE '^git push|^pr merge ' "$TMP/state/calls"; then
+        ok "catch-up draft links only a matching retained catalog report ($retained_report)"
+      else bad "catch-up draft report on a retained commit ($retained_report)" "$OUT"; fi
+    done
     rm -f -- "$TMP/state/pr-draft"
   fi
   git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"

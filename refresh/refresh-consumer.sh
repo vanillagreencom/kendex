@@ -824,8 +824,12 @@ fi
 pull_body="$TMP/pull-body"
 printf '%s' "$body" >"$pull_body"
 report_location="[Read the full catalog report in the refresh commit](https://github.com/$GH_REPO/commit/$head)."
+# The commit body starts with the catalog report and may end with a settings
+# section from that run. Compare in Bash so a large report stays out of argv.
 if [ "$state" = unchanged ] &&
-    ! git show -s --format=%B "$head" | grep -Fx '## Kendex changelog' >/dev/null; then
+    { ! retained_body="$(git show -s --no-notes --no-show-signature --encoding=none --format=%b "$head")" ||
+      [[ "$retained_body" != "$changelog_report" &&
+         "$retained_body" != "$changelog_report"$'\n\n## Consumer settings\n\n'* ]]; }; then
   report_location='The full report exceeds GitHub’s limit. The retained commit predates the catalog report.'
 fi
 # Stream the report to keep it outside argv and check GitHub's character limit before publication.
