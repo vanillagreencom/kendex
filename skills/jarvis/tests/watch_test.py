@@ -539,6 +539,31 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         position = cursor[str(self.peer)]["to-overseer"]
         self.assertEqual((position["last_id"], position["last_line"]), (new_id, 3))
 
+    def test_mail_pass_upgrades_legacy_cursor_with_private_tail(self):
+        ask = self.mail(self.peer, "ask", "saved question", "--to", "owner", "--options", "yes,no",
+                        "--recommend", "yes", "--effect", "none")
+        ask_id = ask.stdout.split("id=", 1)[1].split()[0]
+        box = self.peer / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        original = box.read_bytes()
+        reserve = self.command([self.mail_command, "reserve", "--item", "overseer", "--id", ask_id], self.peer)
+        self.assertEqual(reserve.returncode, 0, reserve.stderr)
+        count, envelopes = self.native_events(self.peer, "to-overseer")
+        self.assertEqual((count, [row["line"] for row in envelopes]), (2, [1]))
+        saved = {str(self.peer): {"to-overseer": {"count": count, "size": box.stat().st_size}}}
+
+        output, cursor = self.read_pass(saved)
+        position = cursor[str(self.peer)]["to-overseer"]
+        with self.subTest(step="migration"):
+            self.assertNotIn("EVENT mail ", output)
+            self.assertEqual((position.get("last_id"), position.get("last_line")), (ask_id, 1))
+
+        box.write_bytes(original)
+        self.mail(self.peer, "notice", "notice after restore", "--to", "owner")
+        output, _ = self.read_pass(cursor)
+        with self.subTest(step="replacement"):
+            self.assertIn("\nnotice after restore\n", output)
+            self.assertNotIn("\nsaved question\n", output)
+
     def test_mail_pass_reads_replacement_before_next_pass(self):
         rows = (("one-row replacement", False, False),
                 ("older copy with original first id", True, False),

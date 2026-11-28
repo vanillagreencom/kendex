@@ -709,9 +709,13 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                     after = saved_count
                 # Include the saved position in the same logical snapshot as
                 # new mail. A restore or compaction can leave that line absent.
-                (count, first), envelopes = mailbox_events(bash, root, box, max(0, after - 1))
+                read_after = max(0, after - 1)
+                (count, first), envelopes = mailbox_events(bash, root, box, read_after)
                 boundary = after > 0 and bool(envelopes) and envelopes[0]["line"] == after
-                if last_id and after and (not boundary or envelopes[0].get("id") != last_id):
+                anchor_changed = last_id and after and (not boundary or envelopes[0].get("id") != last_id)
+                # A private or compacted tail can hide the legacy boundary.
+                # Find a public ID without lowering the first pass's delivery floor.
+                if (legacy and read_after and not envelopes) or anchor_changed:
                     boundary = False
                     (count, first), envelopes = mailbox_events(bash, root, box)
                 # Mail can arrive after the size sample. An owed mark also
@@ -722,12 +726,12 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False, marks=N
                     continue
                 # Private rows and compaction gaps count toward the mark.
                 # Only a public envelope can anchor the next acquisition.
-                # Until one is visible, retain the legacy count as the anchor.
-                next_root[box] = {"count": count, "size": size, "first": first}
-                if envelopes or not legacy:
-                    last = envelopes[-1] if envelopes else {}
-                    next_root[box].update(last_id=last.get("id"), last_line=last.get("line", 0))
-                if boundary:
+                last = envelopes[-1] if envelopes else {}
+                next_root[box] = {"count": count, "size": size, "first": first,
+                                  "last_id": last.get("id"), "last_line": last.get("line", 0)}
+                if legacy:
+                    envelopes = [row for row in envelopes if row["line"] > after]
+                elif boundary:
                     envelopes = envelopes[1:]
                 for envelope in envelopes:
                     if box == "to-lane":
