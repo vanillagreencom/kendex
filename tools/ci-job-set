@@ -90,6 +90,8 @@
 # bound catch-up work. An unread listing, or no tested commit within
 # PUSH_WALK, selects every suite, shard and target and cache compilation. An
 # unread event range refuses selection, leaving the workflow full fallback.
+# A proved docs-only catch-up range containing skill Markdown uses the
+# file-reader reach. A mixed or unread docs verdict keeps the regular reach.
 #
 # tools/guard --suite-reach owns the selected suites and Rust targets.
 # Per runner, subtract only suites the same-head merge groups selections
@@ -1267,12 +1269,20 @@ def select():
             if parts[0] == root and parts[-1].endswith("." + suffix):
                 if len(parts) == 2 or (len(parts) == 3 and parts[1] not in support):
                     inputs.add(name)
+    def shipped_skill(path):
+        return next((root for root in (path.parts[:2], path.parts[:3])
+                     if len(root) < len(path.parts) and root in skill_dirs
+                     and path.parts[len(root)] not in excluded), None)
+
     for name in changes:
         path = PurePosixPath(name)
-        shipped = any(
-            root in skill_dirs and path.parts[len(root)] not in excluded
-            for root in (path.parts[:2], path.parts[:3]) if len(root) < len(path.parts)
-        )
+        source = name.removeprefix(".agents/")
+        skill = shipped_skill(PurePosixPath(source))
+        # The tracked skill marker proves a project placement even when a
+        # new companion render was left out of the generated inventory.
+        if skill and source in entries and "/".join((".agents", *skill, marker)) in entries:
+            print("project-render", name, sep="\t")
+        shipped = shipped_skill(path)
         if name in inputs or shipped:
             print("read", name, sep="\t")
             # Markdown a skill ships beside its marker: the skill text
@@ -1334,6 +1344,7 @@ reads() { # DOCS
       for (i = 1; i <= n; i++) {
         split(entries[i], entry, "\t")
         if (entry[1] == "text") skill_text[entry[2]] = 1
+        else if (entry[1] == "project-render") project_render[entry[2]] = 1
         else catalog_input[entry[2]] = entry[1]
       }
       n = split(ENVIRON["RENDERED"], rendered, "\n")
@@ -1350,8 +1361,8 @@ reads() { # DOCS
     function own_skill_markdown(path, r) {
       if (crate[r] != "kendex-core" || selector[r] != "lib") return 0
       if (read[r] == "skills")
-        return path ~ /^skills\/[^/]+\/SKILL\.md$/ || ((".agents/" path) in render)
-      return read[r] == ".agents" && (path in render)
+        return path ~ /^skills\/[^/]+\/SKILL\.md$/ || ((".agents/" path) in render) || (path in project_render)
+      return read[r] == ".agents" && ((path in render) || (path in project_render))
     }
     END {
       n = split(ENVIRON["PATHS"], changed, "\n")
@@ -1981,11 +1992,18 @@ if [ "${EVENT:-}" = push ]; then
   main_build=true
   main_checkout=true
   main_reach=false
+  main_docs=false
   REACH_READ=false
   if [ "$range_read" = true ]; then
-    read_selection false
+    if any "$SKILL_MARKDOWN" && [[ $'\n'$paths != *$'\n'\"* ]] &&
+      docs_verdict="$("$TOOLS_DIR/../skills/change-scope/scripts/harness-only" --mode docs --event push \
+      --base "$PREVIOUS_PUSH" --head "$PUSH_AFTER" --output /dev/null)" &&
+      [ "$docs_verdict" = docs_only=true ]; then
+      main_docs=true
+    fi
+    read_selection "$main_docs"
     main_reach=$REACH_READ
-    [[ $read_lines != *suites-unplaced=1* ]] || main_reach=false
+    [[ $main_docs == true || $read_lines != *suites-unplaced=1* ]] || main_reach=false
     main_build=false
     main_checkout=false
     case "$read_lines" in *included=1* | *build=1*) main_build=true ;; esac
@@ -1998,7 +2016,7 @@ if [ "${EVENT:-}" = push ]; then
   else
     printf 'ci-job-set: main-range=unread coverage=full cause=%s\n' "${RANGE_CAUSE:-push-diff-unread}" >&2
   fi
-  choose_shards "$main_reach" "$main_checkout" false
+  choose_shards "$main_reach" "$main_checkout" "$main_docs"
   main_linux=$SHELL_SHARDS
   main_skipped=$SHELL_SKIPPED
   main_targets=$FULL_RUNTIME_TARGETS
