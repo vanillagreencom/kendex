@@ -3885,23 +3885,34 @@ fn a_call_naming_no_session_reads_the_session_bound_at_its_pane() {
 #[test]
 fn a_lane_session_uses_only_its_own_launch_effort() {
     let world = World::launched();
-    let env = [("AGENT_RUNTIME_LAUNCH_AGENT", ITEM)];
+    let env = [
+        ("AGENT_RUNTIME_LAUNCH_AGENT", ITEM),
+        ("AGENT_RUNTIME_LAUNCH_EFFORT", "medium"),
+    ];
     let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
     world.tool_call("claude", Some(&transcript), &env);
+    let mut context = world.record();
+    let pane = world.on_pane("%3");
+    let mut pane_env = borrowed(&pane);
+    pane_env.extend(env);
     let unrelated = Owned::sleep();
     let here = json!({"pid": std::process::id(), "start": start_of(std::process::id())});
     let elsewhere = json!({"pid": unrelated.pid(), "start": unrelated.start()});
-    for (session, launch, code, line) in [
-        ("s1", here.clone(), 0, "effort=high source=launch"),
+    for (session, launch, pane_bound, code, line) in [
+        ("s1", here.clone(), false, 0, "effort=medium source=launch"),
         (
             "previous",
             here,
+            false,
             1,
             "session-effort-unrecorded harness=claude session=s1",
         ),
-        ("s1", elsewhere, 2, "session-unnamed"),
-        ("s1", Value::Null, 2, "session-unnamed"),
+        ("s1", elsewhere, false, 2, "session-unnamed"),
+        ("s1", Value::Null, false, 2, "session-unnamed"),
+        ("s1", Value::Null, true, 0, "effort=high source=launch"),
     ] {
+        context["pane_key"] = json!(pane_bound.then(|| format!("{SERVER_PID} %3")));
+        world.plant_record(context.clone());
         fs::write(
             world.fleet(),
             json!({"lanes": [{"item": ITEM, "harness": "claude",
@@ -3910,7 +3921,7 @@ fn a_lane_session_uses_only_its_own_launch_effort() {
             .to_string(),
         )
         .unwrap();
-        let out = world.session(&env);
+        let out = world.session(if pane_bound { &pane_env } else { &env });
         assert_eq!(out.code, code, "{} {}", out.stdout, out.stderr);
         if code == 2 {
             assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
@@ -4030,7 +4041,10 @@ fn a_controller_session_is_named_only_for_its_own_caller() {
         fs::create_dir_all(world.lane.join("tmp")).unwrap();
         let pane = world.on_pane("%3");
         let mut env = borrowed(&pane);
-        env.push(("AGENT_RUNTIME_LAUNCH_AGENT", "controller"));
+        env.extend([
+            ("AGENT_RUNTIME_LAUNCH_AGENT", "controller"),
+            ("AGENT_RUNTIME_LAUNCH_EFFORT", "medium"),
+        ]);
         let account = world.home.join(".claude");
         let transcript = agent_runtime::session::fixed_file(
             agent_runtime::harness::Harness::Claude,
@@ -4057,7 +4071,7 @@ fn a_controller_session_is_named_only_for_its_own_caller() {
             (out.code, out.stdout.as_str()),
             (
                 0,
-                "model=claude-haiku-5-5 source=session\neffort=high source=launch\nagent=controller source=launch\n"
+                "model=claude-haiku-5-5 source=session\neffort=medium source=launch\nagent=controller source=launch\n"
             ),
             "jarvis={jarvis}: {}",
             out.stderr
@@ -4083,61 +4097,73 @@ fn a_controller_session_is_named_only_for_its_own_caller() {
 }
 
 #[test]
-fn a_pi_controller_requires_the_current_native_session() {
-    let world = World::new();
-    fs::create_dir_all(world.lane.join("tmp")).unwrap();
-    let pane = world.on_pane("%3");
-    let mut env = borrowed(&pane);
-    env.extend([
-        ("AGENT_RUNTIME_LAUNCH_AGENT", "controller"),
-        ("PI_REASONING_LEVEL", "medium"),
-    ]);
-    let sessions = world
-        .home
-        .join(".pi/agent/sessions")
-        .join(agent_runtime::session::pi_slug(&world.lane));
-    fs::create_dir_all(&sessions).unwrap();
-    fs::write(
-        sessions.join("start_s1.jsonl"),
-        format!(
-            "{}\n",
-            json!({
-                "type": "message", "message": {"role": "assistant", "provider": "openai",
-                    "model": "gpt-5", "usage": {"input": 100, "output": 10}}
-            })
-        ),
-    )
-    .unwrap();
-    fs::write(
-        world.fleet(),
-        json!({"controller": {
-            "harness": "pi", "session_id": "s1", "cwd": world.lane, "effort": "high",
-            "server": SERVER_PID, "server_start": 1700000000,
-            "server_socket": world.root.join("tmux-socket"), "pane": "%3",
-            "harness_pid": std::process::id(), "harness_start": start_of(std::process::id())
-        }})
-        .to_string(),
-    )
-    .unwrap();
-    // Pi's Bash tool supplies the active session ID anew after a switch.
-    for (id, code) in [(None, 2), (Some("replacement"), 2), (Some("s1"), 0)] {
-        let mut caller = env.clone();
-        if let Some(id) = id {
-            caller.push(("PI_SESSION_ID", id));
-        }
-        let out = world.session(&caller);
-        assert_eq!(out.code, code, "{id:?}: {} {}", out.stdout, out.stderr);
-        if code == 0 {
-            assert_eq!(
-                out.stdout,
-                "model=openai/gpt-5 source=session\neffort=medium source=session\nagent=controller source=launch\n"
-            );
+fn pi_attribution_requires_the_current_native_session() {
+    for (world, agent) in [(World::new(), "controller"), (World::launched(), ITEM)] {
+        fs::create_dir_all(world.lane.join("tmp")).unwrap();
+        let pane = world.on_pane("%3");
+        let mut env = borrowed(&pane);
+        env.extend([
+            ("AGENT_RUNTIME_LAUNCH_AGENT", agent),
+            ("PI_REASONING_LEVEL", "medium"),
+        ]);
+        let sessions = world
+            .home
+            .join(".pi/agent/sessions")
+            .join(agent_runtime::session::pi_slug(&world.lane));
+        fs::create_dir_all(&sessions).unwrap();
+        let transcript = sessions.join("start_s1.jsonl");
+        fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({
+                    "type": "message", "message": {"role": "assistant", "provider": "openai",
+                        "model": "gpt-5", "usage": {"input": 100, "output": 10}}
+                })
+            ),
+        )
+        .unwrap();
+        if agent == ITEM {
+            world.tool_call("pi", Some(&transcript), &env);
         } else {
-            assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+            fs::write(
+                world.fleet(),
+                json!({"controller": {
+                    "harness": "pi", "session_id": "s1", "cwd": world.lane, "effort": "high",
+                    "server": SERVER_PID, "server_start": 1700000000,
+                    "server_socket": world.root.join("tmux-socket"), "pane": "%3",
+                    "harness_pid": std::process::id(), "harness_start": start_of(std::process::id())
+                }})
+                .to_string(),
+            )
+            .unwrap();
+        }
+        // Pi's Bash tool supplies the active session ID anew after a switch.
+        for (id, code) in [(Some("s1"), 0), (Some("replacement"), 2), (None, 2)] {
+            let mut caller = env.clone();
+            if let Some(id) = id {
+                caller.push(("PI_SESSION_ID", id));
+            }
+            let out = world.session(&caller);
             assert_eq!(
-                out.stdout.split_whitespace().next(),
-                Some("session-unnamed")
+                out.code, code,
+                "{agent} {id:?}: {} {}",
+                out.stdout, out.stderr
             );
+            if code == 0 {
+                assert_eq!(
+                    out.stdout,
+                    format!(
+                        "model=openai/gpt-5 source=session\neffort=medium source=session\nagent={agent} source=launch\n"
+                    )
+                );
+            } else {
+                assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+                assert_eq!(
+                    out.stdout.split_whitespace().next(),
+                    Some("session-unnamed")
+                );
+            }
         }
     }
 }
