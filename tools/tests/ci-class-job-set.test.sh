@@ -50,9 +50,9 @@ render_addition_row() {
   git clone -q --shared -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false "$ROOT" "$world"
   [ ! -e "$world/$source" ] && [ ! -e "$world/$render" ] || return 1
   jq -e --arg path "$render" 'index($path) == null' "$world/.kendex-generated.json" >/dev/null
-  printf '# A new rendered reference\n' | tee "$world/$source" >"$world/$render"
-  git -C "$world" add -- "$source" "$render"
-  SELECT_IN="$world" render_row "$source"$'\n'"$render"
+  printf '# A new authored reference\n' >"$world/$source"
+  git -C "$world" add -- "$source"
+  SELECT_IN="$world" render_row "$source"
 }
 if [ "${1-}" = --render-markdown ]; then
   case "${2-}" in
