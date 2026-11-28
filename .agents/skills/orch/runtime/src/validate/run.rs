@@ -935,7 +935,10 @@ pub(crate) fn command_reading(run_dir: &Path) -> Result<Option<Reading<()>>> {
     let command = read_command(run_dir)?;
     if execution_unanswered(&command)
         && stop_recorded(run_dir)
-        && abandoned_execution(&super::files::RunFile::read(run_dir)?)
+        && let Ok(runner) = super::files::fields(&run_dir.join("runner"))
+        && let Some(kind) = runner.get("runner")
+        && (kind != "systemd" || runner.contains_key("status"))
+        && abandoned_execution(&super::files::RunFile::read(run_dir)?, kind)
     {
         return Ok(Some(Reading::Gone));
     }
@@ -951,12 +954,16 @@ fn execution_unanswered(command: &Option<Reading<()>>) -> bool {
     )
 }
 
-fn abandoned_execution(run: &super::files::RunFile) -> bool {
-    // Read the runner first: while it is live it may still publish a pid.
-    // The runner file must stand because the reader also treats an absent
-    // runner record as gone.
+fn abandoned_execution(run: &super::files::RunFile, runner: &str) -> bool {
+    // Read the runner before the files it can still publish. A unit covers
+    // the command's separate process group. With setsid or attached, only
+    // an empty claim proves no command was spawned: execution_mark leaves
+    // it empty before spawn or after a failed spawn.
     matches!(super::files::runner_reading(run), Reading::Gone)
-        && super::files::fields(&run.dir.join("runner")).is_ok()
+        && (runner == "systemd"
+            || matches!(runner, "setsid" | "attached")
+                && fs::read_to_string(run.dir.join("execution"))
+                    .is_ok_and(|claim| claim.is_empty()))
         && ["command", "pid"].into_iter().all(|name| {
             fs::symlink_metadata(run.dir.join(name))
                 .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
@@ -2052,9 +2059,12 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                     );
                 return Ok((asked || held).then_some("attached"));
             }
-            let runner = super::files::fields(&run_dir.join("runner"))
-                .ok()
-                .and_then(|r| r.get("runner").cloned());
+            let runner_record = run_dir.join("runner");
+            let runner = super::files::fields(&runner_record).ok();
+            let kind = runner
+                .as_ref()
+                .and_then(|r| r.get("runner"))
+                .map(String::as_str);
             if super::files::unstarted(&run)? {
                 // A start whose child never ran and whose launcher wrote no
                 // runner record names no process and no unit: there is
@@ -2065,7 +2075,7 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                 {
                     return Ok(None);
                 }
-                match runner.as_deref() {
+                match kind {
                     Some("systemd") => {}
                     Some("setsid" | "attached") => return Ok(None),
                     _ => {
@@ -2077,8 +2087,26 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                 }
             } else {
                 let command = read_command(run_dir)?;
-                if execution_unanswered(&command) && abandoned_execution(&run) {
+                if execution_unanswered(&command)
+                    && let Some(kind) = kind
+                    && abandoned_execution(&run, kind)
+                {
                     mark(!stop_recorded(run_dir))?;
+                    // The launcher's ended status keeps the unit's absence
+                    // readable when a replacement cannot reach its manager.
+                    if kind == "systemd" && runner.is_some_and(|r| !r.contains_key("status")) {
+                        let record = fs::read_to_string(&runner_record)
+                            .map_err(|e| super::files::unreadable("runner", e))?;
+                        atomic(
+                            run_dir,
+                            "runner",
+                            &format!(
+                                "{}\nstatus={}\n",
+                                record.trim_end_matches('\n'),
+                                crate::ops::RunCause::UnitEnded.word()
+                            ),
+                        )?;
+                    }
                     return Ok(None);
                 }
                 if command.is_some_and(|reading| !matches!(reading, Reading::Gone))
@@ -2245,6 +2273,32 @@ mod tests {
         reason = "the rows write private validation records and read the live test process identity"
     )]
     fn stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone() {
+        const FIXTURE: &str = "KENDEX_TEST_UNANSWERED_EXECUTION";
+        if let Some(worktree) = std::env::var_os(FIXTURE).map(PathBuf::from) {
+            let run = worktree.join("tmp/dev-validate-claim");
+            if !agent_runtime::confine::confined() {
+                assert_eq!(stop_files(&run, false).unwrap(), None);
+            } else if std::env::var_os("KENDEX_TEST_STOP_PENDING").is_some() {
+                let error = stop_files(&run, true).unwrap_err();
+                assert!(matches!(
+                    error,
+                    Error::ValidateUnreadable {
+                        read: "stop-unreadable",
+                        ..
+                    }
+                ));
+                assert!(stop_recorded(&run));
+                assert_eq!(files::live(&worktree).unwrap(), Some((run, 0)));
+            } else {
+                assert_eq!(files::live(&worktree).unwrap(), None);
+                assert_eq!(
+                    files::RunFile::read(&run).unwrap().verdict().unwrap(),
+                    "no-verdict"
+                );
+            }
+            return;
+        }
+
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let pid = std::process::id();
@@ -2252,23 +2306,29 @@ mod tests {
             panic!("the test process must have a readable identity");
         };
         let live_runner = format!("runner=attached\npid={pid}\nstart={}\n", identity.start);
-        for (case, runner, closed) in [
-            ("gone", "runner=setsid\nstatus=exited-203\n", false),
-            ("live", live_runner.as_str(), false),
-            ("closed", "runner=setsid\nstatus=exited-203\n", true),
+        let gone_runner = "runner=setsid\nstatus=exited-203\n";
+        for (case, runner, claim) in [
+            ("gone", gone_runner, ""),
+            ("live", live_runner.as_str(), ""),
+            ("closed", gone_runner, ""),
+            (
+                "separate group may hold command",
+                gone_runner,
+                "attempted\n",
+            ),
         ] {
             let worktree = root.join(case);
             let run = worktree.join("tmp/dev-validate-claim");
             fs::create_dir_all(&run).unwrap();
             fs::write(run.join("start"), "start=1\n").unwrap();
             fs::write(run.join("runner"), runner).unwrap();
-            fs::write(run.join("execution"), "attempted\n").unwrap();
+            fs::write(run.join("execution"), claim).unwrap();
 
             assert!(
                 execution_unanswered(&command_reading(&run).unwrap()),
                 "{case}"
             );
-            if closed {
+            if case == "closed" {
                 let settings = crate::settings::load(
                     &agent_runtime::settings::Roots {
                         project: worktree.clone(),
@@ -2304,7 +2364,7 @@ mod tests {
                 );
                 assert_eq!(result.unwrap(), WorktreeStop::default());
                 assert_eq!(fs::read_to_string(&path).unwrap(), record);
-            } else if case == "live" {
+            } else if case == "live" || !claim.is_empty() {
                 let error = stop_files(&run, false).unwrap_err();
                 assert!(
                     matches!(error, Error::ValidateUnreadable { read: "stop-unreadable", ref cause }
@@ -2324,6 +2384,43 @@ mod tests {
                 "no-verdict"
             );
             assert_eq!(files::live(&worktree).unwrap(), None);
+        }
+
+        use std::os::unix::fs::PermissionsExt;
+        let worktree = root.join("systemd");
+        let run = worktree.join("tmp/dev-validate-claim");
+        fs::create_dir_all(&run).unwrap();
+        fs::write(run.join("start"), "start=1\n").unwrap();
+        fs::write(
+            run.join("runner"),
+            "runner=systemd\nunit=orch-ken-5938\nline=runner=systemd unit=orch-ken-5938\n",
+        )
+        .unwrap();
+        fs::write(run.join("execution"), "attempted\n").unwrap();
+        let systemctl = root.join("systemctl");
+        fs::write(&systemctl, "#!/bin/sh\n[ \"$*\" = '--user show -p LoadState,ActiveState --value -- orch-ken-5938.service' ] || exit 2\nprintf 'not-found\\ninactive\\n'\n").unwrap();
+        fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = std::env::join_paths(std::iter::once(root).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap();
+        for (confined, pending) in [("1", true), ("0", false), ("1", false)] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args(["--exact", "validate::run::tests::stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone"])
+                .env(FIXTURE, &worktree)
+                .env("PATH", &path)
+                .env(agent_runtime::confine::CONFINED_VAR, confined)
+                .env_remove("KENDEX_TEST_STOP_PENDING");
+            if pending {
+                child.env("KENDEX_TEST_STOP_PENDING", "1");
+            }
+            let result = child.output().unwrap();
+            assert!(
+                result.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
         }
     }
 
