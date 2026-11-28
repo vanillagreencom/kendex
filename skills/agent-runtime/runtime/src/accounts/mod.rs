@@ -1189,9 +1189,9 @@ pub(crate) const WINDOWS: [Window; 3] = [
 pub(crate) const MODEL: &str = "model";
 
 /// The 5-hour window, which can stop a session hours before any plan
-/// window. A launch and a controller's question about its own account read
-/// it: the listing rates no reading on it, so a roster line and a running
-/// lane's own question read the plan windows alone. The usage cache also
+/// window. A launch projects it. A controller's own question and a supplied
+/// Claude row in `accounts judge` read its current figure. The roster and
+/// a running lane's own pick read the plan windows. The usage cache also
 /// asks again a figure past its reset ([`cache::consumed_reset`]).
 pub(crate) const SESSION: Window = Window {
     bucket: "session",
@@ -2018,17 +2018,15 @@ fn judge(
             }) as u32
         }
     };
-    // The 5-hour window, where the reading carries one beside a plan
-    // window, can stop a start, and stops a controller's session before its
-    // plan windows do: a launch projects it, and a controller's question
-    // about its own account reads it beside the plan windows, so the mark
-    // moves the controller before that window walls it.
+    let launch = req.launch();
+    let bind_session = own_question(req)
+        || (!launch && row.harness == Harness::Claude && row.measured_through == batch::SUPPLIED);
     let plan = lane_binding(row, req.model.as_deref(), req.binding_floor);
-    let session = (req.launch() || own_question(req))
-        .then(|| session_window(row))
-        .flatten()
-        .filter(|_| plan.is_some());
-    let binding = match (own_question(req), &session) {
+    let session = plan
+        .as_ref()
+        .filter(|_| launch || bind_session)
+        .and_then(|_| session_window(row));
+    let binding = match (bind_session, &session) {
         (true, Some(session)) => plan.and_then(|b| max_binding(vec![b, session.clone()])),
         (true, None) | (false, _) => plan,
     };
@@ -2051,7 +2049,7 @@ fn judge(
     let spenders = Spenders {
         claims,
         sampled,
-        candidate: match (req.launch(), req.for_overseer) {
+        candidate: match (launch, req.for_overseer) {
             (false, _) => Candidate::None,
             (true, false) => Candidate::Lane,
             (true, true) => Candidate::Controller,
@@ -2087,8 +2085,7 @@ fn judge(
     // serves a backed-off reading's figures only while that reading is
     // fresh (orch's lane-host schema, Accounts rows), so it is judged on its
     // figures alone.
-    let stale = req
-        .launch()
+    let stale = launch
         .then_some(row.usage_age_s)
         .flatten()
         .filter(|_| binding.is_some())
@@ -2102,12 +2099,12 @@ fn judge(
         });
     // A spent 5-hour window admits no start until its reset, whatever the
     // other figures hold.
-    let spent = req.launch().then(|| row.session_spent_until(now)).flatten();
+    let spent = launch.then(|| row.session_spent_until(now)).flatten();
     let projection = match &spent {
         Some(reset) => binding.as_ref().map(|_| Projection::spent(reset)),
         None => projection,
     };
-    let judged_wall = if req.launch() {
+    let judged_wall = if launch {
         projection.as_ref().map(|p| 100.0 - p.headroom)
     } else {
         wall

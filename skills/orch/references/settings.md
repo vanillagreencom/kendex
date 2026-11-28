@@ -228,7 +228,7 @@ The account judge, `orch-runtime lane pick`, reads these through [agent-runtime 
 | `AGENT_RUNTIME_ACCOUNT_ALIASES` | `<discovered name>=<alias>` pairs: the names the roster and the judge use. |
 | `AGENT_RUNTIME_ACCOUNT_EXCLUDE` | Comma-separated account names, never paths. |
 | `AGENT_RUNTIME_ACCOUNT_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs. |
-| `AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which a pick refuses an account, read on the window that binds the lane and, for a launch or a controller's question about its own account, on the 5-hour window where the reading carries one. |
+| `AGENT_RUNTIME_ACCOUNT_MAX_PCT` | The usage share at or above which the judge refuses an account. A launch, a controller's own-account reading, and `accounts judge` on a supplied Claude row include the 5-hour window where the reading carries one beside a plan window. |
 | `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR` | A live session's hourly spend, in points of five hours' room, where its account measured no rate. `0` turns the charge off. |
 | `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` | The headroom a controller hands off at, on its own account. |
 | `AGENT_RUNTIME_CODEX_CREDIT_FLOOR` | The Codex credit balance above which a walled window still leaves the account pickable. |

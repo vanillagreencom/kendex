@@ -1,10 +1,9 @@
 //! Measurements someone else took, in the two forms a provider's `accounts`
 //! answer takes. The first is one tab-separated `key=value` line per
 //! account. Its one parser reads a provider's answer for orch's listing and
-//! a supplied batch for `accounts judge`; each line's row is finished as the
-//! listing finishes its own, and a batch's rows are judged as a named pick
-//! judges one account. The second, the `accounts --json --headroom`
-//! document, is read for its `meters.limit_resets` alone
+//! a supplied batch for `accounts judge`. The listing finishes each row
+//! before the shared judge reads it. The `accounts --json --headroom`
+//! document is the second form, read for its `meters.limit_resets` alone
 //! ([`super::Roster::carry_limit_resets`]).
 //!
 //! A Codex row carries the facts of its credit as OpenAI's answer states
@@ -23,6 +22,8 @@ use super::{AccountRow, Env, PickRequest, cache, judge_one};
 use crate::clock;
 use crate::error::{Error, Result};
 use crate::harness::Harness;
+
+pub(super) const SUPPLIED: &str = "supplied";
 
 /// The Pi API grant's facts, in dollars: all four or none.
 const PI_GRANT: [&str; 4] = [
@@ -529,12 +530,12 @@ fn read_batch(path: &Path) -> Result<String> {
 
 /// `accounts judge`: each line of the batch at `path` read by the one
 /// parser, finished as the listing finishes a row (`measured_through`
-/// `supplied`), and judged as a named pick judges an account now, no
-/// candidate charged: the seats are the batch's own `seat=1` rows and this
-/// machine's seat records, and the lanes are charged as every room
-/// reading here counts them. One entry per line, in order; a line nobody
-/// can read is its entry's `unreadable` verdict with the field, never left
-/// out.
+/// `supplied`), and judged on its current usage. The judge includes a
+/// Claude row's 5-hour figure beside its plan windows. The seats are the
+/// batch's own `seat=1` rows and this machine's seat records. The lanes
+/// are charged as every room reading here counts them, with no candidate
+/// charged. One entry per line, in order; a line nobody can read is its
+/// entry's `unreadable` verdict with the field, never left out.
 pub fn judge(
     settings: &Env,
     project: &Path,
@@ -547,7 +548,7 @@ pub fn judge(
     settings.account_state.get()?;
     let text = read_batch(path)?;
     let ctx = Ctx::new(settings, &accounts, now).expect("the account state was read above");
-    let read = rows(&ctx, &text, "plan", "supplied");
+    let read = rows(&ctx, &text, "plan", SUPPLIED);
     let ground = Beside::read(settings, project, record)?;
     let parsed: Vec<(usize, std::result::Result<AccountRow, Unreadable>)> = read
         .into_iter()
@@ -735,6 +736,47 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Fleet samples each Claude account with the plain batch question.
+    #[test]
+    fn a_plain_batch_judges_the_claude_five_hour_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().canonicalize().unwrap();
+        let path = project.join("accounts.tsv");
+        std::fs::write(
+            &path,
+            "account=/h/.current\tharness=claude\tweekly-pct=20\tsession-5h-pct=95\n\
+             account=/h/.legacy\tharness=claude\tweekly-pct=20\tmodel-pct=95\n",
+        )
+        .unwrap();
+        let env = Env {
+            accounts: &Judged::of("accounts", Ok(super::super::tests::settings())),
+            account_state: &Judged::of("state", Ok(project.clone())),
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
+            account_tokens: &Judged::of("tokens", Ok(Vec::new())),
+        };
+        let question = Question {
+            max_pct: Some(90),
+            min_headroom_pct: None,
+            for_controller: false,
+        };
+        let reply = judge(&env, &project, None, &path, question, NOW).unwrap();
+        let answers: Vec<_> = reply["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (row["account"].as_str(), row["verdict"].as_str()))
+            .collect();
+        assert_eq!(
+            answers,
+            [
+                (Some("/h/.current"), Some("walled")),
+                (Some("/h/.legacy"), Some("walled")),
+            ],
+        );
     }
 
     /// One account as this machine reads it: Claude's weekly window and its
