@@ -1491,6 +1491,123 @@ PATH="$stub_bin:$PATH" assert_class "a checkout whose default branch is not main
   --repo "$trunk" --event pull_request --base "$trunk_base" --head HEAD
 
 
+# The v1 shared workflows read these settings from the committed base. This
+# Vsys allowlist is used by both its release and consumer refresh callers.
+vsys_allow='SECOND_OPINION_* ORCH_LANE_* ORCH_REPORT_* AGENT_RUNTIME_TMUX_* AGENT_RUNTIME_ACCOUNT_* AGENT_RUNTIME_CODEX_* ORCH_OWNER_* LINEAR_* REVIEWER_SLOT_BUDGET'
+legacy_repo="$(new_repo change-scope-legacy-settings)"
+mkdir -p "$legacy_repo/.kendex" "$legacy_repo/.agents/skills/slack"
+printf '%s\n' '[env]' 'SECOND_OPINION_MODEL = "old"' 'SLACK_POLL_SECONDS = "15"' \
+  'ORCH_SIZE_TEST_PATHS = "none/*"' >"$legacy_repo/kendex.settings.toml"
+printf '%s\n' '[env]' 'SECOND_OPINION_EFFORT = "low"' >"$legacy_repo/.kendex/settings.toml"
+printf '%s\n' '# Slack' >"$legacy_repo/.agents/skills/slack/SKILL.md"
+printf '%s\n' '[env]' '# ci: unread' 'SLACK_POLL_SECONDS = "15"' \
+  >"$legacy_repo/.agents/skills/slack/kendex.settings.toml.example"
+printf '%s\n' '[".agents/skills/slack/SKILL.md",".agents/skills/slack/kendex.settings.toml.example"]' \
+  >"$legacy_repo/.kendex-generated.json"
+commit_paths "$legacy_repo" 'settings before any override' seed.txt
+legacy_bare="$(git -C "$legacy_repo" rev-parse HEAD)"
+
+# label | base override | change | class | allowlist warnings | ceiling warnings
+legacy_rows=0
+while IFS='|' read -r label override change expected allow_warnings max_warnings; do
+  legacy_rows=$((legacy_rows + 1))
+  git -C "$legacy_repo" checkout -q -B legacy-case "$legacy_bare"
+  legacy_settings="$legacy_repo/kendex.settings.toml"
+  case "$override" in
+    allow | both)
+      printf 'HARNESS_CI_TRIVIAL_SETTINGS = "%s"\n' "$vsys_allow" >>"$legacy_settings" ;;
+    classifier)
+      printf 'HARNESS_CI_TRIVIAL_SETTINGS = "%s ORCH_SIZE_TEST_PATHS"\n' "$vsys_allow" >>"$legacy_settings" ;;
+    remove)
+      printf 'HARNESS_CI_TRIVIAL_SETTINGS = "%s %s"\n' "$vsys_allow" \
+        '!@(SLACK_POLL_SECONDS|SECOND_OPINION_MODEL)' >>"$legacy_settings" ;;
+  esac
+  case "$override" in
+    both | max)
+      printf 'HARNESS_CI_TRIVIAL_MAX_LINES = "30"\n' >>"$legacy_settings" ;;
+    lower)
+      printf 'HARNESS_CI_TRIVIAL_MAX_LINES = "1"\n' >>"$legacy_settings" ;;
+  esac
+  if [ "$override" != absent ]; then
+    git -C "$legacy_repo" commit -q -am 'trusted settings override'
+  fi
+  legacy_base="$(git -C "$legacy_repo" rev-parse HEAD)"
+  case "$change" in
+    model)
+      printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml" ;;
+    delete-model)
+      printf '%s\n' '[env]' >"$legacy_repo/.kendex/settings.toml" ;;
+    both-files)
+      printf 'SECOND_OPINION_NEW = "one"\n' >>"$legacy_settings"
+      printf 'REVIEWER_SLOT_BUDGET = "2"\n' >>"$legacy_repo/.kendex/settings.toml" ;;
+    large-settings)
+      for n in {1..31}; do
+        printf 'SECOND_OPINION_ROUTE_%s = "local"\n' "$n" >>"$legacy_settings"
+      done ;;
+    declared)
+      printf 'SLACK_POLL_SECONDS = "30"\n' >>"$legacy_repo/.kendex/settings.toml" ;;
+    classifier-key)
+      printf 'ORCH_SIZE_TEST_PATHS = "checks/*"\n' >>"$legacy_repo/.kendex/settings.toml" ;;
+    head-allow)
+      printf 'HARNESS_CI_TRIVIAL_SETTINGS = "OTHER_*"\nOTHER_KEY = "value"\n' \
+        >>"$legacy_repo/.kendex/settings.toml" ;;
+    head-max)
+      printf 'HARNESS_CI_TRIVIAL_MAX_LINES = "90"\n' >>"$legacy_repo/.kendex/settings.toml"
+      write_lines "$legacy_repo" README.md 31 ;;
+    small-doc | large-doc)
+      lines=30
+      [ "$change" != large-doc ] || lines=31
+      write_lines "$legacy_repo" README.md "$lines" ;;
+    mixed)
+      printf 'SECOND_OPINION_MODE = "local"\n' >>"$legacy_settings"
+      write_lines "$legacy_repo" README.md 30 ;;
+    registry)
+      write_lines "$legacy_repo" .claude/settings.json 2 ;;
+    sources)
+      printf '[sources.candidate]\nurl = "https://example.invalid/cat.git"\n' \
+        >"$legacy_repo/kendex.toml" ;;
+    lock)
+      write_lines "$legacy_repo" .kendex-lock.json 2 ;;
+    out-of-table)
+      printf '[tool]\nSECOND_OPINION_NEW = "v"\n' >>"$legacy_settings" ;;
+  esac
+  git -C "$legacy_repo" add -A
+  git -C "$legacy_repo" commit -q -m "$label"
+  legacy_out="$(PATH="$stub_bin:$PATH" \
+    HARNESS_CI_TRIVIAL_SETTINGS='OTHER_*' HARNESS_CI_TRIVIAL_MAX_LINES=200 \
+    "$CHANGE_SCOPE" --repo "$legacy_repo" --event pull_request \
+      --base "$legacy_base" --head HEAD 2>"$SANDBOX/legacy-stderr")"
+  assert_eq "$label class" "change_class=$expected" "$legacy_out"
+  assert_eq "$label allowlist warning count" "$allow_warnings" \
+    "$(grep -c '^change-scope-warning=deprecated-setting setting=HARNESS_CI_TRIVIAL_SETTINGS ' \
+      "$SANDBOX/legacy-stderr" || true)"
+  assert_eq "$label ceiling warning count" "$max_warnings" \
+    "$(grep -c '^change-scope-warning=deprecated-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES ' \
+      "$SANDBOX/legacy-stderr" || true)"
+done <<'LEGACY_SETTINGS'
+a Vsys key addition uses the trusted allowlist|allow|model|trivial|1|0
+a Vsys key deletion uses the trusted allowlist|allow|delete-model|trivial|1|0
+multiple settings files warn once|allow|both-files|trivial|1|0
+an explicit ceiling exempts admitted settings alone|both|large-settings|trivial|1|0
+both overrides apply to a mixed range|both|mixed|standard|1|1
+a declared key remains admitted with a positive allowlist|allow|declared|trivial|1|0
+a negative glob removes a declared key|remove|declared|standard|1|0
+a negative glob overrides a positive match|remove|model|standard|1|0
+a base classification key stays outside the allowlist|classifier|classifier-key|standard|1|0
+an allowlisted name outside the env table stays excluded|allow|out-of-table|standard|1|0
+a head cannot widen the allowlist or use the environment|allow|head-allow|standard|1|0
+a head-only allowlist leaves the current default|absent|head-allow|trivial|0|0
+a head cannot raise the committed ceiling|lower|head-max|small|0|1
+an explicit ceiling includes its boundary|max|small-doc|trivial|0|1
+an explicit ceiling excludes one more line|max|large-doc|small|0|1
+the default has no ceiling|absent|large-doc|trivial|0|0
+the default keeps settings trivial without admission|absent|out-of-table|trivial|0|0
+a harness registry remains standard|both|registry|standard|0|0
+a catalog selection change remains standard|both|sources|standard|0|0
+a lock change remains standard|both|lock|standard|0|0
+LEGACY_SETTINGS
+require_rows change-scope-legacy-settings "$legacy_rows"
+
 # The judged tree's configuration decides nothing. A render root its working
 # tree names does not move the measurement, and the private env file the
 # settings name never runs, whether the base revision or the working tree
