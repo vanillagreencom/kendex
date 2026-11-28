@@ -700,7 +700,7 @@ fn supersede_launch(
         // launch intent ends refused with its handles untouched.
         let operation = lane_operation::open(run, &launch.intent)?;
         let mut outcome = operation.refuse(
-            "superseded-by-close",
+            ops::SUPERSEDED_LAUNCH,
             json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud, "answer_by": answer_by, "preparing": preparing}),
         );
         launch::keep_launcher_readings(&mut outcome, launch.intent.observation.as_ref());
@@ -1033,6 +1033,15 @@ struct Reconciled {
 
 fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     let intent = read_intent(run.engine.path, intent_id)?;
+    if intent.extra.contains_key(ops::lane::NATIVE_SURFACE) {
+        return deferred(run, intent, json!({ "note": "native-observation-pending" })).map(
+            |applied| Reconciled {
+                applied,
+                stale: Vec::new(),
+                deferred: true,
+            },
+        );
+    }
     if intent.op.on_controller() {
         return with_controller(run, |ctl| {
             agent_runtime::controller::run::reconcile_intent(ctl, intent_id)

@@ -91,7 +91,7 @@ pub use verify_review::{ReviewVerified, VerifyReview};
 
 use agent_runtime::intent::Reconciled;
 use agent_runtime::record::{self, Document, Locking};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lane::IntentTarget;
 use serde::{Deserialize, Serialize};
@@ -504,13 +504,21 @@ fn apply_interleaved(
             transition()
         }
     };
-    if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
+    if matches!(
+        request,
+        Request::LaunchLane(_)
+            | Request::AdmitPaths(_)
+            | Request::CloseOwnedResources(_)
+            | Request::ParkLane(_)
+            | Request::RecordOutcome(_)
+    ) && kind == Kind::Fleet
+    {
         // A lane admission, and the path admission that judges against the
         // same holders, run under the fleet launch lock (`flock` on
         // `<fleet>.launch.lock`) from before the snapshot read through the
         // committed row, so two contenders on one path are judged one after
         // the other; the state file's own lock is taken inside, by the write.
-        return record::locked(&occupancy::launch_lock_base(path), locking, || {
+        return with_file_lock(path, locking, || {
             let applied = commit();
             if let (Request::LaunchLane(r), Err(refusal)) = (request, &applied)
                 && lane::held_for_capacity(refusal)
@@ -531,6 +539,38 @@ fn apply_interleaved(
         });
     }
     commit()
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the fleet admission lock around claim-changing record writes"
+)]
+pub(crate) fn with_file_lock<T>(
+    path: &Path,
+    locking: Locking,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    record::locked(&occupancy::launch_lock_base(path), locking, operation)
+}
+
+pub(crate) const SUPERSEDED_LAUNCH: &str = "superseded-by-close";
+
+/// The kernel and repository readers shared by admission and effects.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the close and native record store entries need the same kernel reads as launch"
+)]
+pub(crate) fn admission_host(settings: &Settings) -> Host<'_> {
+    Host::kernel()
+        .caps(settings)
+        .admitting(Clis {
+            tracker: settings.reads.tracker_cli.clone(),
+            gh: PathBuf::from("gh"),
+            scope_paths: settings.scope_paths_cli.clone(),
+            resolver: crate::repo::resolver(&settings.roots.project),
+            scripts: crate::watch::overseer::scripts_dir(&settings.roots.project),
+        })
+        .judging(settings)
 }
 
 /// What the settings admit before any transition runs: the programs the
@@ -774,9 +814,21 @@ pub fn fleet_transition(
         Request::CloseOwnedResources(r) => Ok(Report::CloseOwnedResources(Box::new(
             lane::close_owned_resources(path, doc, r, env, host()?)?,
         ))),
-        Request::RecordOutcome(r) => Ok(Report::RecordOutcome(Box::new(OutcomeRecorded::of(
-            journal::record_outcome(path, doc, r, env, outcome_arm)?,
-        )?))),
+        Request::RecordOutcome(r) => {
+            if journal::intents(path, doc)?
+                .iter()
+                .any(|i| i.id == r.intent_id && i.extra.contains_key(lane::NATIVE_SURFACE))
+            {
+                return Err(agent_runtime::Error::refused(
+                    "surface-intent",
+                    &[("intent", &r.intent_id)],
+                )
+                .into());
+            }
+            Ok(Report::RecordOutcome(Box::new(OutcomeRecorded::of(
+                record_fleet_outcome(path, doc, r, env)?,
+            )?)))
+        }
         Request::RecordPhase(r) => Ok(Report::RecordPhase(Box::new(lane::record_phase(
             path, doc, r,
         )?))),
@@ -823,6 +875,19 @@ pub fn fleet_transition(
         | Request::RecordQaDecision(_)
         | Request::StopModelPredecessor(_) => Err(kind_error(request, path, Kind::Fleet)),
     }
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the managed outcome and native observation use the same fleet journal arm"
+)]
+fn record_fleet_outcome(
+    path: &Path,
+    doc: &mut Document,
+    request: &RecordOutcome,
+    env: &Env,
+) -> Result<OutcomeWritten> {
+    journal::record_outcome(path, doc, request, env, outcome_arm)
 }
 
 fn lanes(path: &Path, doc: &Document) -> Result<Vec<Lane>> {
