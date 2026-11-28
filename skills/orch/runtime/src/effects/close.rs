@@ -29,8 +29,7 @@ use crate::state::{self, CloseKind, FleetState, Lane, LaneStatus};
 use crate::verify::Answer;
 use crate::verify::wire::{Nullable, ParkPull, ParkPullAnswer};
 use crate::watch::hosted::{
-    self, Answer as HostAnswer, Asked, Capabilities, HostStopped, PaneKind, Status, StopKind,
-    WorktreeHead,
+    self, Answer as HostAnswer, Asked, Capabilities, HostStopped, StopKind, WorktreeHead,
 };
 use crate::watch::lanes::{self, LaneState};
 use crate::watch::tracker::{self, TerminalState};
@@ -355,7 +354,6 @@ pub fn close_lane(
         clock,
         scripts: &scripts,
         host: &host,
-        caps,
         who,
         lane,
         socket,
@@ -387,7 +385,6 @@ struct Close<'a> {
     scripts: &'a Path,
     host: &'a str,
     /// The host kind's capability line, read before the close.
-    caps: Capabilities,
     who: Identity,
     lane: Lane,
     /// The controller record's tmux socket, where the lane's server is
@@ -616,7 +613,10 @@ impl Close<'_> {
             self.refuse_ask_unless_gone(&mut notes)?;
         }
         if self.keep() {
-            return Ok(self.word(Word::Stopped, Some(LaneStatus::Stopped)));
+            if self.lane.file_launch.is_none() && self.lane.file_hold.is_some() {
+                return Ok(self.word(Word::Stopped, Some(LaneStatus::Stopped)));
+            }
+            return self.close_on(ground);
         }
         let mut closed = self.close_on(ground)?;
         closed.notes.splice(0..0, notes);
@@ -693,9 +693,6 @@ impl Close<'_> {
             if !matches!(judged, LaneState::Exited) || wait.hold {
                 self.refuse_ask()?;
             }
-            if !matches!(judged, LaneState::Exited) {
-                self.host_stop(&mut notes)?;
-            }
             let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
             if closed.word != Word::Stopped {
                 return Ok(closed);
@@ -755,12 +752,7 @@ impl Close<'_> {
         // provider nothing more; an open item's keeps its ground, the
         // provider's close answering its sandbox absent and the item's files
         // staying.
-        let ground = if !host_absent {
-            if acts {
-                self.host_stop(&mut notes)?;
-            }
-            ground
-        } else if matches!(ground, Ground::Terminal(_)) {
+        let ground = if host_absent && matches!(ground, Ground::Terminal(_)) {
             Ground::Ended(state::HOST_ABSENT)
         } else {
             ground
@@ -1129,144 +1121,6 @@ impl Close<'_> {
         }
     }
 
-    /// The hosted harness ended: a Copilot lane on a provider that captures
-    /// its pane first gets `C-c` and `/exit` through the provider's input,
-    /// so it writes its session totals, and needs no stop where that ends
-    /// it; otherwise the provider's stop, then its pane read exited within
-    /// the close bound. A lane that exits in its window is stopped by the
-    /// close's own effect, after its exit (`stop.rs` `finish`).
-    fn host_stop(&self, notes: &mut Vec<String>) -> Result<()> {
-        if self.lane.exits_in_window() {
-            return Ok(());
-        }
-        if self.who.harness.as_deref() == Some("copilot")
-            && self.caps.pane == PaneKind::Verb
-            && self.copilot_exit()?
-        {
-            return Ok(());
-        }
-        match self.provider_stop(notes)? {
-            Some(processes) => self.await_exit(Some(processes)),
-            None => Ok(()),
-        }
-    }
-
-    /// Copilot's own exit through the provider's input, where the provider
-    /// reads it running: `C-c`, then `/exit` as the input file's text, then
-    /// the exit wait. `false` is a lane that did not exit within the bound,
-    /// or whose input the provider refused, left to the provider's stop.
-    fn copilot_exit(&self) -> Result<bool> {
-        match hosted::status(self.scripts, self.host, self.item(), "copilot") {
-            Ok(hosted::HostStatus::Running) => {}
-            Ok(hosted::HostStatus::Exited) => return Ok(true),
-            Err(cause) => {
-                return Err(refused(
-                    "pane-read-failed",
-                    &[("item", self.item()), ("cause", &cause)],
-                ));
-            }
-        }
-        if hosted::send_key(self.scripts, self.host, self.item(), "C-c").is_err() {
-            return Ok(false);
-        }
-        if hosted::send_text(
-            self.scripts,
-            self.host,
-            self.item(),
-            &self.settings.state_dir,
-            "/exit",
-        )
-        .is_err()
-        {
-            return Ok(false);
-        }
-        Ok(self.await_exit(None).is_ok())
-    }
-
-    /// The lane's pane read exited within the close bound
-    /// (`ORCH_LANE_CLOSE_SECS`), counted from now, after the stop returned:
-    /// its provider's status and capture where the kind captures its pane,
-    /// the recorded local pane otherwise; a pane gone reads exited. A lane
-    /// with neither has nothing to wait on. An unjudged reading waits on,
-    /// a hosted Pi pane between turns among them; a read that fails, the
-    /// provider's status or its capture, refuses `pane-read-failed`.
-    fn await_exit(&self, processes: Option<u32>) -> Result<()> {
-        let pane = self.lane.launch.as_ref().and_then(|l| l.pane.clone());
-        if pane.is_none() && self.caps.pane != PaneKind::Verb {
-            return Ok(());
-        }
-        let socket = self.socket.as_deref();
-        let read = || match lanes::judge(self.settings, &self.lane, socket, None) {
-            LaneState::Exited | LaneState::Gone => Some(Ok(())),
-            LaneState::Unreadable { cause } => Some(Err(refused(
-                "pane-read-failed",
-                &[("item", self.item()), ("cause", &cause)],
-            ))),
-            LaneState::Unjudged { cause }
-                if self.caps.status == Status::Verb
-                    && cause.starts_with("harness-probe-failed") =>
-            {
-                Some(Err(refused(
-                    "pane-read-failed",
-                    &[("item", self.item()), ("cause", &cause)],
-                )))
-            }
-            LaneState::Unjudged { .. }
-            | LaneState::Walled { .. }
-            | LaneState::Asking
-            | LaneState::RateLimitSwitch
-            | LaneState::Working
-            | LaneState::Idle { .. } => None,
-        };
-        if let Some(answer) = agent_runtime::effects::poll_until(
-            self.clock,
-            self.settings.close_grace.get()?,
-            EXIT_POLL,
-            read,
-        ) {
-            return answer;
-        }
-        let harness = self.who.harness.as_deref().unwrap_or("unknown");
-        let count = processes.map(|p| p.to_string()).unwrap_or_default();
-        let pane = pane.as_deref().unwrap_or("");
-        Err(refused(
-            "exit-timeout",
-            &[
-                ("item", self.item()),
-                ("harness", harness),
-                ("pane", pane),
-                ("processes", &count),
-            ],
-        ))
-    }
-
-    /// The provider's stop: the count of processes it signalled, or `None`
-    /// where [`read_stop`] skips it, or its refusal.
-    fn provider_stop(&self, notes: &mut Vec<String>) -> Result<Option<u32>> {
-        let harness = self.who.harness.as_deref().ok_or_else(|| {
-            refused(
-                "harness-unsupported",
-                &[("item", self.item()), ("harness", "unknown")],
-            )
-        })?;
-        let answer = hosted::stop_answer(self.scripts, self.host, self.item(), harness);
-        match read_stop(answer, self.keep()) {
-            StopRead::Stopped(processes) => Ok(Some(processes)),
-            StopRead::Skipped(cause) => {
-                notes.push(format!(
-                    "stop-skipped item={} harness={harness} cause={cause}",
-                    self.item()
-                ));
-                Ok(None)
-            }
-            StopRead::Refused(key, fields) => {
-                let mut all = vec![("item", self.item()), ("harness", harness)];
-                all.extend(fields.iter().map(|(name, value)| (*name, value.as_str())));
-                Err(refused(key, &all))
-            }
-        }
-    }
-
     fn word(&self, word: Word, status: Option<LaneStatus>) -> Closed {
         Closed {
             item: self.item().to_owned(),
@@ -1319,8 +1173,13 @@ impl Close<'_> {
             cycle,
             disposed,
         });
-        let applied =
-            super::lane_operation::apply_request(self.path, &request, self.env, self.locking)?;
+        let applied = super::lane_operation::apply_request(
+            self.path,
+            &request,
+            self.env,
+            self.locking,
+            self.settings,
+        )?;
         let effected = super::run(
             self.path,
             &request,
@@ -1346,6 +1205,47 @@ impl Close<'_> {
                 },
                 (false, _) => Word::Failed,
             };
+        }
+        if let Some(stop) = closed
+            .observation
+            .as_ref()
+            .and_then(|o| o.get("host_stop"))
+            .and_then(Value::as_str)
+        {
+            if stop.starts_with("stop-skipped ") {
+                closed.notes.push(stop.to_owned());
+            }
+            let key = match stop {
+                "stop-failed" => Some("stop-failed"),
+                "exit-timeout" => Some("exit-timeout"),
+                "pane-read-failed" => Some("pane-read-failed"),
+                hosted::BUSY => Some(hosted::BUSY),
+                _ => None,
+            };
+            if let Some(key) = key {
+                let harness = self.who.harness.as_deref().unwrap_or("unknown");
+                let fields = closed
+                    .observation
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flat_map(|o| {
+                        ["cause", "status", "detail", "step", "processes"]
+                            .into_iter()
+                            .filter_map(|name| {
+                                o.get(name).map(|v| {
+                                    (
+                                        name,
+                                        v.as_str().map_or_else(|| v.to_string(), str::to_owned),
+                                    )
+                                })
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let mut all = vec![("item", self.item()), ("harness", harness)];
+                all.extend(fields.iter().map(|(name, value)| (*name, value.as_str())));
+                return Err(refused(key, &all));
+            }
         }
         if let Some(refused) = closed
             .observation
@@ -1621,6 +1521,7 @@ impl Close<'_> {
             &Request::ParkLane(owed),
             self.env,
             self.locking,
+            self.settings,
         )?;
         Ok(())
     }
@@ -1769,6 +1670,7 @@ impl Close<'_> {
             &Request::ParkLane(park.clone()),
             self.env,
             self.locking,
+            self.settings,
         )?;
         let mut closed = self.word(Word::Parked, Some(LaneStatus::Parked));
         closed.notes = notes;

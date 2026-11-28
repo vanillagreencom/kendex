@@ -2542,16 +2542,13 @@ fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
     };
 
     // The pointer verb is the same merge.
-    let file = store.write_file(
-        "wake.json",
-        r#"{"status":"stopped","session_id":"s-1","obligation":null}"#,
-    );
+    let file = store.write_file("wake.json", r#"{"session_id":"s-1","obligation":null}"#);
     let merged = store.ok(&["state", "merge", "--fleet", "--lane", "KEN-1", &file]);
     assert_eq!(merged["pointer"], "/lanes/0");
     let one = lane("KEN-1");
     assert_eq!(
         (&one["status"], &one["session_id"], &one["obligation"]),
-        (&json!("stopped"), &json!("s-1"), &Value::Null)
+        (&json!("running"), &json!("s-1"), &Value::Null)
     );
     assert_eq!(
         one["launched_at"], "2026-10-24T19:00:00Z",
@@ -2575,7 +2572,7 @@ fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
     let key = refused(
         "KEN-1",
         "conflict.json",
-        &format!(r#"{{"status":"running","obligation":{other}}}"#),
+        &format!(r#"{{"obligation":{other}}}"#),
     );
     assert_eq!(key, "obligation-conflict");
     assert_eq!(
@@ -3929,69 +3926,80 @@ fn pr_progress_holds_its_order_words_and_a_rerun_run_names_its_head() {
     }
 }
 
-/// The surface-2 record `oversee.md` creates after an item's first launch.
-const SURFACE_LANE: &str = r#"{"item":"KEN-4500","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-4500","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:00:00Z","status":"running","obligation":null}"#;
-
-/// A surface lane is created whole, once per item, and a tmux lane is the
-/// lane operations' own: neither step creates, merges into or turns a
-/// record into one.
+/// A native preparation holds the checked set before its launcher starts.
 #[test]
-fn a_surface_lane_is_created_whole_and_a_tmux_lane_is_refused() {
+fn native_preparation_and_close_hold_checked_paths_until_observation() {
     let store = Store::new();
     store.init_fleet();
-    let lane: Value = serde_json::from_str(SURFACE_LANE).unwrap();
-    let create =
-        |lane: &Value| json!({"op": "record-surface-lane", "step": "create", "lane": lane});
-    let created = store.fleet_op_ok(&create(&lane));
-    assert_eq!(created["pointer"], "/lanes/0");
-    assert_eq!(store.doc(&store.fleet_path())["lanes"], json!([lane]));
-    let variant = |key: &str, value: Value| {
-        let mut other = lane.clone();
-        other["item"] = json!("KEN-4501");
-        match value {
-            Value::Null if key == "surface" => {
-                other.as_object_mut().unwrap().remove(key);
-            }
-            value => other[key] = value,
-        }
-        other
+    let create = |item: &str| {
+        json!({"op": "record-surface-lane", "step": "create", "lane": {
+            "item": item, "harness": "codex", "mail_root": store.dir.path(),
+            "surface": "gui", "status": "preparing", "touched": ["src/lib.rs"],
+        }})
     };
-    let rows = [
-        (lane.clone(), "lane-standing"),
-        (variant("surface", json!("tmux")), "surface-lane"),
-        (variant("surface", Value::Null), "surface-lane"),
-        (variant("status", json!("lost")), "lane-invalid"),
-        (
-            variant("obligation", json!({"repo": "o/r"})),
-            "obligation-invalid",
-        ),
-    ];
-    for (lane, want) in rows {
-        let (key, _) = store.fleet_op_refused(&create(&lane));
-        assert_eq!(key, want, "{lane}");
-    }
+    let start = store.fleet_op_ok(&create("KEN-4500"));
+    assert_eq!(start["pointer"], "/lanes/0");
+    assert_eq!(start["value"]["status"], "preparing");
+    assert_eq!(start["value"]["touched"], json!(["src/lib.rs"]));
+    let contender = create("KEN-4501");
+    assert_eq!(store.fleet_op_refused(&contender).0, "launch-overlap");
+
+    let merge = |intent: &Value, outcome: &str, evidence: &str| {
+        let file = store.write_file(
+            "native-observation.json",
+            &json!({
+                "intent_id": intent["id"], "outcome": outcome, "evidence": evidence
+            })
+            .to_string(),
+        );
+        store.fleet_op_ok(&json!({
+            "op": "record-surface-lane", "step": "merge", "item": "KEN-4500", "file": file,
+        }))
+    };
+    let launch = &start["intent"];
+    assert_eq!(
+        merge(launch, "unconfirmed", "launcher still opening")["value"]["status"],
+        "preparing"
+    );
+    assert_eq!(store.fleet_op_refused(&contender).0, "launch-overlap");
+    assert_eq!(
+        merge(launch, "confirmed", "native session running")["value"]["status"],
+        "running"
+    );
+
+    let close = json!({"op": "record-surface-lane", "step": "close", "item": "KEN-4500"});
+    let closing = store.fleet_op_ok(&close);
+    assert_eq!(
+        store.fleet_op_ok(&close)["intent"]["id"],
+        closing["intent"]["id"]
+    );
+    assert_eq!(store.fleet_op_refused(&contender).0, "launch-overlap");
+    let widen = json!({"op": "admit-paths", "item": "KEN-4500", "paths": ["src/new.rs"]});
+    assert_eq!(store.fleet_op_refused(&widen).0, "lane-admission-pending");
+    let rewrite = store.write_file("rewrite.json", r#"{"touched":[]}"#);
+    let (key, _) = store.refused(&["state", "merge", "--fleet", "--lane", "KEN-4500", &rewrite]);
+    assert_eq!(key, "field-owned");
+    let closing = &closing["intent"];
+    assert_eq!(
+        merge(closing, "unconfirmed", "native close still pending")["value"]["status"],
+        "running"
+    );
+    assert_eq!(store.fleet_op_refused(&contender).0, "launch-overlap");
+    assert_eq!(
+        merge(closing, "confirmed", "native session absent")["value"]["status"],
+        "done"
+    );
+    assert_eq!(
+        store.fleet_op_ok(&contender)["value"]["status"],
+        "preparing"
+    );
 
     let tmux = json!({"item": "KEN-4502", "surface": "tmux", "status": "running"});
     store.ok(&["state", "append", "--fleet", "/lanes", &tmux.to_string()]);
-    let merge = |item: &str, mapping: &str| {
-        let file = store.write_file("merge.json", mapping);
-        json!({"op": "record-surface-lane", "step": "merge", "item": item, "file": file})
-    };
-    for (item, mapping) in [
-        ("KEN-4502", r#"{"status":"stopped"}"#),
-        ("KEN-4500", r#"{"surface":"tmux"}"#),
-    ] {
-        let (key, _) = store.fleet_op_refused(&merge(item, mapping));
-        assert_eq!(key, "surface-lane", "{item} {mapping}");
-    }
-    store.fleet_op_ok(&merge("KEN-4500", r#"{"status":"stopped"}"#));
-    assert_eq!(
-        store.doc(&store.fleet_path())["lanes"][0]["status"],
-        "stopped"
-    );
+    let close_tmux = json!({"op": "record-surface-lane", "step": "close", "item": "KEN-4502"});
+    assert_eq!(store.fleet_op_refused(&close_tmux).0, "surface-lane");
     store.init(ITEM);
-    let (key, _) = store.op_refused(&create(&lane));
-    assert_eq!(key, "op-kind", "a lane is the fleet record's");
+    assert_eq!(store.op_refused(&create("KEN-4500")).0, "op-kind");
 }
 
 /// The overseer's ledger: the backlog audit stamped with the runtime's

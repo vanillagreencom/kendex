@@ -633,6 +633,34 @@ pub struct Carried {
     pub at: String,
 }
 
+/// The recovery authority admitted for the current attempt. Legacy records
+/// have no value, so admission still reads their execution evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FileHold {
+    Exclusive,
+    Shared,
+    Retained,
+    Released,
+}
+
+/// The paths and exceptions of an admitted attempt in one repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileClaim {
+    pub repo: Option<String>,
+    pub touched: Vec<String>,
+    pub in_scope: Vec<String>,
+    pub hold: FileHold,
+}
+
+/// A launch replacing a lane keeps its original route and any retained claim
+/// until the new writer is confirmed or proven absent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviousFiles {
+    pub binding: Document,
+    pub claim: Option<FileClaim>,
+}
+
 /// One `lanes[]` record as read. The named fields are the ones the lane
 /// operations read or write; `extra` carries the rest for a report. Only
 /// `item` and `status` are required, the two every reader selects on; a
@@ -729,6 +757,13 @@ pub struct Lane {
     /// append-only addition, left out of the overlap judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_scope: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_hold: Option<FileHold>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_repo: Option<String>,
+    /// The launch that owns the provisional set, through any close handoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_launch: Option<String>,
     /// The items the admission joined to this running lane, each delivered
     /// with the lane's branch beside `item`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -739,6 +774,14 @@ pub struct Lane {
 
 // The one reading of a lane's channel the runtime makes.
 impl Lane {
+    /// The lane is launched and closed through its own caller.
+    pub(crate) fn native_surface(&self) -> bool {
+        self.surface
+            .as_deref()
+            .is_some_and(|surface| !matches!(surface, "tmux" | "cloud"))
+            && self.kind.as_deref() != Some(crate::ops::CLOUD_KIND)
+    }
+
     /// The line naming the paths the admission judged the lane to touch,
     /// its `touched`, which every message that opens or widens the lane's
     /// work carries: the lane renders the set into each dev delegation, so
@@ -1115,6 +1158,8 @@ pub struct LaneMembers {
     /// The lane status an outcome read when the lane had moved under its
     /// intent.
     pub observed_status: Option<LaneStatus>,
+    pub previous_files: Option<PreviousFiles>,
+    pub close_files: Option<FileClaim>,
 }
 
 impl LaneMembers {
@@ -1130,6 +1175,8 @@ impl LaneMembers {
             cycle: field(path, row, "cycle")?,
             disposed: field(path, row, "disposed")?,
             observed_status: field(path, row, "observed_status")?,
+            previous_files: field(path, row, "previous_files")?,
+            close_files: field(path, row, "close_files")?,
         })
     }
 
@@ -1144,7 +1191,9 @@ impl LaneMembers {
         put(row, "close", self.close.as_ref())?;
         put(row, "cycle", self.cycle.as_ref())?;
         put(row, "disposed", self.disposed.as_ref())?;
-        put(row, "observed_status", self.observed_status.as_ref())
+        put(row, "observed_status", self.observed_status.as_ref())?;
+        put(row, "previous_files", self.previous_files.as_ref())?;
+        put(row, "close_files", self.close_files.as_ref())
     }
 }
 

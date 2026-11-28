@@ -872,20 +872,22 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
         since: LaneMembers::of(run.engine.path, &intent)?.lane_since,
         keys: outcome.principal_keys().to_vec(),
     };
-    Ok(agent_runtime::effects::apply_outcome_with(
-        &run.engine,
-        outcome,
-        |wire| {
-            wire.principal_keys = Some(keys);
-            if let Some(observation) = wire.observation.as_mut() {
-                for key in ["remaining", "untouched"] {
-                    if let Some(Value::Array(held)) = observation.get_mut(key) {
-                        held.extend(rows.iter().cloned());
+    ops::with_file_lock(run.engine.path, run.engine.locking, || {
+        Ok(agent_runtime::effects::apply_outcome_with(
+            &run.engine,
+            outcome,
+            |wire| {
+                wire.principal_keys = Some(keys);
+                if let Some(observation) = wire.observation.as_mut() {
+                    for key in ["remaining", "untouched"] {
+                        if let Some(Value::Array(held)) = observation.get_mut(key) {
+                            held.extend(rows.iter().cloned());
+                        }
                     }
                 }
-            }
-        },
-    )?)
+            },
+        )?)
+    })
 }
 
 /// One standing lane obligation as a reconcile's `remaining` carries it.
@@ -905,7 +907,7 @@ pub(super) fn persist_close(run: &Run, close: &ops::CloseOwnedResources) -> Resu
         &Request::CloseOwnedResources(close.clone()),
         run.engine.env,
         run.engine.locking,
-        &ops::Host::kernel(),
+        &ops::admission_host(run.settings),
     )
 }
 
@@ -916,9 +918,20 @@ pub(super) fn apply_request(
     request: &Request,
     env: &agent_runtime::journal::Env,
     locking: Locking,
+    settings: &Settings,
 ) -> Result<Applied> {
-    let host = ops::Host::kernel();
+    let host = ops::admission_host(settings);
     ops::apply_on(path, request, env, locking, &host)
+}
+
+/// Model recovery's bookkeeping commits through the transition store.
+pub(super) fn apply_bookkeeping(
+    path: &Path,
+    request: &Request,
+    env: &agent_runtime::journal::Env,
+    locking: Locking,
+) -> Result<Applied> {
+    ops::apply(path, request, env, locking)
 }
 
 /// The accounts judge over this fleet's charges for one request, read with

@@ -2755,6 +2755,9 @@ mod tests {
             read_only: false,
             touched: None,
             in_scope: None,
+            file_hold: None,
+            file_repo: None,
+            file_launch: None,
             carried: Vec::new(),
             extra: Default::default(),
         }

@@ -377,14 +377,16 @@ The members' rules, in the table's order:
 - `checkout_common`: a launch writes it on a new record or a changed `mail_root`; a relaunch over the same `mail_root` keeps it.
 - `checkout_common`: it is absent where admission read no checkout, where the launch reads no settings or grants, and where the folder lies under another `.git`, the lane's root or a folder the lane's grants make writable.
 - `checkout_common`: the close removes a clean, merged worktree only from the main checkout of this folder, else of the overseer's own.
-- `surface`: a record a harness's own launcher runs carries another, which `record-surface-lane` steps `create` and `merge` write.
+- `surface`: a surface-2 lane names its native launcher. Its `record-surface-lane` preparation and close write intents before the action.
 - `allow_all`: whether a Copilot lane's line grants the full allow-all mode; it is null on every other harness.
 - `class_missed`, `{class, cause, at}`, stands after a `no_landing` close retired an attempt below `standard`. While it stands, no launch below `standard` runs the item.
 - `launched_at`: the first record's `launched_at` is the fleet start the watch's `--since` takes.
 - `restart_closed`: a confirmed `restart-recovery` close writes it. A confirmed launch and a confirmed close on any other ground remove it.
 - `restart_closed`: on a `stopped` lane, `lane relaunch` sends the launch alone, and `jarvis-session resume` selects the lane beside the `running` ones ([lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch)).
 - `reservation`: `reserve-lane` or `park-lane` writes it; a relaunch, `release-lane` and a confirmed close drop it.
-- `touched`, `in_scope`, `carried`: [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) and [§ Caps](../references/lane-directive.md#caps) state the judgement.
+- `touched`, `in_scope`, `carried`: [lane-launch.md § Shared files](../references/lane-launch.md#shared-files) states the judgement. A recorded empty set stands in its own right. A tracked legacy lane without a set uses its Location.
+- `file_hold`: `exclusive` or `shared` for the current attempt, `retained` for recovery, or `released`. An absent field is a legacy record; admission reads its execution and journal evidence.
+- `file_repo`: the repository of the checked set. `file_launch` names its provisional launch while preparation or close handoff is unsettled. The launch intent's `previous_files` keeps the prior binding and any retained claim. A close intent's `close_files` keeps its checked set.
 - `unbounded`: a join or `admit-paths` writes it over a record that renders no `Admitted paths:` line, and while it stands the record renders none. A relaunch keeps it; a launch over a `done` record, judged afresh, removes it.
 - `obligation`: the parent pair is named together or null together.
 - `obligation`: a launch binds it on a record that carries none.
@@ -404,9 +406,9 @@ The members' rules, in the table's order:
 - `kept`, `kept_mail`: the close writes both.
 - `cycle`: later launches keep it. [`ops/cycle.rs`](../runtime/src/ops/cycle.rs) owns its fields, among them `obligation`, `stages` and `rounds`.
 
-A lane this runtime did not launch, surface 2 or 3, has its record written whole by `record-surface-lane` step `create` and changed by step `merge`. Neither step applies to a tmux lane.
+A surface-2 lane uses `record-surface-lane` to prepare, bind a close, and merge native observations into the matching journal intent. [Lane record](../references/lane-launch.md#lane-record) gives the launch protocol. Surface 3 uses its overseer session serially.
 
-`orch-runtime state merge --fleet --lane [ITEM] [FILE]` replaces the members the file names and binds `obligation` as the launch does.
+`orch-runtime state merge --fleet --lane [ITEM] [FILE]` updates metadata and binds `obligation` as launch does. Checked transitions own admission fields and lifecycle changes on native and admitted records.
 
 A cloud launch's confirmed outcome carries `cloud_repo_access`, `{repositories, url}`: the repositories to check by hand, and the session URL where the overseer answers repository-access cards.
 
