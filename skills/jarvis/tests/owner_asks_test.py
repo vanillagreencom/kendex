@@ -63,7 +63,7 @@ def mailbox_projection(home):
 # comment and answers HTTP 500, "failed" answers 500 alone. As Linear keeps a
 # comment id unique, a create naming a stored id is refused.
 TRACKER_API = r'''
-import json, os, re, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
 config = sys.stdin.read()
 payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
@@ -72,8 +72,10 @@ path = Path(os.environ['TRACKER_DATABASE'])
 database = json.loads(path.read_text())
 mode_path = path.with_suffix('.mode')
 mode = mode_path.read_text() if mode_path.exists() else 'present'
-operation = next(name for name in ('GetUserByEmail', 'TeamKeys', 'ListIssues', 'GetIssueWithBundle', 'GetIssue', 'ListComments',
-                                   'IssueRefs', 'BulkGetComments', 'CreateComment', 'OwnerReply', 'OwnerRuling') if name in query)
+operation = next(name for name in ('GetUserByEmail', 'GetUserById', 'ListUsers', 'TeamKeys', 'ListIssues',
+                                   'GetIssueWithBundle', 'GetIssue', 'ListComments', 'IssueRefs', 'BulkGetComments',
+                                   'CreateComment', 'OwnerReply', 'OwnerRuling', 'OwnerTrackerComment', 'OwnerTracker',
+                                   'GetLabel', 'UpdateIssue') if name in query)
 if operation == 'IssueRefs':
     operation += ' ' + variables['filter']['id']['in'][0].split('-')[0]
 elif operation == 'ListIssues' and 'comments {' in query:
@@ -96,6 +98,12 @@ def comments(identifier):
 def stored(key):
     return next(((identifier, row) for identifier, rows in database['issues'].items() for row in rows if row['id'] == key),
                 (None, None))
+owner_id = '12345678-0000-4000-8000-000000000001'
+item = database.get('item', {})
+team = {'id': 'team-uuid', 'key': 'KEN', 'name': 'KEN'}
+details = {'description': item.get('description', 'Question item.'),
+           'assignee': {'id': owner_id, 'name': 'Owner Person'} if item.get('assigneeId') else None,
+           'labels': connection([{'name': label} for label in item.get('labelIds', [])]), 'team': team}
 if operation == 'CreateComment':
     fields = variables['input']
     authorization = next(line for line in config.splitlines() if 'Authorization: ' in line)
@@ -138,6 +146,36 @@ elif operation in ('OwnerReply', 'OwnerRuling'):
 elif 'GetUserByEmail' in query:
     data = {'users': connection([dict(id='owner-id', name='Owner', email='owner@example.test',
                                      url='https://linear.app/example/profiles/owner')])}
+elif operation in ('ListUsers', 'GetUserById'):
+    data = {'users': connection([dict(id=owner_id, name='Owner Person', displayName='owner',
+                                     email='owner@example.test', app=False, isAssignable=True)])}
+elif operation == 'OwnerTracker':
+    # Read the original ask while lane-mail is waiting for its first item
+    # read. The command itself is the barrier before assignment or comment.
+    probe = os.environ.get('TRACKER_PRESENT_BEFORE_WRITE')
+    if probe:
+        expected = json.loads(probe)
+        recorded = Path(expected['result'])
+        if not recorded.exists():
+            inbox = Path(expected['root']) / 'tmp/lane-mail/overseer/to-overseer.jsonl'
+            ask = next(row for row in map(json.loads, inbox.read_text().splitlines()) if row['kind'] == 'ask')
+            env = {key: value for key, value in os.environ.items() if key != 'TRACKER_PRESENT_BEFORE_WRITE'}
+            answer = subprocess.run([*expected['command'], '--id', ask['id']], env=env,
+                                    input='', capture_output=True, text=True, timeout=15)
+            recorded.write_text(json.dumps({'exit': answer.returncode, 'receipt': json.loads(answer.stdout),
+                                            'pending': ask.get('tracker_pending'), 'item': item,
+                                            'comments': database['issues']['KEN-1']}))
+    data = {'issue': issue(variables['id'], **details)}
+elif operation == 'OwnerTrackerComment':
+    assert stored(variables['id'])[1] is not None
+    mention = {'type': 'suggestion_userMentions', 'attrs': {'id': owner_id}}
+    data = {'comment': {'bodyData': json.dumps({'type': 'doc', 'content': [mention]})}}
+elif operation == 'GetLabel':
+    data = {'issueLabels': connection([{'id': variables['name']}])}
+elif operation == 'UpdateIssue':
+    database['item'] = dict(item, **variables['input'])
+    path.write_text(json.dumps(database))
+    data = {'issueUpdate': {'success': True}}
 elif 'TeamKeys' in query:
     data = {'organization': {'urlKey': 'example', 'teams': connection([])}}
 elif 'ListIssues' in query:
@@ -159,7 +197,7 @@ elif operation == 'GetIssue':
     if identifier not in database['issues']:
         print(json.dumps({'errors': [{'message': 'Entity not found: Issue'}]}) + '___HTTP_CODE___200', end='')
         sys.exit(0)
-    data = {'issue': {'id': identifier + '-uuid'}}
+    data = {'issue': issue(identifier, **details)} if 'team {' in query else {'issue': {'id': identifier + '-uuid'}}
 elif 'GetIssueWithBundle' in query:
     data = {'issue': issue(variables['id'], labels=connection([]), relations=connection([]),
                            inverseRelations=connection([]), children=connection([]))}
@@ -1573,17 +1611,59 @@ sys.exit(result.returncode)
         self.assertEqual((answer["re"], answer["sender"], answer["delivery_id"], answer["text"], answer["owner_question"]["text"]),
                          (ask, "owner", "C123:1.000002", "Only the first one.", question))
 
-    def test_new_local_delegated_presentation_is_held(self):
-        origin = make_project(self.root / "local-overseer")
-        ask = self.mail(origin, "ask", "Should this safe step go ahead?", "--to", "owner",
-                        "--options", "yes,no", "--recommend", "no", "--effect", "none")
-        original = self.box(origin, "to-overseer")
-        result, receipt = self.run_cli("present", None, "Please consider the original question.",
-                                       "--destination", "local", "--root", origin, "--id", ask, "--reserved")
-        self.assertEqual((result.returncode, receipt["kind"]), (1, "unavailable"), result.stderr)
-        self.assertIn("manual owner-ask route", receipt["cause"])
-        self.assertEqual(self.box(origin, "to-overseer"), original)
-        self.assertEqual(self.box(self.home, "to-overseer"), [])
+    def test_item_question_has_one_writer_in_either_order(self):
+        self.env.pop("LINEAR_TEAM", None)
+        self.env.update(ORCH_OWNER_EMAIL="owner@example.test", ORCH_OWNER_ASK_LABEL="owner-waiting")
+        for on_item, relay_first in itertools.product((True, False), repeat=2):
+            with self.subTest(item_ask=on_item, relay_first=relay_first):
+                folder = self.root / ("order-%s-%s" % (on_item, relay_first))
+                folder.mkdir()
+                origin = make_project(folder / "overseer")
+                relay = make_project(folder / "relay")
+                for root in (origin, relay):
+                    (root / ".agents/skills/linear").symlink_to(REPO / "skills/linear", target_is_directory=True)
+                database = self.tracker_api([], assigned=[])
+                for suffix in (".log", ".writes", ".create"):
+                    database.with_suffix(suffix).unlink(missing_ok=True)
+                point = folder / "present-before-write.json"
+                route = ("--destination", "local", "--root", origin)
+                if on_item and relay_first:
+                    command = [BASH, LIB.parent / "jarvis-session", "owner-asks", "present", "--home", relay, *route]
+                    self.env["TRACKER_PRESENT_BEFORE_WRITE"] = json.dumps({"command": list(map(str, command)),
+                                                                           "root": str(origin), "result": str(point)})
+                question = "Should this safe step go ahead?"
+                opts = ("--to", "owner", "--options", "yes,no", "--recommend", "no", "--effect", "none")
+                item = ("--issue", "KEN-1", "--do", "Decide whether to proceed")
+                ask = self.mail(origin, "ask", question, *opts, *(item if on_item else ()))
+                self.env.pop("TRACKER_PRESENT_BEFORE_WRITE", None)
+                original = self.box(origin, "to-overseer")
+                if on_item and relay_first:
+                    early = json.loads(point.read_text())
+                    self.assertEqual((early["pending"], early["item"], early["comments"]), (True, {}, []))
+                    result, receipt = early["exit"], early["receipt"]
+                else:
+                    if not on_item and not relay_first:
+                        self.mail(relay, "ask", question, *opts, *item)
+                    response, receipt = self.run_cli("present", relay, None, *route, "--id", ask)
+                    result = response.returncode
+                self.assertEqual((result, receipt["kind"]), (1, "unavailable"), receipt)
+                self.assertIn("manual owner-ask route", receipt["cause"])
+                self.assertEqual(self.box(origin, "to-overseer"), original)
+                if not on_item and relay_first:
+                    self.assertFalse(database.with_suffix(".writes").exists())
+                    self.mail(relay, "ask", question, *opts, *item)
+
+                writer, reader = (origin, relay) if on_item else (relay, origin)
+                state = json.loads(database.read_text())
+                comment, = state["issues"]["KEN-1"]
+                posted, = [row for row in self.box(writer, "to-overseer") if row["kind"] == "tracker-posted"]
+                self.assertEqual(comment["id"], posted["tracker_comment"])
+                self.assertIn(question, comment["body"])
+                self.assertFalse(any(row.get("issue") for row in self.box(reader, "to-overseer")))
+                self.assertTrue(state["item"]["assigneeId"])
+                self.assertEqual(state["item"]["labelIds"], ["owner-waiting"])
+                calls = database.with_suffix(".log").read_text().splitlines()
+                self.assertEqual((calls.count("CreateComment"), calls.count("UpdateIssue")), (1, 3))
 
     def test_answer_to_a_closed_ask_adds_nothing(self):
         # A delegate's close that lands between the list and the answer.

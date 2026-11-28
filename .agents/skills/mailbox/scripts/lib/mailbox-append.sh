@@ -370,11 +370,12 @@ owner_tracker_owner() { # TRACKER WORK
 # `closed` one no longer does; a `named` one is a closed ask recorded under
 # another item, which names questions here by its comment id alone, its
 # label no label of this item's; a `withdrawn` one is an ask whose post
-# failed, whose question comment, if one is left, is no question. The
+# failed during this rollback. An `unpublished` ask is a recorded failure
+# whose surviving question is due for deletion on a later close. The
 # item's question comments, every mailbox's, are `comments owner-questions`
-# on COMMENTS_REF: one no open or withdrawn ask names stands for another
-# mailbox's ask until its ruling, unless it is unreserved and a closed or
-# named ask names it (a question posted before reserved ids, closed with no
+# on COMMENTS_REF: one no open, withdrawn or unpublished ask names stands
+# for another mailbox's ask until its ruling, unless it is unreserved and a
+# closed or named ask names it (a question posted before reserved ids, closed with no
 # ruling). The labels the gate takes off are the configured one and those
 # the item's own asks recorded.
 # `remove` reads them always and sets OWNER_TRACKER_HELD to whether such a
@@ -386,7 +387,7 @@ owner_tracker_owner() { # TRACKER WORK
 # failed step and its tracker stderr in WORK/tracker.err.
 owner_tracker_gate() { # MODE TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM]
   local mode="$1" tracker="$2" work="$3" issue="$4" ref="$5" asks="$6" owner="${7:-}" item="${8:-}"
-  local questions='[]' plan assignee labels
+  local questions='[]' plan assignee labels deletes comment
   OWNER_TRACKER_HELD=false
   if [[ -z "$owner" ]]; then
     owner="$(owner_tracker_owner "$tracker" "$work")" || { OWNER_TRACKER_GATE_CAUSE=owner-read; return 1; }
@@ -406,19 +407,27 @@ owner_tracker_gate() { # MODE TRACKER WORK ISSUE COMMENTS_REF ASKS [OWNER] [ITEM
       | if ($ask.tracker_comment | type) == "string" then $ask.tracker_comment == $q.id
         else any($q.legacy_asks[]?; . == $ask.id) end;
     def named($q; $states): any($asks[] | select(.state as $state | $states | index($state)); names($q));
-    any($questions[]; . as $q | (named($q; ["open", "withdrawn"]) | not)
+    any($questions[]; . as $q | (named($q; ["open", "withdrawn", "unpublished"]) | not)
       and ($q.reserved or (named($q; ["closed", "named"]) | not))) as $held
     | ([$asks[] | select(.state == "open") | .tracker_label // $label]
        + (if $held then [$label] else [] end) | unique) as $standing
     | ([$label] + [$asks[] | select(.state != "named") | .tracker_label // $label]) as $owned
     | (if $mode == "post" then ($item.labels - $owned) + $standing
        else $item.labels - ($owned - $standing) end | unique) as $labels
-    | {held: $held,
+    | {held: $held, deletes: [$questions[] | . as $q | select(named($q; ["unpublished"])) | .id],
        assignee: (if ($standing | length) > 0 then
                     (if $mode == "post" and $item.assignee_id != $owner.id then $owner.id else null end)
                   elif $item.assignee_id == $owner.id then "" else null end),
        labels: (if $labels == ($item.labels | unique) then null else $labels end)}')" ||
     { OWNER_TRACKER_GATE_CAUSE=prepare; return 1; }
+  deletes="$(jq -r '.deletes[]' <<<"$plan")" || { OWNER_TRACKER_GATE_CAUSE=prepare; return 1; }
+  # The item read confirms which recorded failures still have a question.
+  # A delete whose receipt was lost disappears from the next read.
+  while IFS= read -r comment; do
+    [[ -n "$comment" ]] || continue
+    OWNER_TRACKER_GATE_CAUSE=comment-delete
+    owner_tracker_delete_comment "$tracker" "$work" "$comment" || return 1
+  done <<<"$deletes"
   OWNER_TRACKER_HELD="$(jq -r '.held' <<<"$plan")" || { OWNER_TRACKER_GATE_CAUSE=prepare; return 1; }
   assignee="$(jq -r '.assignee | if . == null then "keep" elif . == "" then "clear" else "set " + . end' <<<"$plan")" ||
     { OWNER_TRACKER_GATE_CAUSE=prepare; return 1; }
@@ -452,6 +461,16 @@ owner_tracker_mentioned() { # TRACKER COMMENT OWNER_ID
     false) return 1 ;;
   esac
   return 2
+}
+
+# Linear can answer a refused delete on stdout with exit 0. Keep that
+# response alongside any tracker diagnostic when deletion is unconfirmed.
+owner_tracker_delete_comment() { # TRACKER WORK COMMENT_ID
+  local tracker="$1" work="$2" comment="$3"
+  "$tracker" comments delete "$comment" >"$work/tracker-delete.out" 2>"$work/tracker.err" || return 1
+  jq -e '.success == true' "$work/tracker-delete.out" >/dev/null 2>&1 && return 0
+  cat -- "$work/tracker-delete.out" >>"$work/tracker.err"
+  return 1
 }
 
 # The post itself, once the item carries the owner label and assignee: the
@@ -497,17 +516,9 @@ owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWN
     fi
   fi
   owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
-  # An unposted ask leaves no question comment: the chat carries it, and no
-  # reader follows a reply to a comment the ask does not record.
-  # `comments delete` exits 0 on a refused delete too, so its answer is judged
-  # as the create's is.
-  if [[ -n "$comment_id" ]]; then
-    if "$tracker" comments delete "$comment_id" >"$work/tracker-delete.out" 2>"$work/tracker-delete.err"; then
-      jq -e '.success == true' "$work/tracker-delete.out" >/dev/null 2>&1 ||
-        owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.out"
-    else
-      owner_tracker_unwritten "$issue" comment-delete "$work/tracker-delete.err"
-    fi
+  if [[ -n "$comment_id" ]] && ! owner_tracker_delete_comment "$tracker" "$work" "$comment_id"; then
+    OWNER_TRACKER_COMMENT="$comment_id"
+    owner_tracker_unwritten "$issue" comment-delete "$work/tracker.err"
   fi
   return 1
 }
@@ -657,27 +668,12 @@ owner_tracker_identity() { # TRACKER WORK REF...
   printf '%s\n' "$known"
 }
 
-# The acting identity a replaced question's mark compares each comment's
-# author with. A mark is a `comments update`, which the Linear package refuses
-# before any call where no LINEAR_TEAM is configured (its configured-team
-# gate, auth-check's writes_enabled). Sets OWNER_REPLACE_ACTOR, or sets
-# OWNER_REPLACE_CAUSE and returns 1: team-unset, team-unread where auth-check
-# does not say, actor-unread where it names no acting identity.
+# The acting identity a replaced question's mark compares each author with.
 owner_tracker_replace_actor() { # TRACKER WORK
-  local team
   OWNER_REPLACE_ACTOR=""
-  OWNER_REPLACE_CAUSE=""
   # auth-check prints its report when its API read fails too, with no actor.
   "$1" auth-check </dev/null >"$2/replace-auth" 2>"$2/replace-auth.err" || :
-  team="$(jq -r 'if .writes_enabled == true then "set" elif .writes_enabled == false then "unset" else "unread" end' \
-    "$2/replace-auth" 2>/dev/null)" || team=unread
-  case "$team" in
-    set) ;;
-    unset) OWNER_REPLACE_CAUSE=team-unset; return 1 ;;
-    *) OWNER_REPLACE_CAUSE=team-unread; return 1 ;;
-  esac
-  OWNER_REPLACE_ACTOR="$(jq -r '.actor.id // "" | strings' "$2/replace-auth" 2>/dev/null)" || OWNER_REPLACE_ACTOR=""
-  [[ -n "$OWNER_REPLACE_ACTOR" ]] || { OWNER_REPLACE_CAUSE=actor-unread; return 1; }
+  OWNER_REPLACE_ACTOR="$(jq -er '.actor.id | strings | select(length > 0)' "$2/replace-auth" 2>/dev/null)"
 }
 
 # Where a replaced ask's question comment stands, read by its exact id, in

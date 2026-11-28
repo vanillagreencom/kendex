@@ -26,8 +26,8 @@ import tempfile
 # bulk-list` takes identifiers alone, refusing the whole read with no
 # `missing` for any other ref, a UUID included (linear_issue_refs
 # identifiers), keys each identifier's comments and names a missing issue in
-# `missing` (comments --help); `comments update` exits 1 with no LINEAR_TEAM
-# (its configured-team gate); auth-check reports writes_enabled and the actor.
+# `missing` (comments --help); auth-check reports writes_enabled for
+# team-scoped writes and the actor for comment authorship checks.
 TRACKER = r'''#!/usr/bin/env python3
 import json
 import os
@@ -137,9 +137,6 @@ elif args[:2] == ["comments", "create"]:
     save()
     print(json.dumps({"success": True, "data": {"success": True, "comment": {"id": "c%d" % number}}}))
 elif args[:2] == ["comments", "update"]:
-    if not team:
-        print(json.dumps({"error": "No Linear team configured for this project - refusing to write."}), file=sys.stderr)
-        sys.exit(1)
     if (state / "fail-update").exists():
         print(json.dumps({"error": "API request failed"}), file=sys.stderr)
         sys.exit(1)
@@ -519,19 +516,17 @@ def absent(case, facts):
 
 
 def no_team(case, facts):
-    """T6: a re-ask in a home with no LINEAR_TEAM is refused whole, a first ask still posts."""
+    """T6: an unset team leaves the acting identity able to mark its question."""
     overseer = case.checkout()
     first, _ = overseer.item_ask("KEN-7")
     first_comment = overseer.comment(first)
-    before, lines, count = case.body(first_comment), overseer.lines(), len(case.comments())
+    before = case.body(first_comment)
     case.flag("no-team", True)
-    refused = overseer.try_ask("--issue", "KEN-7", "--do", "Approve change", text="Approve half of it?\n")
-    untouched = overseer.lines() == lines and len(case.comments()) == count
-    other, _ = overseer.item_ask("KEN-8")
-    facts["no_team_refused"] = (refused.returncode == 2
-        and refused.stderr.split()[1:3] == ["replace-unconfigured", "cause=team-unset"]
-        and untouched and case.body(first_comment) == before and set(overseer.pending()) == {first, other}
-        and overseer.pending()[other]["tracker_posted"] is True)
+    second, _ = overseer.item_ask("KEN-7", text="Approve half of it?\n")
+    pending = overseer.pending()
+    facts["no_team_replaces"] = (set(pending) == {second} and first in overseer.closes()
+        and pending[second]["replacement"] == "in-force"
+        and marked(case.body(first_comment), before, case.url(overseer.comment(second))))
 
 
 def explicit(case, facts):
