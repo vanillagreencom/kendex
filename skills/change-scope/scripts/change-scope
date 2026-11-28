@@ -465,7 +465,7 @@ launch_class() { # ARG...
       launch_consider standard "$CHANGE_CLASS_CAUSE" unmeasured
     else
       while IFS= read -r -d '' path; do
-        change_class_path "$path" launch
+        change_class_path "$path" launch file
         if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
           change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then
           continue
