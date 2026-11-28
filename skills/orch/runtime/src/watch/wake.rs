@@ -925,10 +925,18 @@ impl Wake {
                 let Some(lane) = fleet.lanes.iter().find(|lane| lane.item == item) else {
                     continue;
                 };
-                if !tick
+                // The ordinary route spends one row once its mark has
+                // an outcome. A held Stop can leave that row in the baseline.
+                let ordinary_pending = tick
                     .baseline
                     .get(RESUME_KIND, &super::lanes::lane_name(lane))
-                    .is_some_and(asks_resume)
+                    .filter(|row| asks_resume(row))
+                    .is_some_and(|row| {
+                        record.get(item).is_none_or(|mark| {
+                            mark.resume.as_deref() != Some(row) || mark.outcome.is_none()
+                        })
+                    });
+                if !ordinary_pending
                     && self.restack(lane, &resume, &socket, tick, &mut record, &mut produced)?
                 {
                     provider_resumes.insert(item.to_owned());
@@ -1138,7 +1146,11 @@ impl Wake {
                 format!("restack-unread item={} cause={cause}", lane.item),
             );
         };
-        match super::lanes::open_restack(lane) {
+        match super::lanes::open_restack(
+            lane,
+            &self.settings.roots.project,
+            &self.settings.state_dir,
+        ) {
             Ok(Some((cwd, head))) if resume.row.strip_prefix("restack|") == Some(head.as_str()) => {
                 target.cwd = cwd;
             }

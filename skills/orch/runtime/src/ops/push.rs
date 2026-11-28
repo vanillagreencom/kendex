@@ -449,11 +449,18 @@ impl RestackLanding {
     }
 
     fn reaches_head(&self, worktree: &Path, map: &Path, head: &str) -> Result<bool> {
-        let text = match fs::read_to_string(map) {
-            Ok(text) => text,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(self.head.as_deref() == Some(head));
-            }
+        let hops = match fs::read_to_string(map) {
+            Ok(text) => match proof::hops(&text) {
+                Ok(hops) => hops,
+                Err(e) if e.cause == "rebase-unmapped" => return Ok(false),
+                Err(e) => {
+                    return Err(refuse(
+                        "rebase-map-unreadable",
+                        &[("cause", e.cause), ("line", &e.line.to_string())],
+                    ));
+                }
+            },
+            Err(error) if error.kind() == ErrorKind::NotFound => Vec::new(),
             Err(error) => {
                 return Err(refuse(
                     "rebase-map-unreadable",
@@ -461,16 +468,6 @@ impl RestackLanding {
                         ("path", &map.display().to_string()),
                         ("cause", &error.to_string()),
                     ],
-                ));
-            }
-        };
-        let hops = match proof::hops(&text) {
-            Ok(hops) => hops,
-            Err(e) if e.cause == "rebase-unmapped" => return Ok(false),
-            Err(e) => {
-                return Err(refuse(
-                    "rebase-map-unreadable",
-                    &[("cause", e.cause), ("line", &e.line.to_string())],
                 ));
             }
         };
@@ -482,30 +479,23 @@ impl RestackLanding {
                     if let Some((_, kept)) = hop.iter().rfind(|(_, new)| new != "dropped") {
                         tip = kept;
                     } else {
-                        // The shipped restack map names each dropped commit
-                        // but no destination when every topic commit drops.
-                        // Both Git rebase backends record the branch update
-                        // as "(finish): <ref> onto <base>" (sequencer.c and
-                        // builtin/rebase.c). An all-dropped result is that base.
-                        let reflog = git(
-                            worktree,
-                            "restack-reflog",
-                            &["reflog", "show", "-2", "--format=%H%x09%gs", "@{0}"],
-                        )
-                        .map_err(|cause| refuse("restack-reflog", &[("cause", &cause)]))?;
-                        let mut entries = reflog.lines().filter_map(|line| line.split_once('\t'));
-                        return Ok(entries.next().is_some_and(|(sha, action)| {
-                            sha == head
-                                && action.contains(" (finish): refs/heads/")
-                                && action.ends_with(&format!(" onto {head}"))
-                        }) && entries.next().is_some_and(|(sha, _)| sha == tip));
+                        return base_move(worktree, tip, head);
                     }
                 }
                 Some((_, new)) => tip = new,
                 None => {}
             }
         }
-        Ok(tip == head && (tip != start || self.head.is_some()))
+        if tip == head {
+            return Ok(tip != start || self.head.is_some());
+        }
+        // A renewed landing can move again with zero commits in the
+        // replay range. The worktree emits no hop for that fast-forward.
+        Ok(self.head.is_some()
+            && base_move(worktree, tip, head)?
+            && git(worktree, "restack-base", &["merge-base", tip, head])
+                .map_err(|cause| refuse("restack-base", &[("cause", &cause)]))?
+                == tip)
     }
 
     /// The last validation for this head must have an acceptable native
@@ -519,6 +509,32 @@ impl RestackLanding {
         run.record()?;
         Ok(matches!(run.verdict()?, "pass" | "pending"))
     }
+}
+
+/// Anchor the checkout's current tip to the mapped drop or prior owed head.
+/// Git rebase records the onto commit. The worktree replay's
+/// finish_replay_branch_move resets the branch to detached HEAD, then checks
+/// it out again. Read both records for that route to exclude an ordinary
+/// reset or unrelated checkout movement.
+fn base_move(worktree: &Path, prior: &str, head: &str) -> Result<bool> {
+    let read = |args: &[&str]| {
+        git(worktree, "restack-reflog", args)
+            .map_err(|cause| refuse("restack-reflog", &[("cause", &cause)]))
+    };
+    let branch = read(&["reflog", "show", "-2", "--format=%H%x09%gs", "@{0}"])?;
+    let mut entries = branch.lines().filter_map(|line| line.split_once('\t'));
+    let Some((tip, action)) = entries.next() else {
+        return Ok(false);
+    };
+    if tip != head || entries.next().is_none_or(|(old, _)| old != prior) {
+        return Ok(false);
+    }
+    if action.contains(" (finish): refs/heads/") && action.ends_with(&format!(" onto {head}")) {
+        return Ok(true);
+    }
+    Ok(action == "branch: Reset to HEAD"
+        && read(&["reflog", "show", "-1", "--format=%H%x09%gs", "HEAD"])?
+            .starts_with(&format!("{head}\tcheckout: moving from {head} to ")))
 }
 
 pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Result<Option<String>> {
@@ -544,7 +560,8 @@ pub(crate) fn open_restack(doc: &Document, item: &str, worktree: &Path) -> Resul
     Ok(Some(current))
 }
 
-/// Record the exact landing head before a push or prepare consumes its map.
+/// Record the landing head before consuming its map, or retire it when
+/// direct prepare proves that this exact head is already on the base.
 #[allow(
     clippy::disallowed_methods,
     reason = "the landing head committed under the item's write check before map removal"
@@ -555,6 +572,7 @@ fn remember_landing(
     worktree: &Path,
     map: &Path,
     locking: Locking,
+    integrated: bool,
 ) -> Result<()> {
     record::reread(
         || {
@@ -565,12 +583,16 @@ fn remember_landing(
                 return Ok(());
             };
             let current = head(worktree)?;
-            if landing.head.as_deref() != Some(&current)
+            if (integrated || landing.head.as_deref() != Some(&current))
                 && landing.reaches_head(worktree, map, &current)?
             {
-                landing.head = Some(current);
                 let mut after = snapshot.doc.clone();
-                record::set(&mut after, LANDING, serde_json::to_value(landing)?);
+                if integrated {
+                    record::delete(&mut after, LANDING);
+                } else {
+                    landing.head = Some(current);
+                    record::set(&mut after, LANDING, serde_json::to_value(landing)?);
+                }
                 record::store(path, &snapshot.doc, &after, locking)?;
             }
             Ok(())
@@ -1088,10 +1110,9 @@ fn settle(
     let mut settled = attempt.clone();
     settled["state"] = json!(word);
     settled["settled_from"] = json!("remote");
-    let published_landing = attempt["head"]
-        .as_str()
-        .filter(|head| landed && *head == published);
-    mark_attempt(path, Some(settled), published_landing, locking)?;
+    // This read finds the SHA on any branch. The retry below owns the
+    // publication receipt and is what can clear the landing.
+    mark_attempt(path, Some(settled), None, locking)?;
     Ok(Some(word.to_owned()))
 }
 
@@ -1419,7 +1440,7 @@ pub fn run(
     }
     let map = map_file(&worktree)?;
     let pending = map.with_file_name(PENDING);
-    remember_landing(path, &item, &worktree, &map, locking)?;
+    remember_landing(path, &item, &worktree, &map, locking, false)?;
     // The hops a restack left are reconciled before the push, where nothing
     // new is stale yet; the run that validated the restacked head is kept
     // for the stage the push records once it lands.
@@ -1462,7 +1483,12 @@ pub fn run(
     let cli = &settings.worktree_cli;
     if let RecordPush::Prepare { .. } = r {
         let push = prepare_once(cli, &worktree, &item, &map.with_file_name(FOLD_MESSAGE))?;
-        remember_landing(path, &item, &worktree, &map, locking)
+        let integrated = push.status == PushStatus::Failed
+            && push
+                .stderr
+                .lines()
+                .any(|line| line.starts_with("worktree-push-base-empty: "));
+        remember_landing(path, &item, &worktree, &map, locking, integrated)
             .map_err(|e| after_push(e, &push))?;
         if let Some(reports) = consume(path, &item, &map, RESTACK, locking, None, &mut || {
             keep_pending(&worktree)
@@ -1569,7 +1595,8 @@ pub fn run(
     };
     // The push rebases before it publishes, so its own hop is in the map
     // whatever its answer.
-    remember_landing(path, &item, &worktree, &map, locking).map_err(|e| after_push(e, &push))?;
+    remember_landing(path, &item, &worktree, &map, locking, false)
+        .map_err(|e| after_push(e, &push))?;
     if let Some(reports) = consume(path, &item, &map, PUSHED, locking, None, &mut || {})
         .map_err(|e| after_push(e, &push))?
     {

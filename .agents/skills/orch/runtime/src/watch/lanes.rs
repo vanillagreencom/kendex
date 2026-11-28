@@ -972,11 +972,12 @@ fn read_lane<'a>(
         account_room,
     };
     let state = judge(&inputs);
-    // A held Stop writes PreToolUse. Check the live composer separately
+    // A held Stop writes PreToolUse or keeps the existing UserPromptSubmit.
+    // Check the live composer separately
     // for a landing wake, leaving the ordinary turn verdict in place.
     let restack_idle = state == LaneState::Working
         && harness == Some(Harness::Codex)
-        && matches!(current_rows, Some(Reading::Live(row)) if row.event.as_deref() == Some("PreToolUse"))
+        && matches!(current_rows, Some(Reading::Live(row)) if matches!(row.event.as_deref(), Some("PreToolUse" | "UserPromptSubmit")))
         && matches!(
             classify(&Inputs {
                 rows: None,
@@ -1859,7 +1860,7 @@ fn queue_restack(
 ) {
     let key = wake::restack_key(&lane.item);
     let prior = pass.baseline.get(wake::RESUME_KIND, &key);
-    let head = match open_restack(lane) {
+    let head = match open_restack(lane, pass.hosted.project, pass.state_dir) {
         Ok(Some((_, head))) => head,
         Ok(None) => {
             if prior.is_some() {
@@ -1895,7 +1896,11 @@ fn queue_restack(
 
 /// The local checkout's own item state, bound to its physical path for
 /// both the landing read and the wake's prompt receipt.
-pub(super) fn open_restack(lane: &Lane) -> Result<Option<(PathBuf, String)>, String> {
+pub(super) fn open_restack(
+    lane: &Lane,
+    project: &Path,
+    fleet_state_dir: &Path,
+) -> Result<Option<(PathBuf, String)>, String> {
     if lane.status != LaneStatus::Running
         || lane.harness.as_deref() != Some("codex")
         || hosted::host_of(lane) != "local"
@@ -1910,7 +1915,12 @@ pub(super) fn open_restack(lane: &Lane) -> Result<Option<(PathBuf, String)>, Str
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("checkout={} {error}", root.display())),
     };
-    let state_dir = lane_state_dir(&worktree)?;
+    let common = lane_common(&worktree)?;
+    let state_dir = if common == lane_common(project)? {
+        fleet_state_dir.to_path_buf()
+    } else {
+        state_dir_for(&worktree, common)?
+    };
     match handoff_standing(&state_dir, lane) {
         HandoffReading::None => {}
         HandoffReading::Stands { .. } => return Ok(None),
@@ -4364,20 +4374,27 @@ fn lane_counters(
 /// through a `git` run: a run would carry this process's environment and
 /// walk up from the root into whatever repository holds it.
 fn lane_state_dir(root: &Path) -> Result<PathBuf, String> {
+    state_dir_for(root, lane_common(root)?)
+}
+
+fn lane_common(root: &Path) -> Result<PathBuf, String> {
     let gitfile = root.join(".git");
     let unread = |cause: String| format!("gitfile-unread path={} {cause}", gitfile.display());
-    let common = match std::fs::metadata(&gitfile) {
-        Ok(meta) if meta.is_dir() => root.to_path_buf(),
+    match std::fs::metadata(&gitfile) {
+        Ok(meta) if meta.is_dir() => Ok(root.to_path_buf()),
         Ok(_) => {
             let text = std::fs::read_to_string(&gitfile)
                 .map_err(|e| unread(format!("cause={:?}", e.kind())))?;
             marker::git_dirs_of(&text)
                 .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
-                .ok_or_else(|| unread("cause=no-linked-worktree".to_owned()))?
+                .ok_or_else(|| unread("cause=no-linked-worktree".to_owned()))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => root.to_path_buf(),
-        Err(e) => return Err(unread(format!("cause={:?}", e.kind()))),
-    };
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(root.to_path_buf()),
+        Err(e) => Err(unread(format!("cause={:?}", e.kind()))),
+    }
+}
+
+fn state_dir_for(root: &Path, common: PathBuf) -> Result<PathBuf, String> {
     let read = |path: &Path| agent_runtime::settings::read_text(path);
     let dir = settings::state_dir_named(root, &read).map_err(|e| e.to_string())?;
     Ok(if dir.is_absolute() {

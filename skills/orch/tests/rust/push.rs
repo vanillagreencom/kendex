@@ -1935,6 +1935,53 @@ mod push {
     }
 
     #[test]
+    fn restack_landing_survives_failed_topic_retry_when_only_the_base_holds_its_head() {
+        let repo = Repo::new("KEN-1", "");
+        repo.record(json!({}));
+        let original = repo.head();
+        assert_eq!(exit(&repo.push("branch")), Some(0));
+        let base = commit(&repo.main, "feature", "feature\n", "integrated feature");
+        git(&repo.main, &["push", "-q", "origin", "main"]);
+        let admitted = repo.op(json!({
+            "op":"record-push","mode":"check-live-round","worktree":repo.wt,"landing":true
+        }));
+        assert_eq!(exit(&admitted), Some(0), "{}", stderr(&admitted));
+        let restack = program(worktree_cli())
+            .args(["create", "KEN-1", "--restack"])
+            .env("ORCH_RUNTIME_BINARY", support::binary())
+            .env("PATH", tool_path(&[&repo.root.join("bin")]))
+            .current_dir(&repo.main)
+            .output()
+            .unwrap();
+        assert!(restack.status.success(), "{}", stderr(&restack));
+        assert_eq!(repo.head(), base);
+        let push = |path: &str| {
+            repo.op_env(
+                "KEN-1",
+                &json!({"op":"record-push","mode":"branch","worktree":repo.wt}),
+                &[("PATH", path)],
+            )
+        };
+        let lost = push(&repo.planted_git("kill"));
+        assert_eq!(result(&lost)["push"]["status"], "unknown");
+        let path = repo.planted_git("fail");
+        let refused = result(&push(&path));
+        assert_eq!(refused["previous"], "confirmed");
+        assert_eq!(refused["push"]["status"], "failed");
+        assert_eq!(repo.remote("ken-1"), original);
+        assert_eq!(
+            repo.read()["restack_landing"]["head"],
+            base,
+            "the base's ref must not spend the landing owed to the topic ref"
+        );
+        repo.lift("fail");
+        let confirmed = result(&push(&path));
+        assert_eq!(confirmed["push"]["status"], "confirmed");
+        assert_eq!(repo.remote("ken-1"), base);
+        assert!(repo.read().get("restack_landing").is_none());
+    }
+
+    #[test]
     fn a_push_whose_answer_is_lost_reads_unknown_and_keeps_the_map() {
         let repo = Repo::new("KEN-1", "");
         let old = repo.head();

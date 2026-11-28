@@ -13001,6 +13001,7 @@ struct RestackWatch {
     main: PathBuf,
     tree: PathBuf,
     bin: PathBuf,
+    state: PathBuf,
     delivery: &'static str,
     head: String,
     server: Server,
@@ -13010,6 +13011,10 @@ struct RestackWatch {
 
 impl RestackWatch {
     fn new(dropped: bool, aliased: bool, direct: bool) -> Self {
+        Self::with_replay(dropped, aliased, direct, false)
+    }
+
+    fn with_replay(dropped: bool, aliased: bool, direct: bool, replay: bool) -> Self {
         use std::fs;
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -13051,18 +13056,8 @@ impl RestackWatch {
             &["remote", "add", "origin", origin.to_str().unwrap()],
         );
         Self::git(&main, &["push", "-qu", "origin", "main"]);
-        let worktree = |args: &[&str]| {
-            let out = program(Self::skill("worktree/scripts/worktree"))
-                .args(args)
-                .env("ORCH_RUNTIME_BINARY", binary())
-                .env("PATH", tool_path(&[&bin]))
-                .current_dir(&main)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "worktree {args:?}: {}", stderr(&out));
-            out
-        };
-        worktree(&["create", "KEN-1"]);
+        let created = Self::worktree(&main, &bin, &["create", "KEN-1"]);
+        assert!(created.status.success(), "{}", stderr(&created));
         let tree = root
             .join(if aliased { "alias" } else { "trees" })
             .join("ken-1");
@@ -13074,7 +13069,7 @@ impl RestackWatch {
         fs::write(tree.join("feature"), "feature\n").unwrap();
         Self::git(&tree, &["add", "feature"]);
         Self::git(&tree, &["commit", "-qm", "fix(KEN-1): feature"]);
-        if direct {
+        if direct && !dropped {
             fs::write(tree.join("followup"), "follow-up\n").unwrap();
             Self::git(&tree, &["add", "followup"]);
             Self::git(&tree, &["commit", "-qm", "fix(KEN-1): follow-up"]);
@@ -13085,7 +13080,8 @@ impl RestackWatch {
         Self::git(&main, &["add", file]);
         Self::git(&main, &["commit", "-qm", "base advances"]);
         Self::git(&main, &["push", "-q", "origin", "main"]);
-        let item = item_record(&main.join("tmp"), "KEN-1");
+        let state = main.join("tmp");
+        let item = item_record(&state, "KEN-1");
         fs::write(
             item,
             json!({"issue_id":"KEN-1","worktree":tree,"branch":"ken-1"}).to_string(),
@@ -13124,6 +13120,7 @@ impl RestackWatch {
             main: main.clone(),
             tree,
             bin: bin.clone(),
+            state,
             delivery,
             head: String::new(),
             server,
@@ -13131,7 +13128,19 @@ impl RestackWatch {
             pane,
         };
         fixture.op(json!({"mode":"check-live-round","landing":true}));
-        let out = worktree(&["create", "KEN-1", "--restack"]);
+        let out = if replay {
+            let paused = Self::worktree(&main, &bin, &["create", "KEN-1", "--restack", "--replay"]);
+            assert_eq!(paused.status.code(), Some(1), "{}", stderr(&paused));
+            assert!(
+                stderr(&paused).contains("worktree-replay-conflicts:"),
+                "{}",
+                stderr(&paused)
+            );
+            Self::worktree(&main, &bin, &["restack", "skip", "KEN-1"])
+        } else {
+            Self::worktree(&main, &bin, &["create", "KEN-1", "--restack"])
+        };
+        assert!(out.status.success(), "{}", stderr(&out));
         fixture.head = Self::git(&fixture.tree, &["rev-parse", "HEAD"]);
         assert_ne!(fixture.head, original);
         if dropped {
@@ -13164,7 +13173,21 @@ impl RestackWatch {
         String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
     }
 
-    fn op(&self, mut request: Value) -> Value {
+    fn worktree(main: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
+        program(Self::skill("worktree/scripts/worktree"))
+            .args(args)
+            .env("ORCH_RUNTIME_BINARY", binary())
+            .env("PATH", tool_path(&[bin]))
+            .current_dir(main)
+            .output()
+            .unwrap()
+    }
+
+    fn op(&self, request: Value) -> Value {
+        self.push_result(request, 0)
+    }
+
+    fn push_result(&self, mut request: Value, exit: i32) -> Value {
         request["op"] = json!("record-push");
         request["worktree"] = json!(self.tree);
         let out = isolated()
@@ -13176,6 +13199,7 @@ impl RestackWatch {
                 &request.to_string(),
             ])
             .env("WORKTREE_CLI", Self::skill("worktree/scripts/worktree"))
+            .env("ORCH_STATE_DIR", &self.state)
             .env("WORKTREE_DEFAULT_BRANCH", "main")
             .env("ORCH_DELIVERY", self.delivery)
             .env("DEV_VALIDATE_CMD", "true")
@@ -13184,8 +13208,9 @@ impl RestackWatch {
             .current_dir(&self.main)
             .output()
             .unwrap();
-        assert!(
-            out.status.success(),
+        assert_eq!(
+            out.status.code(),
+            Some(exit),
             "{request}: {}{}",
             stderr(&out),
             String::from_utf8_lossy(&out.stdout)
@@ -13193,17 +13218,35 @@ impl RestackWatch {
         reply(&out)["result"].clone()
     }
 
-    fn stop(&self) {
-        let out = isolated()
+    fn hook(&self, arm: Option<&str>) -> std::process::Output {
+        let payload = self.tree.join("tmp/hook-input.json");
+        std::fs::write(&payload, r#"{"prompt":"Continue the landing."}"#).unwrap();
+        isolated()
             .args(["turn-end", "--hook-dir"])
             .arg(self.tree.join(".codex/hooks"))
-            .env("ORCH_STATE_DIR", self.main.join("tmp"))
+            .args(arm)
+            .env("ORCH_STATE_DIR", &self.state)
             .env("LANE_MAIL_ITEM", "KEN-1")
             .env("LANE_MAIL_CLI", lane_mail())
-            .stdin(std::process::Stdio::null())
+            .stdin(std::fs::File::open(payload).unwrap())
             .current_dir(&self.tree)
             .output()
-            .unwrap();
+            .unwrap()
+    }
+
+    fn held_prompt(&self) {
+        let rows = self.tree.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+        let prompt = self.hook(Some("prompt"));
+        assert!(prompt.status.success(), "{}", stderr(&prompt));
+        self.stop();
+        let Reading::Live(row) = lane_rows(&rows) else {
+            panic!("prompt row missing");
+        };
+        assert_eq!(row.event.as_deref(), Some("UserPromptSubmit"));
+    }
+
+    fn stop(&self) {
+        let out = self.hook(None);
         assert_eq!(
             out.status.code(),
             Some(2),
@@ -13218,6 +13261,12 @@ impl RestackWatch {
             "{}",
             stderr(&out)
         );
+    }
+
+    fn landing(&self) -> Value {
+        let path = item_record(&self.state, "KEN-1");
+        serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["restack_landing"]
+            .clone()
     }
 
     fn mail(&self, args: &[&str]) {
@@ -13303,6 +13352,198 @@ printf '{{"ok":true,"result":{{%s}}}}\n' "$result"
             .map(str::to_owned)
             .collect()
     }
+}
+
+#[test]
+fn guarded_restack_replay_skip_recovers_the_all_dropped_head() {
+    if !isolated_row("guarded_restack_replay_skip_recovers_the_all_dropped_head") {
+        return;
+    }
+    let fixture = RestackWatch::with_replay(true, false, false, true);
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn renewed_restack_accepts_the_zero_topic_rebase_and_rejects_a_reset() {
+    if !isolated_row("renewed_restack_accepts_the_zero_topic_rebase_and_rejects_a_reset") {
+        return;
+    }
+    let mut fixture = RestackWatch::new(true, false, false);
+    let prior = fixture.head.clone();
+    fixture.op(json!({"mode":"check-live-round","landing":true}));
+    assert_eq!(fixture.landing()["head"], prior);
+    let map = PathBuf::from(RestackWatch::git(
+        &fixture.tree,
+        &["rev-parse", "--absolute-git-dir"],
+    ))
+    .join("kendex-rebase-map");
+    let before = std::fs::read(&map).unwrap();
+    RestackWatch::git(
+        &fixture.main,
+        &["commit", "--allow-empty", "-qm", "base moves again"],
+    );
+    RestackWatch::git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let next = RestackWatch::git(&fixture.main, &["rev-parse", "HEAD"]);
+    RestackWatch::git(&fixture.tree, &["reset", "-q", "--hard", &next]);
+    assert!(
+        !stderr(&fixture.hook(None)).contains("landing-step=restack-before-push"),
+        "a reset to the new base must not stand in for guarded restack"
+    );
+    RestackWatch::git(&fixture.tree, &["reset", "-q", "--hard", &prior]);
+    let out = RestackWatch::worktree(
+        &fixture.main,
+        &fixture.bin,
+        &["create", "KEN-1", "--restack"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(&map).unwrap(),
+        before,
+        "zero-topic rebase writes no new hop"
+    );
+    assert_eq!(
+        RestackWatch::git(&fixture.tree, &["rev-parse", "HEAD"]),
+        next
+    );
+    fixture.head = next;
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn local_restack_observation_and_delivery_follow_the_exported_state_directory() {
+    if !isolated_row("local_restack_observation_and_delivery_follow_the_exported_state_directory") {
+        return;
+    }
+    let mut fixture = RestackWatch::new(false, false, false);
+    let state = fixture.fleet.runner.state_dir().to_path_buf();
+    std::fs::rename(
+        item_record(&fixture.state, "KEN-1"),
+        item_record(&state, "KEN-1"),
+    )
+    .unwrap();
+    fixture.state = state;
+    fixture.op(json!({"mode":"check-live-round","landing":true}));
+    fixture.stop();
+    let fake = fixture.delivery_fake();
+    lane_driver!(
+        fixture.server,
+        fixture.fleet,
+        readers,
+        driver,
+        &[
+            ("ORCH_AGENT_RUNTIME", fake.to_str().unwrap()),
+            ("LANE_MAIL_CLI", lane_mail().to_str().unwrap()),
+        ]
+    );
+    driver.settings.roots.project = fixture.main.clone();
+    driver.settings.roots.common = fixture.main.clone();
+    fixture.asked(&mut driver);
+    fixture.wake(&driver);
+    assert_eq!(
+        fixture.pastes().len(),
+        1,
+        "wake reopens the same state used by observation"
+    );
+    assert!(fixture.pastes()[0].contains(&fixture.head));
+}
+
+#[test]
+fn restack_after_a_held_stop_keeps_the_open_prompt_eligible() {
+    if !isolated_row("restack_after_a_held_stop_keeps_the_open_prompt_eligible") {
+        return;
+    }
+    let fixture = RestackWatch::new(false, false, false);
+    fixture.held_prompt();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn restack_delivery_proceeds_past_a_confirmed_provider_row_left_by_held_stop() {
+    if !isolated_row("restack_delivery_proceeds_past_a_confirmed_provider_row_left_by_held_stop") {
+        return;
+    }
+    let fixture = RestackWatch::new(false, false, false);
+    let fake = fixture.delivery_fake();
+    lane_driver!(
+        fixture.server,
+        fixture.fleet,
+        readers,
+        driver,
+        &[
+            ("ORCH_AGENT_RUNTIME", fake.to_str().unwrap()),
+            ("LANE_MAIL_CLI", lane_mail().to_str().unwrap()),
+        ]
+    );
+    redraw(
+        &fixture.server,
+        &fixture.pane,
+        &fixture.tree,
+        "tmp/api-error.txt",
+        CODEX_LIVE_FAILURE,
+        "not supported",
+    );
+    let state = fixture.fleet.read();
+    for _ in 0..2 {
+        driver.pass(&state);
+    }
+    let ordinary = driver.baseline.get("resume", "gh-1").unwrap().to_owned();
+    assert!(ordinary.starts_with("api-error|"));
+    fixture.wake(&driver);
+    assert_eq!(fixture.marks()["KEN-1"]["outcome"]["wake"], "delivered");
+    redraw(
+        &fixture.server,
+        &fixture.pane,
+        &fixture.tree,
+        "tmp/idle.txt",
+        "› Resume the orch workflow\n• Restack finished\n› Ask Codex to do anything\n",
+        "Restack finished",
+    );
+    fixture.held_prompt();
+    fixture.asked(&mut driver);
+    assert_eq!(
+        driver.baseline.get("resume", "gh-1"),
+        Some(ordinary.as_str())
+    );
+    fixture.wake(&driver);
+    assert_eq!(
+        fixture.pastes().len(),
+        2,
+        "the confirmed ordinary row must let the restack through"
+    );
+    assert_eq!(
+        fixture.marks()["restack:KEN-1"]["outcome"]["wake"],
+        "unconfirmed"
+    );
+}
+
+#[test]
+fn direct_prepare_retires_an_all_dropped_restack_already_on_the_base() {
+    if !isolated_row("direct_prepare_retires_an_all_dropped_restack_already_on_the_base") {
+        return;
+    }
+    let fixture = RestackWatch::new(true, false, true);
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+    let prepared = fixture.push_result(json!({"mode":"prepare"}), 1);
+    assert!(
+        prepared["push"]["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("worktree-push-base-empty: ")
+    );
+    assert!(
+        fixture.landing().is_null(),
+        "empty direct prepare proves that the landing is integrated"
+    );
+    assert!(!stderr(&fixture.hook(None)).contains("landing-step=restack-before-push"));
+    driver.pass(&fixture.fleet.read());
+    assert!(driver.baseline.get("resume", "restack:KEN-1").is_none());
 }
 
 #[test]
