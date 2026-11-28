@@ -2226,7 +2226,7 @@ printf '[broken\n' >>"$transfer_broken/.git/config"
 cp -R "$ROOT/skills/commit-guards/scripts/lib" "$transfer_project/.agents/skills/commit-guards/scripts/lib"
 transfer_rows() { # HOOK [LABEL...]
   local transfer_hook=$1 label harness world expected keyed command harnesses shape install payload status got owner settings cwd
-  local script late run_env=()
+  local script late run_env=() registration_env=()
   shift
   local selected_rows=("$@") selected_seen=() before=$((passed + failed))
   local GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -2260,8 +2260,14 @@ transfer_rows() { # HOOK [LABEL...]
         run_env=(HOME="$transfer_home" XDG_CONFIG_HOME="$transfer_home/.config" XDG_DATA_HOME="$transfer_home/.local/share"
           XDG_STATE_HOME="$transfer_home/.local/state" XDG_CACHE_HOME="$transfer_home/.cache") ;;
     esac
+    if [ "$owner" = - ]; then
+      run_env=(COMMAND_SAFETY_UPLOAD_HOSTS=uploads.example.com)
+    elif [ -n "$owner" ]; then
+      run_env=(COMMAND_SAFETY_OWNER_COMMAND="$owner")
+    fi
     printf '[env]\n%s\n' "$settings" >"$transfer_project/kendex.settings.toml"
     for shape in $harnesses; do
+      registration_env=()
       case "$shape" in
         claude | codex)
           install=.$shape/hooks
@@ -2271,15 +2277,12 @@ transfer_rows() { # HOOK [LABEL...]
           payload=$(jq -nc --arg command "$command" --arg cwd "$cwd" '{cwd:$cwd,toolName:"bash",toolArgs:({command:$command} | tojson)}') ;;
         pi)
           install=.pi/kendex/hooks
+          registration_env=(KENDEX_HOOK_SCOPE=project KENDEX_HOOK_ROOT="$transfer_project")
           payload=$(jq -nc --arg command "$command" --arg cwd "$cwd" '{cwd:$cwd,tool_name:"Bash",tool_input:{command:$command}}') ;;
       esac
       status=0
-      if [ "$owner" = - ]; then
-        run_env=(COMMAND_SAFETY_UPLOAD_HOSTS=uploads.example.com)
-      elif [ -n "$owner" ]; then
-        run_env=(COMMAND_SAFETY_OWNER_COMMAND="$owner")
-      fi
-      env ${run_env[@]+"${run_env[@]}"} "$BASH" "$transfer_project/$install/$script" <<<"$payload" >/dev/null 2>"$scratch/stderr" || status=$?
+      env ${run_env[@]+"${run_env[@]}"} ${registration_env[@]+"${registration_env[@]}"} \
+        "$BASH" "$transfer_project/$install/$script" <<<"$payload" >/dev/null 2>"$scratch/stderr" || status=$?
       got=$(keyed_block "$scratch/stderr" command-safety)
       # keyed_block reads only the leading keyed lines; a report written
       # after a refusal's text would stand below them.
