@@ -94,7 +94,10 @@ jarvis_wall() {
     --arg rows "$box/tmp/lane-mail/overseer/session-$server-${pane#%}.jsonl" \
     '$status.result.recorded as $recorded
      | {session: $recorded.session_id, pane: $pane, account: $recorded.account, rows: $rows,
-        harness: $recorded.harness, home: $recorded.home, cwd: $recorded.cwd, socket: $recorded.server_socket}'
+        harness: $recorded.harness, home: $recorded.home, cwd: $recorded.cwd, socket: $recorded.server_socket,
+        controller: ($recorded | {session_id, pane: (.pane // .session), server, generation,
+                                   harness_pid, harness_start, account,
+                                   server_start: $status.result.server_start})}'
 }
 
 case "${1:-}" in

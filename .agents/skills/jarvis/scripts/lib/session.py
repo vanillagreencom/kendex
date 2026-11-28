@@ -61,6 +61,22 @@ OPEN_STATES = {"start-controller": ("starting", "launching"), "request-transfer"
                "stop-controller": ("stopping", "stop-requested")}
 
 
+def auth_controller(status):
+    """The controller instance an auth wall can authorize, from runtime status."""
+    status = status or {}
+    recorded = status.get("recorded") or {}
+    pane = recorded.get("pane")
+    if pane is None:
+        pane = recorded.get("session")
+    start = status.get("server_start")
+    pid, process_start = recorded.get("harness_pid"), recorded.get("harness_start")
+    if (not recorded.get("session_id") or not pane or recorded.get("server") is None
+            or (start is None and (pid is None or not process_start))):
+        return None
+    return {**{key: recorded.get(key) for key in ("session_id", "server", "generation", "account")},
+            "pane": pane, "server_start": start, "harness_pid": pid, "harness_start": process_start}
+
+
 class Refusal(Exception):
     def __init__(self, reason, detail="", state="blocked"):
         self.reason, self.detail, self.state = reason, detail, state
@@ -864,20 +880,26 @@ class Session:
             print(line, file=sys.stderr)
 
     def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None, exited=False,
-                provider_stop=None, episode=None):
+                provider_stop=None, episode=None, *, auth_wall=None):
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
                 raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
             status = self.status()
+            if auth_wall is not None:
+                current = auth_controller(status)
+                if current is None:
+                    raise Refusal("record-unreadable", "auth-controller-unreadable")
+                if current != auth_wall:
+                    raise Refusal("record-unreadable", "auth-controller-changed")
             answer = self.answer(record, status)
             if answer["state"] == "handing-over":
                 return answer, 0
-            if exited:
-                # The caller read the controller's process gone, and Start's
-                # resume on its account refused: the successor leaves that
-                # account, and nothing live is retired. A stop or an open
-                # start is a person's or a start's, never an exit.
+            auth_ended = auth_wall is not None and (answer["state"], answer["reason"]) == ("stopped", "ended")
+            if exited or auth_ended:
+                # An ended controller needs a headroom successor without
+                # retiring a live pane. An asked Stop or an open start owns
+                # its own transition.
                 if (not status or status.get("live") or status.get("open_intents") or record.get("intent") == "stop"
                         or not (status.get("recorded") or {}).get("harness")):
                     raise Refusal("record-unreadable")
@@ -1589,6 +1611,9 @@ def main():
                 operation.add_argument("--root", required=True)
                 operation.add_argument("--reserved", action="store_true")
     args = parser.parse_args()
+    # Only the watch's account-walled call carries this observation. The
+    # controller launch and its successor must not inherit it.
+    auth_binding = os.environ.pop("JARVIS_WATCH_AUTH_CONTROLLER", None)
     if not clean(args.home) or (args.verb == "start" and args.account is not None and not clean(args.account)):
         parser.error("path")
     if args.verb == "start" and ((args.model is None) != (args.effort is None) or not all(
@@ -1660,8 +1685,16 @@ def main():
             if (args.since is None) != (args.last is None) or args.since is not None and not args.provider_stop:
                 parser.error("episode")
             episode = None if args.since is None else (args.since, args.last)
+            auth_wall = None
+            if auth_binding is not None and args.account_walled and not args.usage_wall:
+                try:
+                    auth_wall = json.loads(auth_binding)
+                except ValueError:
+                    raise Refusal("record-unreadable", "auth-controller-invalid") from None
+                if not isinstance(auth_wall, dict) or not auth_wall:
+                    raise Refusal("record-unreadable", "auth-controller-invalid")
             answer, code = session.succeed(args.account_walled, args.usage_wall, args.reset_passed, args.resume_cursor,
-                                           args.exited, args.provider_stop, episode)
+                                           args.exited, args.provider_stop, episode, auth_wall=auth_wall)
         elif args.verb == "update-brief":
             answer, code = session.update_brief(args)
         elif args.verb == "report-due":
@@ -1693,7 +1726,8 @@ def main():
         recorded = (status or {}).get("recorded") or {}
         answer["unread"] = unread
         answer["controller"] = None if unread or not recorded else {
-            key: recorded.get(key) for key in ("session_id", "pane", "server_start")}
+            **{key: recorded.get(key) for key in ("session_id", "pane", "server_start")},
+            "auth": auth_controller(status)}
     if not session.emitted:
         session._emit(answer)
     return code

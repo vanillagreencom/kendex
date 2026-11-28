@@ -1252,6 +1252,8 @@ class Watch:
             if rows["reading"] == "unreadable":
                 raise Failure("controller-wall", "rows", "unreadable", rows["cause"])
             walled = rows["reading"] == "live" and rows["verdict"] == "walled"
+            if walled and rows["kind"] == "auth":
+                rows["controller"] = bound["controller"]
             # `watch wall --harness` answers `live` with no stop only for a
             # record whose last turn ended on no failure, or one still open
             # after it: every failed turn names its stop, or reads `wedged`
@@ -1329,14 +1331,22 @@ class Watch:
         if memory is not None and memory["noticed"] and reading is not None and kind is None:
             del self.state["wall"]
             memory = None
-        if kind is None or memory is not None and ((session, pane) == (memory["session"], memory["pane"]) and kind != "usage"
-                                                   or not memory["noticed"]):
+        same = memory is not None and (session, pane) == (memory["session"], memory["pane"]) and kind != "usage"
+        if same and kind == memory["kind"] == "auth" and memory.get("controller"):
+            # The same pane number and native session can be reused after
+            # a manual resume. Keep their server and launch facts attached.
+            keys = ("server_start", "generation", "harness_pid", "harness_start", "account")
+            current = rows.get("controller") or {}
+            same = all(current.get(key) == memory["controller"].get(key) for key in keys)
+        if kind is None or memory is not None and (same or not memory["noticed"]):
             self.save()
             return None
         memory = {"session": session, "pane": pane, "account": account, "kind": kind, "at": now,
                   "outcome": None, "noticed": False}
         if kind == "usage":
             memory.update(row_at=rows.get("at"), window=rows.get("window"), reset=rows.get("reset"))
+        else:
+            memory["controller"] = rows.get("controller")
         self.state["wall"] = memory
         self.save()
         if kind == "usage":
@@ -1364,12 +1374,16 @@ class Watch:
                 f"(read at {wall_time(now)}). The context window is full.")
         self.owner_notice(text, "wedged-notice", now, defer=True)
 
-    def session(self, operation, verb, *args):
+    def session(self, operation, verb, *args, auth_wall=None):
         """jarvis-session's answer to VERB, its last stdout line, or a Failure."""
         try:
+            env = os.environ.copy()
+            env.pop("JARVIS_WATCH_AUTH_CONTROLLER", None)
+            if auth_wall is not None:
+                env["JARVIS_WATCH_AUTH_CONTROLLER"] = json.dumps(auth_wall)
             # The session command bounds each wait it makes, the hand-over's too.
             result = run([self.bash, LIB.parent / "jarvis-session", verb, "--home", self.home, *args],
-                         self.home, operation=operation, timeout=None)
+                         self.home, operation=operation, timeout=None, env=env)
             lines = result.stdout.splitlines()
             if not lines:
                 raise child_failure(operation, result)
@@ -1380,11 +1394,11 @@ class Watch:
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             return failure(operation, error)
 
-    def succeed(self, usage):
+    def succeed(self, usage, auth_wall=None):
         """jarvis-session succeed away from the walled account: its answer, or a Failure.
 
         Either wall kind is the account's own, so the successor leaves it."""
-        return self.session("succeed", "succeed", "--account-walled", *usage)
+        return self.session("succeed", "succeed", "--account-walled", *usage, auth_wall=auth_wall)
 
     def provider_stop(self, reading):
         """The `succeed --provider-stop` arguments READING asks for, or None.
@@ -1487,15 +1501,12 @@ class Watch:
                                                answer.get("detail") or answer.get("reason")).record)
             return None
         self.state.pop("exited_failure", None)
-        reading, identity = (answer.get("state"), answer.get("reason")), answer.get("controller")
+        reading, controller = (answer.get("state"), answer.get("reason")), answer.get("controller")
+        identity = {key: controller.get(key) for key in ("session_id", "pane", "server_start")} if controller else None
         wall = self.state.get("wall")
-        if (reading == ("stopped", "ended") and wall is not None and wall["kind"] == "auth"
-                and isinstance(identity, dict)
-                and (identity.get("session_id"), identity.get("pane"), answer.get("account"))
-                == (wall["session"], wall["pane"].partition(" ")[2], wall["account"])):
-            # The wall already owns recovery and its notice. An exit's
-            # normal resume would try the account whose sign-in failed.
-            return None
+        auth_exit = (reading == ("stopped", "ended") and wall is not None and wall["kind"] == "auth"
+                     and controller and controller.get("auth") is not None
+                     and controller["auth"] == wall.get("controller"))
         memory = self.state.get("exited")
         if memory is not None and memory.get("ran") and memory.get("controller") is None and reading[0] == "running":
             memory["controller"] = identity
@@ -1517,6 +1528,15 @@ class Watch:
         if not answer.get("harness"):
             # Every recorded controller names its harness: this read names none.
             return None
+        if auth_exit:
+            # The wall owns this recovery and notice. Only a success still
+            # held from the prior restart needs its failure written below.
+            if memory is None or not memory.get("ran"):
+                return None
+            if not any(entry["id"] == memory.get("notice_id") for entry in self.state.get("held_notices", [])):
+                del self.state["exited"]
+                self.save()
+                return None
         if memory is None:
             if reading not in DOWN_READINGS:
                 return None
@@ -2101,6 +2121,7 @@ class Watch:
                 if kind is not None:
                     usage = []
                     requested = False
+                    auth_wall = None
                     if kind == "usage":
                         memory = self.state["wall"]
                         usage = ["--usage-wall", memory["session"], memory["pane"]]
@@ -2113,7 +2134,9 @@ class Watch:
                                 self.save()
                                 requested = True
                                 usage.append("--reset-passed")
-                    self.wall_pending = ("succession", passes.submit(self.succeed, usage), requested)
+                    else:
+                        auth_wall = self.state["wall"].get("controller") or {}
+                    self.wall_pending = ("succession", passes.submit(self.succeed, usage, auth_wall), requested)
                 elif provider is not None:
                     self.wall_pending = ("provider", passes.submit(self.recover_provider, provider), provider)
         exited = self.exited_pending
