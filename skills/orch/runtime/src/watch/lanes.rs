@@ -99,7 +99,7 @@ use agent_runtime::intent::{EffectOp, Obligation, Phase};
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves flight; [`RESTART_ROW`] alone stands until the
 /// lane's assignment ends.
-const LANE_ROWS: [&str; 12] = [
+const LANE_ROWS: [&str; 13] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
@@ -112,7 +112,12 @@ const LANE_ROWS: [&str; 12] = [
     hosted::LEFT_ROW,
     PROVIDER_ROW,
     RESTART_ROW,
+    SSH_ROWS_FLOOR,
 ];
+
+/// Pre-existing rows at the first successful watch read of a legacy launch.
+/// The floor belongs to the attempt named after its first separator.
+const SSH_ROWS_FLOOR: &str = "ssh-session-rows-floor";
 
 /// The row of a worker's continuation episode: `<since>|<last>[|<said>]`,
 /// the epoch seconds its first and latest stopped turns were read at, and
@@ -443,7 +448,7 @@ pub struct Inputs<'a> {
     pub pane: Option<&'a Reading<PaneFields>>,
     pub process: Option<&'a ProcessReading>,
     pub screen: Option<&'a Result<String, String>>,
-    /// The lane's rows; hosted non-Pi lanes keep their provider's pane reading.
+    /// The lane's rows, where its harness supplies them.
     pub rows: Option<&'a Reading<rows::Row>>,
     pub harness: Option<Harness>,
     /// Whether the account the lane spends was read as having room: the
@@ -695,7 +700,7 @@ fn identity_word(identity: Option<&Identity>) -> String {
 pub(super) struct HostRead {
     status: Option<Result<HostStatus, String>>,
     screen: Option<Result<String, String>>,
-    rows: Option<Answer<String>>,
+    rows: Option<Result<Reading<rows::Row>, String>>,
 }
 
 impl HostRead {
@@ -726,7 +731,13 @@ impl HostRead {
         let pi = lane.harness.as_deref().and_then(Harness::parse) == Some(Harness::Pi);
         let rows = match (caps.files, &status) {
             (Files::Verb, None | Some(Ok(HostStatus::Running))) if pi => {
-                Some(hosted::session_rows(scripts, lane))
+                Some(Ok(match hosted::session_rows(scripts, lane) {
+                    Answer::Live(text) => rows::last_row_in(&text),
+                    Answer::Gone => Reading::Gone,
+                    Answer::Unreadable { .. } => Reading::Unreadable {
+                        cause: "rows-host-unread",
+                    },
+                }))
             }
             (Files::Verb, None | Some(Ok(HostStatus::Running)))
             | (Files::Verb, Some(Ok(HostStatus::Exited) | Err(_)))
@@ -738,6 +749,65 @@ impl HostRead {
             rows,
         }
     }
+}
+
+/// Claude's provider stops are recorded by the hook after native retries.
+/// Keep the existing screen judgment for other hosted Claude observations.
+fn ssh_claude_rows(
+    lane: &Lane,
+    pass: &Pass,
+    out: &mut Produced,
+) -> Result<Reading<rows::Row>, String> {
+    let rooted = hosted::with_session_root(lane, &pass.fleet.intents);
+    let text = match hosted::confirmed_session_rows(pass.scripts, &rooted) {
+        Answer::Live(text) => text,
+        Answer::Gone => String::new(),
+        Answer::Unreadable { cause } => return Err(cause),
+    };
+    let at = if let Some(at) = lane.session_rows_at_launch {
+        at
+    } else {
+        let Some(launch) = &lane.launch else {
+            return Ok(Reading::Gone);
+        };
+        let name = lane_name(lane);
+        let attempt = format!(
+            "{:?}|{:?}|{:?}|{}|{:?}",
+            launch.server,
+            launch.server_start,
+            launch.pane,
+            identity_word(identity_of(lane).as_ref()),
+            lane.session_since,
+        );
+        let floor = pass.baseline.get(SSH_ROWS_FLOOR, &name).and_then(|value| {
+            let (floor, recorded) = value.split_once('|')?;
+            (recorded == attempt)
+                .then(|| floor.parse::<usize>().ok())
+                .flatten()
+        });
+        match floor {
+            Some(floor) => floor,
+            None => {
+                out.changes.push(set(
+                    SSH_ROWS_FLOOR,
+                    &name,
+                    format!("{}|{attempt}", rows::last_position_in(&text)),
+                ));
+                return Ok(Reading::Gone);
+            }
+        }
+    };
+    Ok(match rows::last_row_in(&text) {
+        Reading::Live(row)
+            if row.position > at
+                && row.harness.as_deref() == Some("claude")
+                && rows::stop_of(&row) == Some(Kind::Provider) =>
+        {
+            Reading::Live(row)
+        }
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        Reading::Live(_) | Reading::Gone => Reading::Gone,
+    })
 }
 
 /// Read one lane: the pane, its foreground, its screen and its local rows. `host` is what its provider answered first: an
@@ -782,13 +852,15 @@ fn read_lane<'a>(
         Some(Ok(HostStatus::Running)) => true,
         None => false,
     };
+    let rows_unread = host
+        .rows
+        .as_ref()
+        .and_then(|read| read.as_ref().err())
+        .cloned();
     let row_reading = match host.rows {
-        Some(answer) => Some(match answer {
-            Answer::Live(text) => rows::last_row_in(&text),
-            Answer::Gone => Reading::Gone,
-            Answer::Unreadable { cause: _ } => Reading::Unreadable {
-                cause: "rows-host-unread",
-            },
+        Some(Ok(reading)) => Some(reading),
+        Some(Err(_)) => Some(Reading::Unreadable {
+            cause: "rows-host-unread",
         }),
         None => (harness == Some(Harness::Pi) || hosted::host_of(lane) == "local")
             .then_some(lane.mail_root.as_deref())
@@ -815,8 +887,16 @@ fn read_lane<'a>(
         Some(Reading::Live(row)) => Some(row),
         Some(Reading::Gone | Reading::Unreadable { .. }) | None => None,
     };
+    let judge = |inputs: &Inputs| match (classify(inputs), rows_unread.as_ref()) {
+        (LaneState::Unjudged { cause }, Some(refusal)) if cause == "rows-host-unread" => {
+            LaneState::Unreadable {
+                cause: refusal.clone(),
+            }
+        }
+        (state, _) => state,
+    };
     if let Some(screen) = host.screen {
-        let state = classify(&Inputs {
+        let state = judge(&Inputs {
             pane: None,
             process: Some(&ProcessReading::HarnessUp),
             screen: Some(&screen),
@@ -879,7 +959,7 @@ fn read_lane<'a>(
         ),
         Reading::Gone | Reading::Unreadable { .. } => (None, None),
     };
-    let state = classify(&Inputs {
+    let state = judge(&Inputs {
         pane: Some(&pane),
         process: process.as_ref(),
         screen: screen.as_ref(),
@@ -1170,12 +1250,24 @@ pub fn observe(pass: &Pass) -> Produced {
     let observed: Vec<Observed> = in_flight
         .iter()
         .filter_map(|lane| {
-            let host = match hosts.of(lane) {
+            let mut host = match hosts.of(lane) {
                 // This kind has no harness for this duty to judge.
                 Ok(caps) if caps.status == Status::None => return None,
                 Ok(caps) => HostRead::of(pass.scripts, lane, caps),
                 Err(cause) => HostRead::failed(cause),
             };
+            if lane.status == LaneStatus::Running
+                && lane.harness.as_deref() == Some("claude")
+                // Older records with no launch identity can only be judged
+                // by their pane. They cannot bind a watch floor to an attempt.
+                && (lane.mail_root_confirmed || identity_of(lane).is_some())
+                && matches!(host.status, Some(Ok(HostStatus::Running)))
+                && hosts.of(lane).is_ok_and(|caps| {
+                    caps.launch == Some(hosted::Launch::Ssh) && caps.files == Files::Verb
+                })
+            {
+                host.rows = Some(ssh_claude_rows(lane, pass, &mut out));
+            }
             let failed_status = matches!(host.status, Some(Err(_)));
             let mut obs = read_lane(lane, pass.readers, &sockets, host, None);
             // The lane status verb carries this cause as unjudged. The
@@ -1490,14 +1582,7 @@ fn observe_one(
                     out.changes.push(clear(hosted::CLOSE_PENDING_ROW, lane));
                 }
             }
-            if get("lane-unreadable").as_deref() != Some(cause.as_str()) {
-                out.events.push(Event::LaneUnreadable {
-                    lane: lane.clone(),
-                    cause: cause.clone(),
-                });
-                out.changes
-                    .push(set("lane-unreadable", lane, cause.clone()));
-            }
+            report_unreadable(out, pass.baseline, "lane-unreadable", lane, cause);
             return reading;
         }
         LaneState::Exited
@@ -1704,6 +1789,23 @@ fn observe_one(
         }
     }
     reading
+}
+
+/// The lane and wake duties each own their read and clear their own row.
+pub(super) fn report_unreadable(
+    out: &mut Produced,
+    baseline: &Baseline,
+    kind: &str,
+    lane: &str,
+    cause: &str,
+) {
+    if baseline.get(kind, lane) != Some(cause) {
+        out.events.push(Event::LaneUnreadable {
+            lane: lane.to_owned(),
+            cause: cause.to_owned(),
+        });
+        out.changes.push(set(kind, lane, cause.to_owned()));
+    }
 }
 
 /// A worker whose turn ended on a continuation cause is resumed on its own

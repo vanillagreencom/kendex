@@ -37,6 +37,7 @@ use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::wake::{self, OVERSEER_TARGET, UNREAD_KIND};
 use orch_runtime::watch::{self, Baseline, Change, Flags, Paths, Produced, Recorded, Runner, Tick};
+use orch_runtime::watch::{hosted, lanes};
 use serde_json::{Value, json};
 use support::*;
 
@@ -1303,11 +1304,11 @@ esac
         .root
         .join(".agents/skills/github/scripts/lib/refresh-identity.sh");
     std::fs::create_dir_all(identity_file.parent().unwrap()).unwrap();
-    std::os::unix::fs::symlink(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/refresh-identity.sh"),
-        &identity_file,
-    )
-    .unwrap();
+    let default_app = "vanillagreen-fleet-lanes[bot]";
+    let app = "configured-fleet[bot]";
+    let identity = include_str!("../../../github/scripts/lib/refresh-identity.sh");
+    assert!(identity.contains(default_app));
+    std::fs::write(&identity_file, identity.replace(default_app, app)).unwrap();
     let comments = fleet.root.join("comments");
     let tracker = fleet.root.join("linear");
     write_executable(
@@ -1406,7 +1407,6 @@ done
         assert!(turns().is_empty());
         let marker = format!("## Verification\n\n### Box {box_number}\n\nReading lane: {item}\n");
         let result = format!("{marker}\n- **Result**: pass\n");
-        let app = "vanillagreen-fleet-lanes[bot]";
         let github_comment = |id, login: &str, association: &str, kind: &str, body: &str| {
             json!({
                 "id": id, "author_association": association, "user": {"login": login, "type": kind}, "body": body
@@ -1418,7 +1418,8 @@ done
                 github_comment(1, "outsider[bot]", "CONTRIBUTOR", "Bot", &result),
                 github_comment(2, "member", "MEMBER", "User", &result),
                 github_comment(3, app, "CONTRIBUTOR", "Bot", &marker),
-                github_comment(4, app, "CONTRIBUTOR", "Bot", &wrong_box)
+                github_comment(4, app, "CONTRIBUTOR", "Bot", &wrong_box),
+                github_comment(5, default_app, "CONTRIBUTOR", "Bot", &result)
             ]);
             std::fs::write(github.join("page1"), non_results.to_string()).unwrap();
         } else {
@@ -1806,6 +1807,504 @@ fn ssh_stub(fleet: &Fleet, harness: &str, env: &[(&str, &str)]) -> (Value, SshHo
     std::fs::create_dir(&dir).unwrap();
     let host = SshHost::new(&dir, &dir.join("scripts"), "KEN-1");
     (hosted_stub(fleet, &host.provider(), harness, env), host)
+}
+
+fn observe_ssh_worker(fleet: &Fleet, baseline: &mut Baseline, clock: &FakeClock) -> Produced {
+    let fleet_path = fleet.fleet_file();
+    let state = lanes::read_fleet(&fleet_path).unwrap();
+    let produced = lanes::observe(&lanes::Pass {
+        fleet: &state,
+        fleet_path: &fleet_path,
+        readers: &lanes::Readers::kernel(),
+        baseline,
+        settings: &fleet.settings.watch.get().unwrap(),
+        now: clock.wall_secs(),
+        session: None,
+        own_panes: &[],
+        state_dir: &fleet.root,
+        claim_store: &fleet.settings.claim_store,
+        account_state: &fleet.settings.account_state,
+        scripts: &fleet.root,
+        route: &lanes::WallRoute {
+            relaunch: settings::WallRelaunch::Ask,
+            walk: &|_, _| unreachable!(),
+            preference: None,
+            host: Ok(None),
+            halted: &|_| unreachable!(),
+            exited: &|_| unreachable!(),
+            start: &|_| unreachable!(),
+        },
+        wall_pauses: &|_| unreachable!(),
+        hosted: &hosted::Reads {
+            gh: Path::new("gh"),
+            roster: &|| unreachable!(),
+            project: &fleet.root,
+            reads: &fleet.settings.reads,
+        },
+        copilot_home: None,
+        server: Some(&fleet.server.socket),
+    });
+    for change in &produced.changes {
+        baseline.apply(change.clone());
+    }
+    produced
+}
+
+#[test]
+fn a_reconciled_ssh_claude_worker_continues_from_current_rows_after_watch_replacement_and_refusal()
+{
+    let fleet = Fleet::new();
+    let mut launcher = support::Runner::new(&fleet.server, "stub-confirm");
+    launcher.init_fleet();
+    let host = SshHost::new(
+        &fleet.root,
+        &launcher.state_dir().join(".agents/skills/orch/scripts"),
+        "KEN-1",
+    );
+    launcher.tools = Some(host.tools.clone());
+    // Refuse the status channel before its handshake, or arm a rows
+    // refusal after the cursor read so the next read is the receipt's.
+    let ssh = host.tools.join("ssh");
+    std::fs::rename(&ssh, host.tools.join("ssh-fixture")).unwrap();
+    write_executable(
+        &ssh,
+        r#"#!/bin/bash
+here="${0%/*}"
+if [[ "$1" == -T && -e "$here/refuse-status" && "$*" == *"orch_take_lock 9"* ]]; then
+    rm -- "$here/refuse-status"
+    printf 'ssh: connection refused by fixture\n' >&2
+    exit 255
+fi
+if [[ "$1" == -T && -f "$here/defer-row-refusal" && "$*" == *"$(cat "$here/defer-row-refusal")"* ]]; then
+    "$here/ssh-fixture" "$@"
+    code=$?
+    mv -- "$here/defer-row-refusal" "$here/drop-on"
+    exit "$code"
+fi
+exec "$here/ssh-fixture" "$@"
+"#,
+    );
+    std::fs::write(
+        launcher.state_dir().join("setup-token"),
+        "claude-token-row\n",
+    )
+    .unwrap();
+    let claude = host.tools.join("claude");
+    std::fs::remove_file(&claude).unwrap();
+    write_executable(
+        &claude,
+        r#"#!/bin/bash
+composer() { printf '\xe2\x9d\xaf\xc2\xa0\n  ? for shortcuts\n'; }
+composer
+while IFS= read -r line; do
+    printf '%s\n' "$line" >> typed
+    if [ -e omit-next-prompt ]; then
+        rm -- omit-next-prompt
+    else
+        digest=$(printf '%s' "$line" | cksum)
+        printf '{"harness":"claude","event":"UserPromptSubmit","digest":%s}\n' "${digest%% *}" \
+            >> tmp/lane-mail/KEN-1/session-rows.jsonl
+    fi
+    composer
+done
+"#,
+    );
+    let mut launch = launch_request("KEN-1", launcher.state_dir());
+    launch["host"] = json!(host.provider());
+    launch["repo"] = json!("o/r");
+    let rows = host
+        .worktree()
+        .join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+    let drop_on = host.tools.join("drop-on");
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let before = fleet.server.panes();
+    let refused = effect_report(&launcher.op_fleet(&launch));
+    assert!(!drop_on.exists());
+    assert_eq!(refused["intent"]["outcome"], "failed", "{refused}");
+    let cause = refused["intent"]["observation"]["cause"].as_str().unwrap();
+    assert!(
+        cause.contains("session-rows-read-failed") && cause.contains("255"),
+        "{refused}"
+    );
+    assert_eq!(refused["lane"]["sandbox"], "standing", "{refused}");
+    assert_eq!(fleet.server.panes(), before);
+    std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    let write_row = |event| {
+        assert!(
+            agent_runtime::rows::write_lane(
+                rows.parent().unwrap(),
+                &agent_runtime::rows::LaneRow {
+                    event,
+                    harness: "claude",
+                    at: 0,
+                    transcript: None,
+                    working_agents: None,
+                },
+                agent_runtime::rows::WAIT,
+            )
+            .unwrap()
+        );
+    };
+    let stop = || {
+        write_row(agent_runtime::rows::TurnEvent::StopFailure {
+            error: Some("server_error"),
+        })
+    };
+    // The failed launch left a reusable worktree. Stand one predecessor
+    // row there without its trailing newline, as an interrupted append can.
+    std::fs::write(
+        &rows,
+        json!({"harness":"claude","event":"StopFailure","error":"server_error"}).to_string(),
+    )
+    .unwrap();
+    let fifo = fleet.root.join("capture.fifo");
+    let mark = fleet.root.join("capture.mark");
+    mkfifo(&fifo);
+    let mut child = launcher.spawn_op_fleet(
+        &launch,
+        &[
+            ("TMUX_REAL", &which_tmux()),
+            ("TMUX_HOLD_FIFO", fifo.to_str().unwrap()),
+            ("TMUX_HOLD_MARK", mark.to_str().unwrap()),
+            ("TMUX_HOLD_VERB", "capture-pane"),
+        ],
+        &fixtures().join("tmux-hold"),
+    );
+    await_hold(&mut child, &mark, "capture-pane");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    release_hold(&fifo, secs(10), || launcher.fleet().to_string());
+    let opening = launcher.fleet();
+    assert_eq!(opening["lanes"][0]["status"], "preparing");
+    let phase = &opening["intents"].as_array().unwrap().last().unwrap()["phase"];
+    fleet.server.await_composer(phase["pane"].as_str().unwrap());
+    assert_eq!(phase["hosted_mail_root"], json!(host.worktree()));
+    assert_eq!(phase["session_rows_at_launch"], 1);
+    let confirmed = launcher.reconcile_one();
+    assert_eq!(confirmed["intent"]["outcome"], "confirmed", "{confirmed}");
+    let lane = &confirmed["lane"];
+    assert_eq!(lane["mail_root"], json!(host.worktree()));
+    assert_eq!(lane["mail_root_confirmed"], true);
+    assert_eq!(lane["session_rows_at_launch"], 1);
+    let mut record = launcher.fleet();
+    record["controller"] = fleet.read_fleet()["controller"].clone();
+    fleet.write_fleet(&record);
+
+    let typed = || std::fs::read_to_string(host.worktree().join("typed")).unwrap_or_default();
+    let clock = FakeClock::new();
+    let lane_name = lane["window"].as_str().unwrap();
+    let observe_twice = |baseline: &mut Baseline| {
+        for _ in 0..2 {
+            let pass = observe_ssh_worker(&fleet, baseline, &clock);
+            assert!(
+                pass.events.iter().all(|e| !matches!(
+                    e,
+                    watch::Event::LaneUnreadable { .. } | watch::Event::IdleAfterReturn { .. }
+                )),
+                "{pass:?}"
+            );
+        }
+    };
+    let continue_once = |baseline: &mut Baseline, before: usize| {
+        observe_twice(baseline);
+        assert!(
+            baseline
+                .get(wake::RESUME_KIND, lane_name)
+                .unwrap()
+                .starts_with("server_error|")
+        );
+        let mut body = fleet.body();
+        assert_eq!(
+            rendered(&run_once(&mut body, baseline, &clock).unwrap()),
+            vec!["EVENT wake-delivered KEN-1 resume=server_error"]
+        );
+        assert!(rendered(&run_once(&mut body, baseline, &clock).unwrap()).is_empty());
+        assert_eq!(typed().lines().count(), before + 1);
+    };
+    let mut baseline = Baseline::default();
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    assert!(rendered(&run_once(&mut fleet.body(), &baseline, &clock).unwrap()).is_empty());
+    assert!(typed().is_empty());
+    stop();
+    continue_once(&mut baseline, 0);
+
+    // Replace an older watch whose active record still holds its checkout.
+    let lane = record["lanes"][0].as_object_mut().unwrap();
+    lane.remove("session_rows_at_launch");
+    lane.remove("mail_root_confirmed");
+    let mut mismatched = record.clone();
+    mismatched["lanes"][0]["launch"]["start"] = json!("an-earlier-process");
+    fleet.write_fleet(&mismatched);
+    let reads_before = host
+        .calls()
+        .iter()
+        .filter(|call| call.ends_with(rows.to_str().unwrap()))
+        .count();
+    let pass = observe_ssh_worker(&fleet, &mut Baseline::default(), &clock);
+    assert!(
+        pass.events.iter().any(|event| matches!(event,
+            watch::Event::LaneUnreadable { lane, cause } if lane == lane_name
+                && cause.contains("mail-root-unconfirmed")
+        )),
+        "{pass:?}"
+    );
+    assert_eq!(
+        host.calls()
+            .iter()
+            .filter(|call| call.ends_with(rows.to_str().unwrap()))
+            .count(),
+        reads_before
+    );
+
+    let lane = record["lanes"][0].as_object_mut().unwrap();
+    lane.insert("mail_root".to_owned(), lane["checkout"].clone());
+    fleet.write_fleet(&record);
+    stop();
+    baseline = Baseline::default();
+    let pass = observe_ssh_worker(&fleet, &mut baseline, &clock);
+    assert!(
+        pass.events
+            .iter()
+            .all(|e| !matches!(e, watch::Event::LaneUnreadable { .. })),
+        "{pass:?}"
+    );
+    observe_ssh_worker(&fleet, &mut baseline, &clock);
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    assert!(rendered(&run_once(&mut fleet.body(), &baseline, &clock).unwrap()).is_empty());
+    assert_eq!(typed().lines().count(), 1);
+    stop();
+    continue_once(&mut baseline, 1);
+
+    stop();
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let refused = observe_ssh_worker(&fleet, &mut baseline, &clock);
+    assert!(
+        !drop_on.exists(),
+        "the rows fetch must reach the SSH refusal"
+    );
+    assert!(
+        refused.events.iter().any(|event| matches!(event,
+            watch::Event::LaneUnreadable { lane, cause } if lane == lane_name
+                && cause.contains(&host.provider()) && cause.contains("255")
+        )),
+        "{refused:?}"
+    );
+    assert!(
+        !refused
+            .events
+            .iter()
+            .any(|event| matches!(event, watch::Event::IdleAfterReturn { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(typed().lines().count(), 2);
+    observe_twice(&mut baseline);
+    let prior = fleet.mark("KEN-1");
+    let wake = |baseline: &mut Baseline| {
+        let pass = run_once(&mut fleet.body(), baseline, &clock).unwrap();
+        for change in &pass.changes {
+            baseline.apply(change.clone());
+        }
+        pass
+    };
+    let refuse_status = host.tools.join("refuse-status");
+    std::fs::write(&refuse_status, "").unwrap();
+    let refused = wake(&mut baseline);
+    assert!(
+        matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
+            if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
+                && cause.contains("harness-probe-failed")),
+        "{refused:?}"
+    );
+    assert!(!refuse_status.exists());
+    for first in [true, false] {
+        if !first {
+            let observed = observe_ssh_worker(&fleet, &mut baseline, &clock);
+            assert!(
+                !observed
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, watch::Event::LaneUnreadable { .. })),
+                "{observed:?}"
+            );
+        }
+        std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+        let refused = wake(&mut baseline);
+        assert!(
+            !drop_on.exists(),
+            "the cursor fetch must reach the SSH refusal"
+        );
+        if first {
+            assert!(
+                matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
+                    if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")),
+                "{refused:?}"
+            );
+        } else {
+            assert!(refused.events.is_empty(), "{refused:?}");
+        }
+        assert_eq!(fleet.mark("KEN-1"), prior);
+    }
+    assert_eq!(typed().lines().count(), 2);
+
+    let queued = baseline
+        .get(wake::RESUME_KIND, lane_name)
+        .unwrap()
+        .to_owned();
+    let covered_unread = "unread-covered-by-resume";
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: covered_unread.into(),
+    });
+    let defer = host.tools.join("defer-row-refusal");
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    let first = wake(&mut baseline);
+    assert!(
+        !defer.exists() && !drop_on.exists(),
+        "the receipt reached the refusal"
+    );
+    assert!(
+        matches!(first.events.as_slice(), [watch::Event::WakeUnconfirmed { target, cause, resume }]
+            if target == "KEN-1" && cause.contains(&host.provider()) && cause.contains("255")
+                && resume.as_deref() == Some("server_error")),
+        "{first:?}"
+    );
+    let mark = fleet.mark("KEN-1").unwrap();
+    assert_eq!(mark.resume.as_deref(), Some(queued.as_str()));
+    assert_eq!(mark.unread, covered_unread);
+    assert!(matches!(
+        mark.outcome,
+        Some(WakeOutcome::Unconfirmed { .. })
+    ));
+    // Once the receipt is on disk, reconcile that cursor and digest. No
+    // unread inbox row drives the reread or a second paste.
+    let deadline = Instant::now() + secs(5);
+    while !std::fs::read_to_string(&rows)
+        .unwrap()
+        .lines()
+        .last()
+        .is_some_and(|row| row.contains("UserPromptSubmit"))
+    {
+        assert!(Instant::now() < deadline, "the typed turn wrote no receipt");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(typed().lines().count(), 3);
+    // An active resume still holds its mark during a repeated refusal.
+    let mut with_unread = baseline.clone();
+    with_unread.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: "unread-during-receipt".into(),
+    });
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    assert!(wake(&mut with_unread).events.is_empty());
+    assert!(!drop_on.exists());
+    assert_eq!(fleet.mark("KEN-1"), Some(mark.clone()));
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    // The mail cursor still publishes the unread value the continuation
+    // covered. Only the saved receipt can read that value on this pass.
+    let calls_before = host.calls().len();
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let same_unread = wake(&mut baseline);
+    assert!(same_unread.events.is_empty(), "{same_unread:?}");
+    assert!(!drop_on.exists());
+    assert_eq!(fleet.mark("KEN-1"), Some(mark));
+    assert_eq!(typed().lines().count(), 3);
+    assert_eq!(
+        host.calls()[calls_before..]
+            .iter()
+            .filter(|call| call.ends_with(rows.to_str().unwrap()))
+            .count(),
+        1
+    );
+    baseline.apply(Change::Clear {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+    });
+    assert!(baseline.identities(UNREAD_KIND).is_empty());
+    assert_eq!(
+        rendered(&wake(&mut baseline)),
+        vec!["EVENT wake-delivered KEN-1 resume=server_error"]
+    );
+    assert!(wake(&mut baseline).events.is_empty());
+    assert_eq!(typed().lines().count(), 3);
+    stop();
+    observe_twice(&mut baseline);
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::LaneUnreadable { lane, cause }]
+            if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
+    ));
+    // Normal inbox wakes use the recorded root. Restore the launch's
+    // confirmed fields after the legacy replacement scenario.
+    let mut rooted = fleet.read_fleet();
+    rooted["lanes"][0]["mail_root"] = confirmed["lane"]["mail_root"].clone();
+    rooted["lanes"][0]["mail_root_confirmed"] = confirmed["lane"]["mail_root_confirmed"].clone();
+    fleet.write_fleet(&rooted);
+    let omit_prompt = host.worktree().join("omit-next-prompt");
+    std::fs::write(&omit_prompt, "").unwrap();
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    let unconfirmed = wake(&mut baseline);
+    assert!(
+        matches!(
+            unconfirmed.events.as_slice(),
+            [watch::Event::WakeUnconfirmed { target, cause, resume }]
+                if target == "KEN-1" && cause.contains("255") && resume.as_deref() == Some("server_error")
+        ),
+        "{unconfirmed:?}"
+    );
+    assert!(!defer.exists() && !drop_on.exists());
+    let deadline = Instant::now() + secs(5);
+    while omit_prompt.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the continuation was never typed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(typed().lines().count(), 4);
+    let old_resume = fleet.mark("KEN-1").unwrap().resume;
+    write_row(agent_runtime::rows::TurnEvent::Stop);
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    baseline.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: "unread-after-retired-resume".into(),
+    });
+    let delivered = wake(&mut baseline);
+    assert_eq!(
+        rendered(&delivered),
+        vec![
+            "EVENT wake-unconfirmed KEN-1 cause=turn-pending resume=server_error",
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-delivered KEN-1",
+        ]
+    );
+    let mark = fleet.mark("KEN-1").unwrap();
+    assert_eq!(mark.resume, old_resume);
+    assert_eq!(mark.unread, "unread-after-retired-resume");
+    assert!(matches!(mark.outcome, Some(WakeOutcome::Delivered { .. })));
+    assert!(wake(&mut baseline).events.is_empty());
+    let sent = typed();
+    assert_eq!(sent.lines().count(), 5);
+    assert_eq!(sent.lines().last(), Some(inbox_line()));
+    assert!(
+        host.calls()
+            .iter()
+            .filter(|call| call.ends_with("/session-rows.jsonl"))
+            .all(|call| call.ends_with(rows.to_str().unwrap()))
+    );
 }
 
 /// A baseline holding the lanes duty's resume row `value` for `lane`.

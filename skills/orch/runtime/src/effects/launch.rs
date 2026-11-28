@@ -932,8 +932,13 @@ fn open_and_confirm(
             return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
         }
     };
-    if let Sessions::Hosted { mail_root } = &sessions {
+    if let Sessions::Hosted {
+        mail_root,
+        session_rows_at_launch,
+    } = &sessions
+    {
         opening.hosted_mail_root.clone_from(mail_root);
+        opening.session_rows_at_launch = *session_rows_at_launch;
     }
     // The relaunch has retired the predecessor. Read its last possible
     // row now, before the new window can start a hook, and keep the
@@ -1357,6 +1362,18 @@ fn hosted_launch(
     if let Err(e) = check_program(&command) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
     }
+    let session_rows_at_launch = if harness == Harness::Claude && caps.files == hosted::Files::Verb
+    {
+        match hosted::session_rows_at(&scripts, provider, &r.item, &created.path) {
+            hosted::Answer::Live(text) => Some(rows::last_position_in(&text)),
+            hosted::Answer::Gone => Some(0),
+            // The provider created a sandbox, but no window or harness was
+            // started. A normal relaunch can reuse it and read the floor again.
+            hosted::Answer::Unreadable { cause } => return failed(operation, &cause),
+        }
+    } else {
+        None
+    };
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
@@ -1374,12 +1391,22 @@ fn hosted_launch(
                 &|name| name == "ssh" || target.owns(name),
                 Sessions::Hosted {
                     mail_root: Some(created.path.clone()),
+                    session_rows_at_launch,
                 },
             )?
         }
         Client::Detached => detached_launch(
-            run, operation, &scripts, provider, &r.item, harness, &server, &session, &created,
+            run,
+            operation,
+            &scripts,
+            provider,
+            &r.item,
+            harness,
+            &server,
+            &session,
+            &created,
             &command,
+            session_rows_at_launch,
         )?,
     };
     if created.unrebased {
@@ -1701,6 +1728,7 @@ fn detached_launch(
     session: &str,
     created: &hosted::Created,
     command: &LaunchCommand,
+    session_rows_at_launch: Option<usize>,
 ) -> Result<EffectOutcome> {
     operation.record_phase(Phase::Preparing {
         step: HOST_EXEC.to_owned(),
@@ -1764,7 +1792,7 @@ fn detached_launch(
                     mail_root: Some(created.path.clone()),
                     home_implicit: false,
                     viewer: true,
-                    ..Default::default()
+                    session_rows_at_launch,
                 }
                 .members(),
                 ..Wire::default()
@@ -2295,6 +2323,7 @@ enum Sessions<'a> {
     },
     Hosted {
         mail_root: Option<String>,
+        session_rows_at_launch: Option<usize>,
     },
 }
 
@@ -2318,7 +2347,7 @@ fn launch_outcome(
             // sessions are on its host and bind nothing here.
             let hosted = matches!(&sessions, Sessions::Hosted { .. });
             let (session_id, mail_root) = match sessions {
-                Sessions::Hosted { mail_root } => {
+                Sessions::Hosted { mail_root, .. } => {
                     observation["note"] = json!("session-hosted");
                     (None, mail_root)
                 }
@@ -2651,6 +2680,7 @@ fn judge_opened(
         let sessions = if hosted {
             Sessions::Hosted {
                 mail_root: opened.hosted_mail_root.clone(),
+                session_rows_at_launch: opened.session_rows_at_launch,
             }
         } else {
             Sessions::Store {

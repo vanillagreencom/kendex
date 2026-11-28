@@ -8226,6 +8226,7 @@ impl HostedLaunch {
             "cat --item KEN-H /srv/clone/.git/lane-mail/ken-h#2": {"stdout": format!("{host}\n")},
             "touch --item KEN-H": {},
             "put --item KEN-H /srv/clone/.git/lane-mail/ken-h": {},
+            format!("cat --item KEN-H {host}/tmp/lane-mail/KEN-H/session-rows.jsonl"): {"exit": 2},
             "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json": {"stdout": record.to_string()},
             format!("put --item KEN-H {HOST_GIT_DIR}/lane-refresh"): {},
             format!("put --item KEN-H {HOST_GIT_DIR}/lane-read-only"): {},
@@ -8541,6 +8542,7 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     );
     assert_eq!(lane["window"], "fleet:KEN-H");
     assert_eq!(lane["session_id"], Value::Null);
+    assert_eq!(lane["session_rows_at_launch"], 0);
     assert_eq!(report["intent"]["observation"]["note"], "session-hosted");
     assert_eq!(server.panes().len(), panes_before + 1, "one window opened");
     let account = world.runner.state_dir().display().to_string();
@@ -8565,6 +8567,10 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
             format!(
                 "ORCH_LANE_HOST={PROVIDER} put --item KEN-H {clone}/.git/worktrees/lane/lane-read-only"
             ),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER} cat --item KEN-H {host}/tmp/lane-mail/KEN-H/session-rows.jsonl"
+            ),
+            format!("ORCH_LANE_HOST={PROVIDER} touch --item KEN-H"),
         ],
         "the provider's verbs in order, each under the record's host: the marker the create wrote is read before the record"
     );
@@ -9371,11 +9377,13 @@ fn a_pane_verb_launch_runs_the_prefix_detached_and_opens_its_viewer_window_untyp
     let host = world.host();
     let verbs = world.verbs();
     assert_eq!(
-        verbs[verbs.len() - 6..],
+        verbs[verbs.len() - 8..],
         [
             "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json".to_owned(),
             format!("put --item KEN-H {HOST_GIT_DIR}/lane-refresh"),
             format!("put --item KEN-H {HOST_GIT_DIR}/lane-read-only"),
+            format!("cat --item KEN-H {host}/tmp/lane-mail/KEN-H/session-rows.jsonl"),
+            "touch --item KEN-H".to_owned(),
             "status --item KEN-H --harness claude".to_owned(),
             "capture --item KEN-H".to_owned(),
             "viewer-prefix --item KEN-H".to_owned(),

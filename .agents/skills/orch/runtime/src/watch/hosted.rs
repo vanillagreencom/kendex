@@ -30,6 +30,7 @@
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,8 @@ use std::time::Duration;
 
 use agent_runtime::clock;
 use agent_runtime::host;
+use agent_runtime::intent::{EffectOp, Intent};
+use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use agent_runtime::record::Document;
 use serde::{Deserialize, Serialize};
@@ -2695,16 +2698,83 @@ fn refused_handoff(pass: &Pass, lane: &Lane, fields: String) -> Result<HandoffRe
 /// A lane's session rows through the provider: the file the lane's hook
 /// writes under its root's mailbox on the host.
 pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
-    let root = match file_root(lane) {
+    let root = match mail_root(lane) {
         Ok(root) => root,
-        Err(answer) => return answer,
+        Err(cause) => return session_rows_unreadable(host_of(lane), &lane.item, cause),
     };
-    fetch(
-        scripts,
-        host_of(lane),
-        &lane.item,
-        &format!("{root}/tmp/lane-mail/{}/session-rows.jsonl", lane.item),
-    )
+    session_rows_at(scripts, host_of(lane), &lane.item, root)
+}
+
+/// A Claude provider stop needs a root proved by the current launch,
+/// even if the legacy record's path differs from its checkout.
+pub(super) fn confirmed_session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
+    if !lane.mail_root_confirmed {
+        return session_rows_unreadable(host_of(lane), &lane.item, "mail-root-unconfirmed");
+    }
+    session_rows(scripts, lane)
+}
+
+pub(super) const SESSION_ROWS_READ_FAILED: &str = "session-rows-read-failed";
+
+fn session_rows_unreadable(host: &str, item: &str, cause: &str) -> Answer<String> {
+    Answer::Unreadable {
+        cause: format!("{SESSION_ROWS_READ_FAILED} item={item} host={host} cause={cause}"),
+    }
+}
+
+/// Read rows under the worktree path the provider returned from create.
+pub(crate) fn session_rows_at(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    root: &str,
+) -> Answer<String> {
+    let file = marker::mailbox_path(Path::new(root), item).join(agent_runtime::rows::LANE_FILE);
+    match fetch(scripts, host, item, &file.to_string_lossy()) {
+        Answer::Unreadable { cause } => session_rows_unreadable(host, item, &cause),
+        answer @ (Answer::Live(_) | Answer::Gone) => answer,
+    }
+}
+
+/// A launch can have the provider's root in its journal even if its lane
+/// record still has the checkout placeholder. Use the journal only when
+/// the confirmation names the very pane and process the lane still holds.
+pub(super) fn with_session_root<'a>(lane: &'a Lane, intents: &[Intent]) -> Cow<'a, Lane> {
+    if lane.mail_root_confirmed
+        || lane.harness.as_deref() != Some("claude")
+        || lane.mail_host().is_none()
+    {
+        return Cow::Borrowed(lane);
+    }
+    let root = lane.launch.as_ref().and_then(|launch| {
+        let pane = launch.pane.as_deref()?;
+        let intent = intents.iter().rev().find(|intent| {
+            intent.target == lane.item
+                && lane.session_since.as_deref() == Some(intent.created_at.as_str())
+                && intent.op == EffectOp::LaunchSession
+                && intent.outcome == Outcome::Confirmed
+                && intent.reconciled.is_none()
+        })?;
+        let opened = intent.phase.as_ref()?.opened()?;
+        let identity = opened.identity.as_ref()?;
+        (opened.pane == pane
+            && launch.server == Some(opened.server)
+            && launch
+                .server_start
+                .is_none_or(|start| start == opened.server_start)
+            && launch.pid == Some(u64::from(identity.pid))
+            && launch.start.as_deref() == Some(identity.start.as_str()))
+        .then_some(opened.hosted_mail_root.as_ref())
+        .flatten()
+    });
+    if let Some(root) = root.filter(|root| !root.is_empty()) {
+        let mut lane = lane.clone();
+        lane.mail_root = Some(root.clone());
+        lane.mail_root_confirmed = true;
+        Cow::Owned(lane)
+    } else {
+        Cow::Borrowed(lane)
+    }
 }
 
 // --- the finished close -------------------------------------------------------
