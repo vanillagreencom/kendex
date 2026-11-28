@@ -38,11 +38,14 @@ const REQUIREMENTS: [(&str, &str); 4] = [
 ];
 
 fn open() -> (SealedSource, SourceConfig) {
-    let root = crate::test_util::checkout_root();
-    let sealed = SealedSource::open(&root)
-        .unwrap_or_else(|error| panic!("{} does not open as a catalog: {error}", root.display()));
-    let config = source_config(&sealed, "kendex")
-        .unwrap_or_else(|error| panic!("{}/kendex.toml does not read: {error}", root.display()));
+    let sealed = SealedSource::open(&crate::test_util::checkout_root())
+        .unwrap_or_else(|error| panic!("the checkout does not open as a catalog: {error}"));
+    let config = source_config(&sealed, "kendex").unwrap_or_else(|error| {
+        panic!(
+            "{}/kendex.toml does not read: {error}",
+            sealed.root().display()
+        )
+    });
     (sealed, config)
 }
 

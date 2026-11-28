@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use super::{UNAME, posix_shell, repo_root, write_stub};
+use super::{UNAME, install_script, posix_shell, write_stub};
 use crate::installer_message::value;
 use crate::test_util::{self, SUDO_STUB, install_stub, rooted};
 
@@ -295,10 +295,6 @@ fn run_flaky(
     }
 }
 
-fn install_sh() -> PathBuf {
-    repo_root().join("install.sh")
-}
-
 fn icons(reference: &str) -> Vec<String> {
     ["32x32.png", "128x128.png", "128x128@2x.png", "icon.png"]
         .iter()
@@ -366,7 +362,7 @@ fn token_rows() -> Vec<(Vec<&'static str>, Vec<Sent>)> {
 #[test]
 fn a_token_goes_to_github_alone() {
     for (args, expected) in token_rows() {
-        let run = run(&install_sh(), &args, Some(TOKEN), None);
+        let run = run(&install_script(), &args, Some(TOKEN), None);
         assert!(run.output.status.success(), "{args:?}: {}", run.report());
         assert!(!run.stdout().contains(TOKEN));
         assert!(!run.stderr().contains(TOKEN));
@@ -405,7 +401,7 @@ fn curl_config_metacharacters_and_control_bytes_are_refused() {
     // NUL cannot cross the process environment boundary.
     for byte in (1..=31).chain([127, b'"', b'\\']) {
         let token = format!("fixture{}suffix", char::from(byte));
-        let run = run(&install_sh(), &[], Some(&token), None);
+        let run = run(&install_script(), &[], Some(&token), None);
         assert_eq!(run.output.status.code(), Some(2), "byte={byte}");
         assert_eq!(
             value(&run.output.stderr, "github-token-invalid"),
@@ -458,7 +454,7 @@ fn without_a_token_the_installer_sends_what_it_always_has() {
         (vec![], Some(""), &latest),
         (vec!["--version", MAIN_BUILD], None, &main_build),
     ] {
-        let run = run(&install_sh(), &args, token, None);
+        let run = run(&install_script(), &args, token, None);
         let row = format!("{args:?} token={token:?}");
         assert!(run.output.status.success(), "{row}: {}", run.report());
         assert!(
@@ -548,7 +544,7 @@ fn stops() -> [Stop; 5] {
 #[test]
 fn a_failing_install_never_prints_the_token() {
     for stop in stops() {
-        let run = run(&install_sh(), stop.args, Some(stop.token), stop.fail);
+        let run = run(&install_script(), stop.args, Some(stop.token), stop.fail);
         let row = format!("{:?} fail={:?}", stop.args, stop.fail);
         assert_eq!(
             run.output.status.code(),
@@ -596,7 +592,7 @@ enum Breaks {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_token_rule_breaks_its_own_check() {
-    let source = std::fs::read_to_string(install_sh()).unwrap();
+    let source = std::fs::read_to_string(install_script()).unwrap();
     for (from, to, breaks) in [
         (
             "*[\\\"\\\\[:cntrl:]]*)",
@@ -675,7 +671,7 @@ fn a_temporary_download_error_is_tried_again_and_no_other_is() {
         (None, "404 22", false),
         (Some(TOKEN), "404 22", false),
     ] {
-        let run = run_flaky(&install_sh(), &[], token, None, Some(flaky));
+        let run = run_flaky(&install_script(), &[], token, None, Some(flaky));
         let row = format!("token={} {flaky}", token.is_some());
         let command = if token.is_some() {
             &carried
@@ -716,7 +712,7 @@ fn a_temporary_download_error_is_tried_again_and_no_other_is() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn one_try_fails_the_retry_row() {
-    let source = std::fs::read_to_string(install_sh()).unwrap();
+    let source = std::fs::read_to_string(install_script()).unwrap();
     let from = "download_attempts=8\n";
     assert_eq!(
         source.matches(from).count(),

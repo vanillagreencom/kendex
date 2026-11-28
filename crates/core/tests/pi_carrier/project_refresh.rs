@@ -62,9 +62,10 @@ fn executable(path: &Path, text: &str) {
 /// `Readers::Registration` the two that read an install declare that they
 /// read it from the registration.
 #[allow(clippy::unwrap_used)]
-fn catalog_guards(catalog: &Path, repo: &Path, refreshed: bool, readers: Readers) {
+fn catalog_guards(catalog: &Path, refreshed: bool, readers: Readers) {
+    let hooks = test_util::checkout_root().join("hooks");
     for guard in GUARDS {
-        let text = fs::read_to_string(repo.join(format!("hooks/{guard}.sh"))).unwrap();
+        let text = fs::read_to_string(hooks.join(format!("{guard}.sh"))).unwrap();
         let (header, body) = text.split_once("\n# ---\n\n").unwrap();
         let header = if guard == "lane-mail-check" {
             // The other companion listeners are outside this tool_call case.
@@ -95,7 +96,7 @@ fn catalog_guards(catalog: &Path, repo: &Path, refreshed: bool, readers: Readers
 /// guards reach demands the project install's registration, so a guard that
 /// lost it, or took the global one, loses its verdict.
 #[allow(clippy::unwrap_used)]
-fn catalog_skills(catalog: &Path, repo: &Path, readers: Readers) {
+fn catalog_skills(catalog: &Path, readers: Readers) {
     for skill in ["commit-guards", "mailbox", "orch", "agent-runtime"] {
         let dir = catalog.join("skills").join(skill);
         fs::create_dir_all(dir.join("scripts")).unwrap();
@@ -107,7 +108,9 @@ fn catalog_skills(catalog: &Path, repo: &Path, readers: Readers) {
     }
     let libraries = catalog.join("skills/commit-guards/scripts/lib");
     fs::create_dir(&libraries).unwrap();
-    for file in fs::read_dir(repo.join("skills/commit-guards/scripts/lib")).unwrap() {
+    for file in
+        fs::read_dir(test_util::checkout_root().join("skills/commit-guards/scripts/lib")).unwrap()
+    {
         let file = file.unwrap();
         fs::copy(file.path(), libraries.join(file.file_name())).unwrap();
     }
@@ -160,11 +163,10 @@ fn refresh_project(
     world: &World,
     env: &kendex_core::env::Env,
     catalog: &Path,
-    repo: &Path,
     refreshed: bool,
     readers: Readers,
 ) {
-    catalog_guards(catalog, repo, refreshed, readers);
+    catalog_guards(catalog, refreshed, readers);
     let report = plan_apply(env, &scope(world), &PlanOptions::current()).unwrap();
     kendex_core::apply::execute(env, &report.plan).unwrap();
 }
@@ -214,11 +216,10 @@ fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
         .env
         .clone()
         .with_var("PI_CODING_AGENT_DIR", &global.to_string_lossy());
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let catalog = w.home.join("cat");
     fs::create_dir_all(catalog.join("hooks")).unwrap();
     fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-    catalog_skills(&catalog, &repo, readers);
+    catalog_skills(&catalog, readers);
 
     register_carrier(&global);
     assert_eq!(
@@ -242,9 +243,9 @@ fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
         "[env]\nCOMMAND_SAFETY_DENY_PATTERN = '^echo configured-policy$'\n",
     )
     .unwrap();
-    refresh_project(&w, &env, &catalog, &repo, false, readers);
+    refresh_project(&w, &env, &catalog, false, readers);
     let settings = fs::read(global.join("settings.json")).unwrap();
-    refresh_project(&w, &env, &catalog, &repo, true, readers);
+    refresh_project(&w, &env, &catalog, true, readers);
     assert_eq!(
         fs::read(global.join("settings.json")).unwrap(),
         settings,
@@ -262,8 +263,8 @@ fn assert_project_refresh(bun: &Path, layout: Layout, readers: Readers) {
         Some("command-safety: refused=policy".to_owned()),
         Some("lane-mail-check: halt=fixture".to_owned()),
     ];
-    let metadata = drive(bun, &w, &repo, &nested, &global, Carrier::Metadata);
-    let legacy = drive(bun, &w, &repo, &nested, &global, Carrier::Legacy);
+    let metadata = drive(bun, &w, &nested, &global, Carrier::Metadata);
+    let legacy = drive(bun, &w, &nested, &global, Carrier::Legacy);
     let case = format!("{layout:?}, {readers:?} readers");
     match (layout, readers) {
         (Layout::LinkedHooks, _) => {
@@ -333,7 +334,6 @@ enum Carrier {
 fn drive(
     bun: &Path,
     w: &World,
-    repo: &Path,
     cwd: &Path,
     global: &Path,
     carrier: Carrier,
@@ -361,7 +361,11 @@ fn drive(
     let run = Command::new(bun)
         .args(["run", "--no-install"])
         .arg(&driver)
-        .arg(repo.join("pi-extensions/pi-hooks/extensions/hooks.ts"))
+        .arg(
+            test_util::checkout_root()
+                .join("pi-extensions/pi-hooks")
+                .join("extensions/hooks.ts"),
+        )
         .arg(cwd)
         .current_dir(&w.home)
         .env_clear()

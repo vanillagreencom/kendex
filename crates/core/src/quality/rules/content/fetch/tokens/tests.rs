@@ -150,9 +150,12 @@ fn requote(word: &Word) -> String {
 /// Every command line this repository's own content carries, which is the
 /// half of the corpus nobody wrote to pass a test.
 fn from_the_catalog() -> Vec<String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut found = Vec::new();
-    let mut walk = vec![root.join("skills"), root.join("hooks"), root.join("agents")];
+    let mut walk = vec![
+        crate::test_util::checkout_root().join("skills"),
+        crate::test_util::checkout_root().join("hooks"),
+        crate::test_util::checkout_root().join("agents"),
+    ];
     while let Some(dir) = walk.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

@@ -29,10 +29,9 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
     // This repository, not a fixture catalog: the promise is about the
     // package as shipped, so the source has to be the real `commands/`
     // beside the real `kendex.toml` rather than a copy of either.
-    world.catalog = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap();
+    let catalog =
+        kendex_core::source_read::SealedSource::open(&crate::test_util::checkout_root()).unwrap();
+    world.catalog = catalog.root().to_path_buf();
     world.declare_catalog();
 
     let mut shipped = command_stems(&world.catalog.join("commands"), None);

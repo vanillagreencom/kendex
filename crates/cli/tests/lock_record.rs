@@ -1331,9 +1331,11 @@ impl LandingRow {
 fn script_copy(world: &World, edits: &[(&str, &str)]) -> PathBuf {
     let copy = world.home.join("script-copy");
     fs::create_dir_all(copy.join("tools")).unwrap();
-    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for dir in [".agents", "refresh"] {
-        std::os::unix::fs::symlink(checkout.join(dir), copy.join(dir)).unwrap();
+    for (source, name) in [
+        (crate::test_util::checkout_root().join(".agents"), ".agents"),
+        (crate::test_util::checkout_root().join("refresh"), "refresh"),
+    ] {
+        std::os::unix::fs::symlink(source, copy.join(name)).unwrap();
     }
     let mut source = fs::read_to_string(script()).unwrap();
     for (old, new) in edits {

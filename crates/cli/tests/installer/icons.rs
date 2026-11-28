@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::{
-    ICONS, Unlocked, desktop_entry, icon_slot, repo_root, run_installer, run_installer_over,
+    ICONS, Unlocked, desktop_entry, icon_dir, icon_slot, run_installer, run_installer_over,
     run_installer_serving, running_as_root, set_mode,
 };
 
@@ -20,8 +20,7 @@ fn every_icon_the_app_ships_lands_in_its_own_slot() {
             .join(format!("share/icons/hicolor/{size}/apps/kendex.png"));
         let installed = std::fs::read(&installed)
             .unwrap_or_else(|error| panic!("{size}: {} ({error})", installed.display()));
-        let expected = std::fs::read(repo_root().join("crates/app/icons").join(source))
-            .expect("the app ships this icon");
+        let expected = std::fs::read(icon_dir().join(source)).expect("the app ships this icon");
         assert_eq!(installed, expected, "the {size} slot must carry {source}");
     }
 }
@@ -87,7 +86,7 @@ fn icons_it_can_neither_replace_nor_remove_do_not_stop_the_install() {
 
     let earlier = b"an icon a previous run installed".as_slice();
     let mut locked: Vec<PathBuf> = Vec::new();
-    let tmp = run_installer_over(&repo_root(), |home| {
+    let tmp = run_installer_over(&icon_dir(), |home| {
         for (size, _) in ICONS {
             let slot = icon_slot(home, size);
             let dir = slot.parent().expect("slot dir").to_path_buf();

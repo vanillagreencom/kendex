@@ -10,15 +10,11 @@
 //! does. A template revision never replaces a live comment block.
 #![cfg(unix)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use kendex_core::settings_seed::{
     SETTINGS_FILE, SETTINGS_TEMPLATE, SeededEnv, Seeding, env_blocked, extract_env_entries, merge,
 };
-
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
 
 /// Every skill directory this repository ships a template from, by name.
 ///
@@ -31,8 +27,11 @@ fn root() -> PathBuf {
 fn skill_dirs() -> Vec<(String, PathBuf)> {
     let mut found: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
     for (root, wins) in [
-        (root().join(".agents/skills"), false),
-        (root().join("skills"), true),
+        (
+            crate::test_util::checkout_root().join(".agents/skills"),
+            false,
+        ),
+        (crate::test_util::checkout_root().join("skills"), true),
     ] {
         let Ok(listing) = std::fs::read_dir(&root) else {
             continue;
@@ -124,7 +123,9 @@ fn a_refresh_writes_nothing_whatever_the_file_is_missing() {
 #[allow(clippy::unwrap_used)]
 fn a_refresh_of_this_repository_leaves_its_settings_file_alone() {
     let entries = shipped_entries();
-    let settings = std::fs::read_to_string(root().join(SETTINGS_FILE)).unwrap();
+    let settings =
+        std::fs::read_to_string(crate::test_util::checkout_root().join("kendex.settings.toml"))
+            .unwrap();
     // Without this, a file with nowhere to write would report the clean
     // answer: merge refuses such a file with the same `None` it spends on
     // having nothing to add.

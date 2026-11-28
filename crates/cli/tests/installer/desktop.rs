@@ -3,14 +3,14 @@
 //! held to the bytes the Desktop Entry spec calls for, character by
 //! character, rather than to a reader of the grammar written here.
 
-use super::{CURL, ICONS, installer_output, posix_shell, repo_root};
+use super::{CURL, ICONS, icon_dir, install_script, installer_output, posix_shell};
 
 /// The encoder itself, run out of `install.sh` rather than copied here: the
 /// function is sliced out of the shipped script and handed one argument, so
 /// renaming or moving it fails this instead of quietly testing nothing.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 fn desktop_arg(path: &str) -> String {
-    let script = std::fs::read_to_string(repo_root().join("install.sh")).expect("install.sh");
+    let script = std::fs::read_to_string(install_script()).expect("install.sh");
     let body = script
         .split_once("\ndesktop_arg() {\n")
         .and_then(|(_, rest)| rest.split_once("\n}\n"))
@@ -93,7 +93,7 @@ const RESERVED: [(&str, char, &str); 21] = [
 #[test]
 fn the_entry_names_one_path_when_the_data_directory_is_awkward() {
     let data = "my data 100% & $x (y) 'z'";
-    let (tmp, output) = installer_output(&repo_root(), CURL, data, |_| {});
+    let (tmp, output) = installer_output(&icon_dir(), CURL, data, |_| {});
     assert!(
         output.status.success(),
         "install.sh failed: {}",

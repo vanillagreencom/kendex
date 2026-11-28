@@ -1152,8 +1152,8 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
     );
 
     // The real carrier, driven the way Pi drives it: one bash tool call.
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let carrier = repo.join("pi-extensions/pi-hooks/extensions/hooks.ts");
+    let carrier = crate::test_util::checkout_root().join("pi-extensions/pi-hooks");
+    let carrier = carrier.join("extensions/hooks.ts");
     let driver = w.home.join("drive.ts");
     fs::write(
         &driver,
@@ -1238,8 +1238,8 @@ fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
     );
 
     // The real carrier, driven the way Pi drives a tool result.
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let carrier = repo.join("pi-extensions/pi-hooks/extensions/hooks.ts");
+    let carrier = crate::test_util::checkout_root().join("pi-extensions/pi-hooks");
+    let carrier = carrier.join("extensions/hooks.ts");
     let driver = w.home.join("drive-tool-result.ts");
     fs::write(
         &driver,
