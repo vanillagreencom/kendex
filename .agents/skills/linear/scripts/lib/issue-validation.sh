@@ -532,8 +532,8 @@ require_issue_header_shape() {
 # open branch box still refuses as unmet: only an open post-merge box retires.
 # A retired line followed by its deeper Reason:, Replacement: or Repair: line
 # keeps its number as a slot, so every later box keeps the number a
-# caller read before the retirement. Naming the same retirement again is a
-# no-op, which lets a retry of a written completion finish; any other
+# caller read before the retirement. Replaying the same retirement preserves
+# its text and exposes failed repair targets for revalidation. Any other
 # selection of a slot refuses as done-when-retirement.
 # Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON] [RETIRE_JSON]
 done_when_parse() {
@@ -581,7 +581,8 @@ done_when_parse() {
                       elif $slot.kind == "Failed" then
                         if ($detail.text | test("^" + issue_id_pattern + "$")) then
                             (($lines[$i + 2] // "" | try capture("^(?<indent>[ \t]+)Reason: (?<text>\\S.*)$") catch null) // null) as $reason
-                            | {kind: "failed", text: ($detail.text + (if $reason.indent == $detail.indent then " " + $reason.text else "" end))}
+                            | {kind: "failed", repair: $detail.text,
+                               text: ($detail.text + (if $reason.indent == $detail.indent then " " + $reason.text else "" end))}
                         else null end
                       else {kind: ($slot.kind | ascii_downcase), text: $detail.text} end end end) as $slot_record
             | if $slot_record != null then
@@ -683,6 +684,13 @@ done_when_parse() {
                     | select(($met != "all" and any($met[]; . == $s.number))
                         or ($retire | has($key) and ($retire[$key] != $s.kind or ($evidence[$key] // "") != $s.text)))
                     | {box: $s.number, rule: "done-when-retirement"}])}
+        | if $retire == {} then . else
+            .retirement_targets = [
+                ($r.boxes[] | select(.retired.replacement != null or .retired.repair != null)
+                    | {box: .number, source: .reading} + .retired),
+                ($r.retired[] | select(.kind == "failed" and $retire[.number | tostring] == "failed")
+                    | {box: .number, kind, repair})]
+          end
         | .child_box = ([.boxes[] | select(.text | test("^every child (is )?done or cancell?ed\\.?\\s*$"; "i")) | .number] | first)
         | .missing_evidence_boxes as $missing | .child_box as $child
         | .container_open_boxes = [.boxes[] | select(.number != $child)

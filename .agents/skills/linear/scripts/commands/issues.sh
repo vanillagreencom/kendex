@@ -395,9 +395,10 @@ Complete Options:
                          A box takes one disposition. "--done-when-met all"
                          takes no retirement beside it.
                          A retired box keeps its number, so later boxes keep
-                         theirs. Naming the same retirement again changes
-                         nothing, so a retry finishes; any other selection
-                         of it refuses with done-when-retirement.
+                         theirs. Replaying the same retirement preserves the
+                         record and rechecks a failed box's repair. Any other
+                         selection of a retired box refuses with
+                         done-when-retirement.
   --evidence-file <path>  Evidence for --done-when-met, one N: text line per box,
                          and the text of each retired box.
                          Writes each Evidence: line with the tick and state.
@@ -3670,8 +3671,7 @@ complete_issue() {
     # id tells the source from its replacement or repair.
     local targets target target_id target_result target_valid transfer_description transfer_checklist source_uuid
     source_uuid=$(jq -er '.issue.id | strings' <<<"$issue_result") || return 1
-    targets=$(jq -c '.boxes[] | select(.retired.replacement != null or .retired.repair != null)
-        | {box: .number, source: .reading} + .retired' <<<"$tick") || return 1
+    targets=$(jq -c '.retirement_targets[]?' <<<"$tick") || return 1
     while IFS= read -r target; do
         [ -n "$target" ] || continue
         target_id=$(jq -r '.replacement // .repair' <<<"$target") || return 1

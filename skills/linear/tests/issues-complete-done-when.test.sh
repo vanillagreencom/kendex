@@ -555,9 +555,32 @@ for name in failed-live failed-done; do
   Reason: The card never appeared"
   assert_eq "retire $name preserves the box as a failure with its repair and reason" "${record: -${#record_tail}}" "$record_tail"
 done
-assert_jq "replaying a written failure preserves the original disposition" \
-  "$(done_when_parse "$record" '[]' "$merged" '{"3":"CC-730 The card never appeared"}' '{"3":"failed"}')" \
-  '.changed == false and .ticked == 0 and .errors == [] and .completion_state == "Done"'
+# A replay can finish another check after the first retirement was written.
+# The selected repair still needs to qualify before the completion writes.
+later_box='Post-merge: The changelog opens; Where: browser; Why after merge: live site; Deadline: +24h'
+printf '%s\n' "$record" "- [ ] $later_box" >"$TMP_ROOT/failed-written.md"
+printf '%s\n' '3: CC-730 The card never appeared' '4: The changelog opened in the browser' >"$TMP_ROOT/failed-replay-evidence.txt"
+for repair_type in canceled completed; do
+  log="$TMP_ROOT/failure-replay-$repair_type.jsonl"
+  rc=0
+  REPLACEMENT_ID=CC-730 REPLACEMENT_TYPE="$repair_type" \
+    run_complete "$TMP_ROOT/failed-written.md" "$log" CC-720 --post-merge-at "$merged" \
+    --done-when-failed 3 --done-when-met 4 --evidence-file "$TMP_ROOT/failed-replay-evidence.txt" \
+    --summary 'Completion after replay' >"$TMP_ROOT/failure-replay.out" 2>"$TMP_ROOT/failure-replay.err" || rc=$?
+  if [[ "$repair_type" == canceled ]]; then
+    assert_ne 'replay refuses a canceled repair' "$rc" 0
+    assert_jq 'replay names the canceled repair' "$(cat "$TMP_ROOT/failure-replay.err")" \
+      '.error == "done-when-repair-unread" and .box == 3 and .repair == "CC-730"'
+    assert_not 'replay with a canceled repair writes nothing' jq -se 'any(.[]; .query | contains("mutation"))' "$log"
+  else
+    assert_eq 'replay accepts a Done repair' "$rc" 0
+    assert 'replay reads the Done repair' jq -se 'any(.[]; (.query | contains("issue(id:")) and .variables.id == "CC-730")' "$log"
+    assert_jq 'replay with a Done repair sets Done' "$(updates "$log")" '.variables.input.stateId == "state-done"'
+    assert_eq 'replay with a Done repair keeps the failed box and ticks the later box' \
+      "$(updates "$log" | jq -r '.variables.input.description')" \
+      "$(printf '%s\n' "$record" "- [x] $later_box" '  Evidence: The changelog opened in the browser')"
+  fi
+done
 
 # A Done update that wrote its retirements and then failed a supersession
 # returns a retry. Against the written description that retry finishes: each
