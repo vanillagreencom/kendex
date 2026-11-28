@@ -219,10 +219,14 @@
 #
 # A nonempty HARNESS_CI_TRIVIAL_SETTINGS keeps v1 admission for changes to
 # either settings file. Its globs add [env] keys to the base's declared
-# unread keys, and `!` globs remove matches. The remaining file content
-# must agree across the diff, apart from comments and blank lines. A
+# unread keys, and `!` globs remove matches. HARNESS_CI_* and the settings
+# this classifier reads from the committed base cannot be admitted. The
+# remaining file content must agree across the diff, apart from comments
+# and blank lines. In the size rules a settings change under the override
+# reaches only trivial or standard. A
 # nonempty HARNESS_CI_TRIVIAL_MAX_LINES limits trivial by the total changed
-# lines, except for an admitted settings-only diff. Each override warns once
+# lines, except for an admitted settings-only diff. An invalid ceiling keeps
+# the standard route. Each override warns once
 # when used. Remove the overrides to use the current trivial defaults, and
 # use HARNESS_CI_STANDARD_PATHS for paths that still require standard.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
@@ -322,6 +326,7 @@ QUICK_FILES=""
 BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_TRIVIAL_MAX_LINES'
 SETTINGS_ADMITTED=""
 SETTINGS_REFUSAL=""
+SETTINGS_MEASURED=""
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -373,6 +378,7 @@ launch_range_class() { # BASE HEAD REPO STDERR_FILE
     launch_consider standard "branch-class-unreadable detail=$CHANGE_SCOPE_CAUSE" unmeasured
     return 0
   fi
+  [ ! -s "$4" ] || sed -n '/^change-scope-warning=deprecated-setting /p' "$4" >&2
   rule="branch-class class=$CHANGE_SCOPE_CLASS rule=${CHANGE_SCOPE_RULE#cause=}"
   class="$CHANGE_SCOPE_CLASS"
   if change_scope_rank "$class" && ! change_scope_floor "$class"; then
@@ -557,7 +563,7 @@ quick_proof() { # CLASS
 answer() { # CLASS FIELDS [measured]
   local quick=false
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" = small ]; then
-    set -- standard "$SETTINGS_REFUSAL" measured
+    set -- standard "$2 $SETTINGS_ADMITTED" measured
   fi
   measured=true
   [ "$1" != standard ] || measured=false
@@ -1066,11 +1072,12 @@ render_refused_at() { # PATH
 # harness-only owns the docs set. Its docs mode is read once, for the size
 # rules, and its outside list is the changed paths beyond the set.
 docs_outside="$work/docs-outside"
+docs_err="$work/docs-stderr"
 docs_verdict=""
 docs_read() {
   [ -z "$docs_verdict" ] || return 0
   docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
-    --outside-output "$docs_outside" --output /dev/null 2>/dev/null)" || docs_verdict=unreadable
+    --outside-output "$docs_outside" --output /dev/null 2>"$docs_err")" || docs_verdict=unreadable
   case "$docs_verdict" in
     docs_only=true | docs_only=false) ;;
     *) docs_verdict=unreadable ;;
@@ -1249,7 +1256,11 @@ source_catalog_at() { # REV OUT
   esac
 }
 
-settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
+settings_note() { # CAUSE [measured]
+  SETTINGS_REFUSAL="$1"
+  SETTINGS_MEASURED="${2:-}"
+  printf 'settings-admission: admitted=false %s\n' "$1" >&2
+}
 
 # The keys a merge-group run reads from the base never qualify, the
 # allowlist itself included: their breakage stops the queue that would merge
@@ -1306,17 +1317,12 @@ package_namespace() { # DIR
 # waiver. Called after base_settings, which resolves BASE_REV.
 SETTINGS_DEFAULT_KEYS=""
 settings_declarations() {
-  local inventoried status path dir namespace admittable n=0 catalog=false owners=" "
+  local inventory inventoried status path dir namespace admittable n=0 catalog=false owners=" "
   local rev="$BASE_REV" args=() refused="cause=declarations-unreadable step"
   if ! base_file .kendex-generated.json "$work/settings-inventory" ||
-    ! inventoried="$(jq -ers '
-      if length == 1 and (.[0] | type == "array")
-      then .[0] | map(if type == "object" then .path else . end)
-        | if all(.[]; type == "string" and length > 0 and (test("[\\r\\n]") | not))
-          then join("\n") else error("invalid paths") end
-      else error("invalid inventory") end
-    ' "$work/settings-inventory" 2>/dev/null)"; then
-    settings_note "$refused=inventory"
+    ! inventory="$(cat -- "$work/settings-inventory")" ||
+    ! inventoried="$(inventory_paths "$inventory" 2>/dev/null | jq -er 'join("\n")')"; then
+    settings_note "$refused=inventory base=$rev"
     return 1
   fi
   inventoried=$'\n'"$inventoried"$'\n'
@@ -1325,11 +1331,11 @@ settings_declarations() {
   case "$status" in
     0) ;;
     1) catalog=true ;;
-    *) settings_note "$refused=manifest"; return 1 ;;
+    *) settings_note "$refused=manifest base=$rev"; return 1 ;;
   esac
   if [ -z "$rev" ] || ! git -C "$repo" ls-tree -r -z --name-only --full-tree \
     "$rev" >"$work/declarations-tree" 2>/dev/null; then
-    settings_note "$refused=example"
+    settings_note "$refused=tree base=$rev"
     return 1
   fi
   while IFS= read -r -d '' path; do
@@ -1348,14 +1354,14 @@ settings_declarations() {
     n=$((n + 1))
     status=0
     rev_file "$rev" "$path" "$work/declaration-$n" || status=$?
-    [ "$status" = 0 ] || { settings_note "$refused=example path=$path"; return 1; }
+    [ "$status" = 0 ] || { settings_note "$refused=example path=$path base=$rev"; return 1; }
     # The line scan below cannot tell a comment from a line inside a
     # multiline string.
     status=0
     grep -qE "\"\"\"|'''" -- "$work/declaration-$n" || status=$?
-    [ "$status" = 1 ] || { settings_note "$refused=example path=$path"; return 1; }
+    [ "$status" = 1 ] || { settings_note "$refused=example path=$path base=$rev"; return 1; }
     settings_scan "$work/declaration-$n" "$work/declaration-residue" check ||
-      { settings_note "$refused=example path=$path"; return 1; }
+      { settings_note "$refused=example path=$path base=$rev"; return 1; }
     admittable=1
     case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac
     case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac
@@ -1415,7 +1421,7 @@ settings_declarations() {
       }
     }
   ' "${args[@]}")"; then
-    settings_note "$refused=example"
+    settings_note "$refused=example base=$rev"
     return 1
   fi
   SETTINGS_DEFAULT_KEYS="${SETTINGS_DEFAULT_KEYS//$'\n'/ }"
@@ -1479,7 +1485,7 @@ settings_file_admitted() { # PATH
       0) ;;
       2) : >"$work/settings-$side" || status=1 ;;
       3)
-        settings_note "cause=settings-not-regular path=$1 side=$side"
+        settings_note "cause=settings-not-regular path=$1 side=$side" measured
         return 1 ;;
     esac
     [ "$status" = 0 ] || [ "$status" = 2 ] || {
@@ -1490,7 +1496,7 @@ settings_file_admitted() { # PATH
     grep -qE "\"\"\"|'''" -- "$work/settings-$side" || status=$?
     case "$status" in
       0)
-        settings_note "cause=multiline-string path=$1 side=$side"
+        settings_note "cause=multiline-string path=$1 side=$side" measured
         return 1 ;;
       1) ;;
       *)
@@ -1509,14 +1515,19 @@ settings_file_admitted() { # PATH
         settings_note "cause=settings-unparsed path=$1 side=$side"
         return 1 ;;
     esac
-    LC_ALL=C sort -o "$work/settings-values-$side" -- "$work/settings-values-$side" || return 1
+    LC_ALL=C sort -o "$work/settings-values-$side" -- "$work/settings-values-$side" ||
+      { settings_note "cause=settings-values-unreadable path=$1 side=$side"; return 1; }
   done
-  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then
-    settings_note "cause=unadmitted-change path=$1"
-    return 1
-  fi
+  status=0
+  cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head" || status=$?
+  case "$status" in
+    0) ;;
+    1) settings_note "cause=unadmitted-change path=$1" measured; return 1 ;;
+    *) settings_note "cause=settings-residue-unreadable path=$1"; return 1 ;;
+  esac
   SETTINGS_FILE_KEYS="$(LC_ALL=C comm -3 "$work/settings-values-base" "$work/settings-values-head" |
-    awk -F= '{sub(/^\t/, "", $1); print $1}' | LC_ALL=C sort -u | paste -sd, -)"
+    awk -F= '{sub(/^\t/, "", $1); print $1}' | LC_ALL=C sort -u | paste -sd, -)" ||
+      { settings_note "cause=settings-values-unreadable path=$1"; return 1; }
 }
 
 # All affected settings files must pass before any legacy admission can
@@ -1532,14 +1543,9 @@ legacy_settings_admission() {
   done <<<"$changed"
   [ -n "$files" ] || return 0
   warn_legacy_trivial_setting HARNESS_CI_TRIVIAL_SETTINGS
-  path="${files%%$'\n'*}"
-  SETTINGS_REFUSAL="cause=configuration-source path=$path glob=$path"
   settings_declarations || return 1
   while IFS= read -r file; do
-    if ! settings_file_admitted "$file"; then
-      SETTINGS_REFUSAL="cause=configuration-source path=$file glob=$file"
-      return 1
-    fi
+    settings_file_admitted "$file" || return 1
     for key in ${SETTINGS_FILE_KEYS//,/ }; do
       case ",$keys," in *",$key,"*) ;; *) keys="$keys,$key" ;; esac
     done
@@ -1561,17 +1567,20 @@ legacy_trivial_ceiling_allows() {
   [ -n "$max" ] && [ "$changed" != "$SETTINGS_FILES" ] || return 0
   warn_legacy_trivial_setting HARNESS_CI_TRIVIAL_MAX_LINES
   if [[ "$max" == *[!0123456789]* ]] || ! [ "$max" -ge 0 ] 2>/dev/null; then
-    die "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" \
-      "HARNESS_CI_TRIVIAL_MAX_LINES must be a whole number"
+    printf '%s\n' 'setting-refused: setting=HARNESS_CI_TRIVIAL_MAX_LINES cause=invalid-value' >&2
+    answer standard "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" measured
   fi
-  [ "$total" -le "$max" ]
+  [ "$total" -le "$max" ] && return 0
+  TRIVIAL_REFUSAL="reason=ceiling lines=$total max=$max"
+  return 1
 }
+
 # The trivial set holds at any size by default. A paired dependency lock is no
 # member of it. A repository allowlist judges every changed path but the
 # kendex manifests and JSON settings files, which stay members beside it.
 SETTINGS_FILES=""
 SETTINGS_CAUSE=""
-legacy_settings_admission || answer standard "$SETTINGS_REFUSAL" measured
+legacy_settings_admission || answer standard "$SETTINGS_REFUSAL" "$SETTINGS_MEASURED"
 trivial_paths=""
 while IFS= read -r path; do
   [ -n "$path" ] || continue
@@ -1584,6 +1593,7 @@ done <<<"$changed"
 QUICK_FILES="${QUICK_FILES%$'\n'}"
 trivial_cause="cause=documentation-paths"
 [ -z "$QUICK_FILES" ] || trivial_cause="cause=quick-files files=${QUICK_FILES//$'\n'/,}"
+TRIVIAL_REFUSAL="reason=paths"
 if [ -z "$BRANCH_SIZE_PAIRED_LOCK_FILES" ]; then
   in_trivial_set=false
   if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
@@ -1592,13 +1602,20 @@ if [ -z "$BRANCH_SIZE_PAIRED_LOCK_FILES" ]; then
     ! path_matches every "$trivial_paths" || in_trivial_set=true
   elif quick_set_holds; then
     in_trivial_set=true
+  elif [ -n "$SETTINGS_ADMITTED" ] &&
+    { [ "$docs_verdict" = unreadable ] || [ ! -s "$docs_outside" ]; }; then
+    sed -n 's/^fallback: /docs-note: /p' "$docs_err" >&2
+    answer standard "cause=documentation-paths-unreadable base=$base_rev head=$head_rev"
   fi
   if [ "$in_trivial_set" = true ] && legacy_trivial_ceiling_allows; then
     [ -z "$SETTINGS_ADMITTED" ] || trivial_cause="$SETTINGS_CAUSE $SETTINGS_ADMITTED"
     answer_narrow trivial "$trivial_cause lines=$total"
   fi
+else
+  TRIVIAL_REFUSAL="reason=paired-lock"
 fi
-[ -z "$SETTINGS_ADMITTED" ] || answer standard "$SETTINGS_REFUSAL" measured
+[ -z "$SETTINGS_ADMITTED" ] ||
+  answer standard "cause=settings-not-trivial $TRIVIAL_REFUSAL $SETTINGS_ADMITTED" measured
 
 micro_max=""
 small_max=""

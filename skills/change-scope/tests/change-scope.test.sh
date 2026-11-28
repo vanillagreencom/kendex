@@ -1491,10 +1491,13 @@ PATH="$stub_bin:$PATH" assert_class "a checkout whose default branch is not main
   --repo "$trunk" --event pull_request --base "$trunk_base" --head HEAD
 
 
-# The v1 shared workflows read these settings from the committed base. This
-# Vsys allowlist is used by both its release and consumer refresh callers.
+# The v1 consumer refresh classifier reads these settings from the committed
+# base. Vsys supplies this allowlist to its consumer refresh workflow.
 vsys_allow='SECOND_OPINION_* ORCH_LANE_* ORCH_REPORT_* AGENT_RUNTIME_TMUX_* AGENT_RUNTIME_ACCOUNT_* AGENT_RUNTIME_CODEX_* ORCH_OWNER_* LINEAR_* REVIEWER_SLOT_BUDGET'
 legacy_repo="$(new_repo change-scope-legacy-settings)"
+# The docs refusal fixture stages its executable bit independently of the
+# host filesystem's executable mode support.
+git -C "$legacy_repo" config core.filemode false
 mkdir -p "$legacy_repo/.kendex" "$legacy_repo/.agents/skills/slack"
 printf '%s\n' '[env]' 'SECOND_OPINION_MODEL = "old"' 'SLACK_POLL_SECONDS = "15"' \
   'ORCH_SIZE_TEST_PATHS = "none/*"' >"$legacy_repo/kendex.settings.toml"
@@ -1508,13 +1511,14 @@ commit_paths "$legacy_repo" 'settings before any override' seed.txt
 legacy_bare="$(git -C "$legacy_repo" rev-parse HEAD)"
 
 # label | base override | change | class | allowlist warnings | ceiling warnings
+# | optional structured measured/cause prefix | launch class
 legacy_rows=0
-while IFS='|' read -r label override change expected allow_warnings max_warnings; do
+while IFS='|' read -r label override change expected allow_warnings max_warnings proof launch_class; do
   legacy_rows=$((legacy_rows + 1))
   git -C "$legacy_repo" checkout -q -B legacy-case "$legacy_bare"
   legacy_settings="$legacy_repo/kendex.settings.toml"
   case "$override" in
-    allow | both)
+    allow | both | revoked | malformed-inventory | family | docs-unreadable | protection)
       printf 'HARNESS_CI_TRIVIAL_SETTINGS = "%s"\n' "$vsys_allow" >>"$legacy_settings" ;;
     classifier)
       printf 'HARNESS_CI_TRIVIAL_SETTINGS = "%s ORCH_SIZE_TEST_PATHS"\n' "$vsys_allow" >>"$legacy_settings" ;;
@@ -1527,11 +1531,47 @@ while IFS='|' read -r label override change expected allow_warnings max_warnings
       printf 'HARNESS_CI_TRIVIAL_MAX_LINES = "30"\n' >>"$legacy_settings" ;;
     lower)
       printf 'HARNESS_CI_TRIVIAL_MAX_LINES = "1"\n' >>"$legacy_settings" ;;
+    invalid)
+      printf 'HARNESS_CI_TRIVIAL_MAX_LINES = "30 "\n' >>"$legacy_settings" ;;
   esac
-  if [ "$override" != absent ]; then
-    git -C "$legacy_repo" commit -q -am 'trusted settings override'
+  case "$change" in
+    multiline)
+      printf '\n[tool]\nBODY = """\n# before\n"""\n' >>"$legacy_repo/.kendex/settings.toml" ;;
+    docs-unreadable)
+      printf 'HARNESS_CI_DOCS_PATHS = "README.md"\n' >>"$legacy_settings"
+      write_lines "$legacy_repo" README.md 1 ;;
+    paired-lock)
+      printf '%s\n' '[package]' 'name = "app"' 'version = "0.1.0"' '[workspace]' >"$legacy_repo/Cargo.toml"
+      printf '%s\n' 'version = 4' '[[package]]' 'name = "app"' 'version = "0.1.0"' >"$legacy_repo/Cargo.lock"
+      if ! python3 -I -c 'import tomllib' >/dev/null 2>&1; then
+        proof="measured=true cause=settings-not-trivial reason=paths"
+      fi ;;
+    protection)
+      printf 'HARNESS_CI_TRIVIAL_PATHS = "runtime/*"\n' >>"$legacy_settings"
+      mkdir -p "$legacy_repo/runtime/src"
+      printf '%s\n' '#[test]' 'fn old_test() {}' 'fn kept() {}' >"$legacy_repo/runtime/src/lib.rs" ;;
+  esac
+  if [ "$override" = family ]; then
+    printf '%s\n' '[env]' '# keys: SLACK_POLL_<NAME>' '# ci: unread' 'SLACK_POLL_SECONDS = "15"' \
+      >"$legacy_repo/.agents/skills/slack/kendex.settings.toml.example"
   fi
+  if [ "$override" != absent ]; then
+    git -C "$legacy_repo" add -A
+    git -C "$legacy_repo" commit -q -m 'trusted settings override'
+  fi
+  legacy_fork="$(git -C "$legacy_repo" rev-parse HEAD)"
+  case "$override" in
+    revoked)
+      printf '%s\n' '[env]' 'SLACK_POLL_SECONDS = "15"' \
+        >"$legacy_repo/.agents/skills/slack/kendex.settings.toml.example"
+      git -C "$legacy_repo" commit -q -am 'target revokes the declaration' ;;
+    malformed-inventory)
+      printf '%s\n' '[{"path":".agents/skills/slack/SKILL.md"}]' \
+        >"$legacy_repo/.kendex-generated.json"
+      git -C "$legacy_repo" commit -q -am 'target inventory has an incomplete adoption row' ;;
+  esac
   legacy_base="$(git -C "$legacy_repo" rev-parse HEAD)"
+  git -C "$legacy_repo" checkout -q --detach "$legacy_fork"
   case "$change" in
     model)
       printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml" ;;
@@ -1561,6 +1601,34 @@ while IFS='|' read -r label override change expected allow_warnings max_warnings
     mixed)
       printf 'SECOND_OPINION_MODE = "local"\n' >>"$legacy_settings"
       write_lines "$legacy_repo" README.md 30 ;;
+    revoked)
+      printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml"
+      sed 's/SLACK_POLL_SECONDS = "15"/SLACK_POLL_SECONDS = "30"/' "$legacy_settings" \
+        >"$SANDBOX/legacy-edit"
+      mv -- "$SANDBOX/legacy-edit" "$legacy_settings" ;;
+    multiline)
+      sed 's/^# before$/# after/' "$legacy_repo/.kendex/settings.toml" >"$SANDBOX/legacy-edit"
+      mv -- "$SANDBOX/legacy-edit" "$legacy_repo/.kendex/settings.toml" ;;
+    unparsed)
+      printf "%s\n" "SECOND_OPINION_MODEL = 'a'b'" >>"$legacy_repo/.kendex/settings.toml" ;;
+    repair)
+      sed 's/"30 "/"30"/' "$legacy_settings" >"$SANDBOX/legacy-edit"
+      mv -- "$SANDBOX/legacy-edit" "$legacy_settings" ;;
+    docs-unreadable)
+      printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml"
+      git -C "$legacy_repo" update-index --chmod=+x README.md ;;
+    product)
+      printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml"
+      write_lines "$legacy_repo" runtime/product.ts 1 ;;
+    paired-lock)
+      printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml"
+      for file in Cargo.toml Cargo.lock; do
+        sed 's/version = "0.1.0"/version = "0.2.0"/' "$legacy_repo/$file" >"$SANDBOX/legacy-edit"
+        mv -- "$SANDBOX/legacy-edit" "$legacy_repo/$file"
+      done ;;
+    protection)
+      printf 'SECOND_OPINION_MODEL = "new"\n' >>"$legacy_repo/.kendex/settings.toml"
+      printf '%s\n' 'fn kept() {}' >"$legacy_repo/runtime/src/lib.rs" ;;
     registry)
       write_lines "$legacy_repo" .claude/settings.json 2 ;;
     sources)
@@ -1573,33 +1641,61 @@ while IFS='|' read -r label override change expected allow_warnings max_warnings
   esac
   git -C "$legacy_repo" add -A
   git -C "$legacy_repo" commit -q -m "$label"
+  legacy_status=0
   legacy_out="$(PATH="$stub_bin:$PATH" \
     HARNESS_CI_TRIVIAL_SETTINGS='OTHER_*' HARNESS_CI_TRIVIAL_MAX_LINES=200 \
     "$CHANGE_SCOPE" --repo "$legacy_repo" --event pull_request \
-      --base "$legacy_base" --head HEAD 2>"$SANDBOX/legacy-stderr")"
-  assert_eq "$label class" "change_class=$expected" "$legacy_out"
+      --base "$legacy_base" --head HEAD 2>"$SANDBOX/legacy-stderr")" || legacy_status=$?
+  assert_eq "$label class" "change_class=$expected exit=0" "$legacy_out exit=$legacy_status"
   assert_eq "$label allowlist warning count" "$allow_warnings" \
     "$(grep -c '^change-scope-warning=deprecated-setting setting=HARNESS_CI_TRIVIAL_SETTINGS ' \
       "$SANDBOX/legacy-stderr" || true)"
   assert_eq "$label ceiling warning count" "$max_warnings" \
     "$(grep -c '^change-scope-warning=deprecated-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES ' \
       "$SANDBOX/legacy-stderr" || true)"
+  if [ -n "$proof" ]; then
+    class_line="$(sed -n '/^class: /p' "$SANDBOX/legacy-stderr")"
+    expected_class_line="class: class=$expected $proof"
+    assert_eq "$label measurement and cause" "$expected_class_line" \
+      "${class_line:0:${#expected_class_line}}"
+  fi
+  if [ -n "$launch_class" ]; then
+    launch_status=0
+    launch_out="$(PATH="$stub_bin:$PATH" "$CHANGE_SCOPE" launch --repo "$legacy_repo" \
+      --base "$legacy_base" --head HEAD 2>"$SANDBOX/legacy-launch-stderr")" || launch_status=$?
+    assert_eq "$label launch class" "change_class=$launch_class exit=0" "$launch_out exit=$launch_status"
+    assert_eq "$label launch migration warning" \
+      "$(sed -n '/^change-scope-warning=deprecated-setting /p' "$SANDBOX/legacy-stderr")" \
+      "$(sed -n '/^change-scope-warning=deprecated-setting /p' "$SANDBOX/legacy-launch-stderr")"
+    assert_eq "$label launch class footer" "class: class=$launch_class measured=true" \
+      "$(tail -1 "$SANDBOX/legacy-launch-stderr" | cut -d ' ' -f 1-3)"
+  fi
 done <<'LEGACY_SETTINGS'
-a Vsys key addition uses the trusted allowlist|allow|model|trivial|1|0
+a Vsys key addition uses the trusted allowlist|allow|model|trivial|1|0||micro
 a Vsys key deletion uses the trusted allowlist|allow|delete-model|trivial|1|0
 multiple settings files warn once|allow|both-files|trivial|1|0
 an explicit ceiling exempts admitted settings alone|both|large-settings|trivial|1|0
-both overrides apply to a mixed range|both|mixed|standard|1|1
+both overrides apply to a mixed range|both|mixed|standard|1|1|measured=true cause=settings-not-trivial reason=ceiling
 a declared key remains admitted with a positive allowlist|allow|declared|trivial|1|0
 a negative glob removes a declared key|remove|declared|standard|1|0
 a negative glob overrides a positive match|remove|model|standard|1|0
+a second settings file changes a key the base has revoked|revoked|revoked|standard|1|0|measured=true cause=unadmitted-change path=kendex.settings.toml
+a declaration cannot admit a named key family|family|declared|standard|1|0|measured=true cause=unadmitted-change
+a malformed named base inventory cannot attest an allowlist|malformed-inventory|model|standard|1|0|measured=false cause=declarations-unreadable step=inventory
+a multiline value change outside the env table remains excluded|allow|multiline|standard|1|0|measured=true cause=multiline-string
+a head settings file the reader cannot parse remains unmeasured|allow|unparsed|standard|1|0|measured=false cause=settings-unparsed
+a mixed range whose docs proof failed remains unmeasured|docs-unreadable|docs-unreadable|standard|1|0|measured=false cause=documentation-paths-unreadable
+a product path makes admitted settings nontrivial|allow|product|standard|1|0|measured=true cause=settings-not-trivial reason=paths
+a paired dependency lock makes admitted settings nontrivial|allow|paired-lock|standard|1|0|measured=true cause=settings-not-trivial reason=paired-lock
+a test protection removal keeps its cause|protection|protection|standard|1|0|measured=true cause=protection-removed
 a base classification key stays outside the allowlist|classifier|classifier-key|standard|1|0
 an allowlisted name outside the env table stays excluded|allow|out-of-table|standard|1|0
 a head cannot widen the allowlist or use the environment|allow|head-allow|standard|1|0
 a head-only allowlist leaves the current default|absent|head-allow|trivial|0|0
 a head cannot raise the committed ceiling|lower|head-max|small|0|1
-an explicit ceiling includes its boundary|max|small-doc|trivial|0|1
+an explicit ceiling includes its boundary|max|small-doc|trivial|0|1||micro
 an explicit ceiling excludes one more line|max|large-doc|small|0|1
+an invalid ceiling can be repaired through the standard route|invalid|repair|standard|0|1|measured=true cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES
 the default has no ceiling|absent|large-doc|trivial|0|0
 the default keeps settings trivial without admission|absent|out-of-table|trivial|0|0
 a harness registry remains standard|both|registry|standard|0|0
