@@ -1863,6 +1863,28 @@ fn a_reconciled_ssh_claude_worker_continues_from_current_rows_after_watch_replac
         "KEN-1",
     );
     launcher.tools = Some(host.tools.clone());
+    // Refuse the status channel before its handshake, or arm a rows
+    // refusal after the cursor read so the next read is the receipt's.
+    let ssh = host.tools.join("ssh");
+    std::fs::rename(&ssh, host.tools.join("ssh-fixture")).unwrap();
+    write_executable(
+        &ssh,
+        r#"#!/bin/bash
+here="${0%/*}"
+if [[ "$1" == -T && -e "$here/refuse-status" && "$*" == *"orch_take_lock 9"* ]]; then
+    rm -- "$here/refuse-status"
+    printf 'ssh: connection refused by fixture\n' >&2
+    exit 255
+fi
+if [[ "$1" == -T && -f "$here/defer-row-refusal" && "$*" == *"$(cat "$here/defer-row-refusal")"* ]]; then
+    "$here/ssh-fixture" "$@"
+    code=$?
+    mv -- "$here/defer-row-refusal" "$here/drop-on"
+    exit "$code"
+fi
+exec "$here/ssh-fixture" "$@"
+"#,
+    );
     std::fs::write(
         launcher.state_dir().join("setup-token"),
         "claude-token-row\n",
@@ -1887,6 +1909,38 @@ done
     let mut launch = launch_request("KEN-1", launcher.state_dir());
     launch["host"] = json!(host.provider());
     launch["repo"] = json!("o/r");
+    let rows = host
+        .worktree()
+        .join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+    let drop_on = host.tools.join("drop-on");
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let before = fleet.server.panes();
+    let refused = effect_report(&launcher.op_fleet(&launch));
+    assert!(!drop_on.exists());
+    assert_eq!(refused["intent"]["outcome"], "failed", "{refused}");
+    let cause = refused["intent"]["observation"]["cause"].as_str().unwrap();
+    assert!(
+        cause.contains("session-rows-read-failed") && cause.contains("255"),
+        "{refused}"
+    );
+    assert_eq!(refused["lane"]["sandbox"], "standing", "{refused}");
+    assert_eq!(fleet.server.panes(), before);
+    std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    let stop = || {
+        writeln!(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&rows)
+                .unwrap(),
+            "{}",
+            json!({"harness":"claude","event":"StopFailure","error":"server_error"})
+        )
+        .unwrap();
+    };
+    // The failed launch left a reusable worktree. Stand one predecessor
+    // row there while the next launch still owns no window.
+    stop();
     let fifo = fleet.root.join("capture.fifo");
     let mark = fleet.root.join("capture.mark");
     mkfifo(&fifo);
@@ -1906,36 +1960,20 @@ done
     release_hold(&fifo, secs(10), || launcher.fleet().to_string());
     let opening = launcher.fleet();
     assert_eq!(opening["lanes"][0]["status"], "preparing");
-    let phase = &opening["intents"][0]["phase"];
+    let phase = &opening["intents"].as_array().unwrap().last().unwrap()["phase"];
     fleet.server.await_composer(phase["pane"].as_str().unwrap());
     assert_eq!(phase["hosted_mail_root"], json!(host.worktree()));
-    assert_eq!(phase["session_rows_at_launch"], 0);
+    assert_eq!(phase["session_rows_at_launch"], 1);
     let confirmed = launcher.reconcile_one();
     assert_eq!(confirmed["intent"]["outcome"], "confirmed", "{confirmed}");
     let lane = &confirmed["lane"];
     assert_eq!(lane["mail_root"], json!(host.worktree()));
     assert_eq!(lane["mail_root_confirmed"], true);
-    assert_eq!(lane["session_rows_at_launch"], 0);
+    assert_eq!(lane["session_rows_at_launch"], 1);
     let mut record = launcher.fleet();
     record["controller"] = fleet.read_fleet()["controller"].clone();
     fleet.write_fleet(&record);
 
-    let rows = host
-        .worktree()
-        .join("tmp/lane-mail/KEN-1/session-rows.jsonl");
-    std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
-    let stop = || {
-        writeln!(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&rows)
-                .unwrap(),
-            "{}",
-            json!({"harness":"claude","event":"StopFailure","error":"server_error"})
-        )
-        .unwrap();
-    };
     let typed = || std::fs::read_to_string(host.worktree().join("typed")).unwrap_or_default();
     let clock = FakeClock::new();
     let lane_name = lane["window"].as_str().unwrap();
@@ -1968,6 +2006,12 @@ done
         assert_eq!(typed().lines().count(), before + 1);
     };
     let mut baseline = Baseline::default();
+    for _ in 0..2 {
+        observe_ssh_worker(&fleet, &mut baseline, &clock);
+    }
+    assert!(baseline.get(wake::RESUME_KIND, lane_name).is_none());
+    assert!(rendered(&run_once(&mut fleet.body(), &baseline, &clock).unwrap()).is_empty());
+    assert!(typed().is_empty());
     stop();
     continue_once(&mut baseline, 0);
 
@@ -2019,7 +2063,6 @@ done
     continue_once(&mut baseline, 1);
 
     stop();
-    let drop_on = host.tools.join("drop-on");
     std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
     let refused = observe_ssh_worker(&fleet, &mut baseline, &clock);
     assert!(
@@ -2043,22 +2086,106 @@ done
     assert_eq!(typed().lines().count(), 2);
     observe_twice(&mut baseline);
     let prior = fleet.mark("KEN-1");
-    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
-    let refused = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
+    let wake = |baseline: &mut Baseline| {
+        let pass = run_once(&mut fleet.body(), baseline, &clock).unwrap();
+        for change in &pass.changes {
+            baseline.apply(change.clone());
+        }
+        pass
+    };
+    let refuse_status = host.tools.join("refuse-status");
+    std::fs::write(&refuse_status, "").unwrap();
+    let refused = wake(&mut baseline);
     assert!(
-        !drop_on.exists(),
-        "the cursor fetch must reach the SSH refusal"
-    );
-    assert!(
-        refused.events.iter().any(|event| matches!(event,
-            watch::Event::LaneUnreadable { lane, cause } if lane == lane_name
-                && cause.contains(&host.provider()) && cause.contains("255")
-        )),
+        matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
+            if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
+                && cause.contains("harness-probe-failed")),
         "{refused:?}"
     );
-    assert_eq!(fleet.mark("KEN-1"), prior);
+    assert!(!refuse_status.exists());
+    for first in [true, false] {
+        std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+        let refused = wake(&mut baseline);
+        assert!(
+            !drop_on.exists(),
+            "the cursor fetch must reach the SSH refusal"
+        );
+        if first {
+            assert!(
+                matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
+                    if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")),
+                "{refused:?}"
+            );
+        } else {
+            assert!(refused.events.is_empty(), "{refused:?}");
+        }
+        assert_eq!(fleet.mark("KEN-1"), prior);
+    }
     assert_eq!(typed().lines().count(), 2);
-    continue_once(&mut baseline, 2);
+
+    let queued = baseline
+        .get(wake::RESUME_KIND, lane_name)
+        .unwrap()
+        .to_owned();
+    let defer = host.tools.join("defer-row-refusal");
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
+    let first = wake(&mut baseline);
+    assert!(
+        !defer.exists() && !drop_on.exists(),
+        "the receipt reached the refusal"
+    );
+    assert!(
+        matches!(first.events.as_slice(), [watch::Event::WakeUnconfirmed { target, cause, resume }]
+            if target == "KEN-1" && cause.contains(&host.provider()) && cause.contains("255")
+                && resume.as_deref() == Some("server_error")),
+        "{first:?}"
+    );
+    let mark = fleet.mark("KEN-1").unwrap();
+    assert_eq!(mark.resume.as_deref(), Some(queued.as_str()));
+    assert!(matches!(
+        mark.outcome,
+        Some(WakeOutcome::Unconfirmed { .. })
+    ));
+    // Once the receipt is on disk, reconcile that cursor and digest. No
+    // unread inbox row drives the reread or a second paste.
+    let deadline = Instant::now() + secs(5);
+    while !std::fs::read_to_string(&rows)
+        .unwrap()
+        .lines()
+        .last()
+        .is_some_and(|row| row.contains("UserPromptSubmit"))
+    {
+        assert!(Instant::now() < deadline, "the typed turn wrote no receipt");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(typed().lines().count(), 3);
+    // New inbox mail cannot take over the mark while the receipt is open.
+    // The same provider refusal does not produce another notice.
+    let mut with_unread = baseline.clone();
+    with_unread.apply(Change::Set {
+        kind: UNREAD_KIND.into(),
+        identity: "KEN-1".into(),
+        value: "unread-during-receipt".into(),
+    });
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    assert!(wake(&mut with_unread).events.is_empty());
+    assert!(!drop_on.exists());
+    assert_eq!(fleet.mark("KEN-1"), Some(mark));
+    assert_eq!(
+        rendered(&wake(&mut baseline)),
+        vec!["EVENT wake-delivered KEN-1 resume=server_error"]
+    );
+    assert!(wake(&mut baseline).events.is_empty());
+    assert_eq!(typed().lines().count(), 3);
+    stop();
+    observe_twice(&mut baseline);
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    assert!(matches!(
+        wake(&mut baseline).events.as_slice(),
+        [watch::Event::LaneUnreadable { lane, cause }]
+            if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
+    ));
+    continue_once(&mut baseline, 3);
     assert!(
         host.calls()
             .iter()

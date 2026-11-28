@@ -1367,8 +1367,9 @@ fn hosted_launch(
         match hosted::session_rows_at(&scripts, provider, &r.item, &created.path) {
             hosted::Answer::Live(text) => Some(text.lines().count()),
             hosted::Answer::Gone => Some(0),
-            // The watch establishes a floor once it can read the rows.
-            hosted::Answer::Unreadable { .. } => None,
+            // The provider created a sandbox, but no window or harness was
+            // started. A normal relaunch can reuse it and read the floor again.
+            hosted::Answer::Unreadable { cause } => return failed(operation, &cause),
         }
     } else {
         None

@@ -2700,30 +2700,25 @@ fn refused_handoff(pass: &Pass, lane: &Lane, fields: String) -> Result<HandoffRe
 pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
     let root = match mail_root(lane) {
         Ok(root) => root,
-        Err(cause) => return session_rows_unreadable(lane, cause),
+        Err(cause) => return session_rows_unreadable(host_of(lane), &lane.item, cause),
     };
-    match session_rows_at(scripts, host_of(lane), &lane.item, root) {
-        Answer::Unreadable { cause } => session_rows_unreadable(lane, &cause),
-        answer @ (Answer::Live(_) | Answer::Gone) => answer,
-    }
+    session_rows_at(scripts, host_of(lane), &lane.item, root)
 }
 
 /// A Claude provider stop needs a root proved by the current launch,
 /// even if the legacy record's path differs from its checkout.
 pub(super) fn confirmed_session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
     if !lane.mail_root_confirmed {
-        return session_rows_unreadable(lane, "mail-root-unconfirmed");
+        return session_rows_unreadable(host_of(lane), &lane.item, "mail-root-unconfirmed");
     }
     session_rows(scripts, lane)
 }
 
-fn session_rows_unreadable(lane: &Lane, cause: &str) -> Answer<String> {
+pub(super) const SESSION_ROWS_READ_FAILED: &str = "session-rows-read-failed";
+
+fn session_rows_unreadable(host: &str, item: &str, cause: &str) -> Answer<String> {
     Answer::Unreadable {
-        cause: format!(
-            "session-rows-read-failed item={} host={} cause={cause}",
-            lane.item,
-            host_of(lane)
-        ),
+        cause: format!("{SESSION_ROWS_READ_FAILED} item={item} host={host} cause={cause}"),
     }
 }
 
@@ -2735,7 +2730,10 @@ pub(crate) fn session_rows_at(
     root: &str,
 ) -> Answer<String> {
     let file = marker::mailbox_path(Path::new(root), item).join(agent_runtime::rows::LANE_FILE);
-    fetch(scripts, host, item, &file.to_string_lossy())
+    match fetch(scripts, host, item, &file.to_string_lossy()) {
+        Answer::Unreadable { cause } => session_rows_unreadable(host, item, &cause),
+        answer @ (Answer::Live(_) | Answer::Gone) => answer,
+    }
 }
 
 /// A launch can have the provider's root in its journal even if its lane

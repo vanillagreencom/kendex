@@ -1582,14 +1582,7 @@ fn observe_one(
                     out.changes.push(clear(hosted::CLOSE_PENDING_ROW, lane));
                 }
             }
-            if get("lane-unreadable").as_deref() != Some(cause.as_str()) {
-                out.events.push(Event::LaneUnreadable {
-                    lane: lane.clone(),
-                    cause: cause.clone(),
-                });
-                out.changes
-                    .push(set("lane-unreadable", lane, cause.clone()));
-            }
+            report_unreadable(out, pass.baseline, "lane-unreadable", lane, cause);
             return reading;
         }
         LaneState::Exited
@@ -1796,6 +1789,23 @@ fn observe_one(
         }
     }
     reading
+}
+
+/// The lane and wake duties each own their read and clear their own row.
+pub(super) fn report_unreadable(
+    out: &mut Produced,
+    baseline: &Baseline,
+    kind: &str,
+    lane: &str,
+    cause: &str,
+) {
+    if baseline.get(kind, lane) != Some(cause) {
+        out.events.push(Event::LaneUnreadable {
+            lane: lane.to_owned(),
+            cause: cause.to_owned(),
+        });
+        out.changes.push(set(kind, lane, cause.to_owned()));
+    }
 }
 
 /// A worker whose turn ended on a continuation cause is resumed on its own
