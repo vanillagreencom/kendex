@@ -7,8 +7,11 @@
 # workflow that does not ask, a ci.yml copied before the default, keeps its
 # lanes once a refresh delivers the render.
 # Inputs: harness-ci scripts, the change-scope classifier and the change-class action.
-# Render causes are covered by render-claims.test.sh.
+# Proved render claims are covered by render-claims.test.sh.
 set -euo pipefail
+if [ -n "${LANE_REACH_PYTHON_BIN:-}" ]; then
+  export PATH="$LANE_REACH_PYTHON_BIN:$PATH"
+fi
 # shellcheck source=../../change-scope/tests/lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../../change-scope/tests/lib/sandbox.sh"
 PLANT_ENTRY=change-class
@@ -38,7 +41,8 @@ mkdir -p "$repo/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$repo/$READER"
 # The manifest a manifest row replaces.
 printf 'schema = 7\n' >"$repo/kendex.toml"
-commit_paths "$repo" baseline seed.txt
+rendered_skill=.agents/skills/orch/SKILL.md
+commit_paths "$repo" baseline seed.txt "$rendered_skill"
 # One base per state of the opt-back in the base commit's settings.
 base_with_settings() { # NAME SETTINGS — prints the base commit
   git -C "$repo" checkout -q -B "$1" main
@@ -99,6 +103,132 @@ write_row() { # NAME BASE PATHS LINES: commits the row's change on BASE
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$1"
 }
+
+# Both callers read the render proof for an inventoried Markdown file that
+# also matches the docs path set. The verifier can refuse with a mirror remedy.
+mkdir -p "$SANDBOX/refusing-verifier"
+cat >"$SANDBOX/refusing-verifier/kendex" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  --version) printf 'kendex 0.0.0-stub\n' ;;
+  'verify --help') exit 0 ;;
+  *)
+    if [ "${MIRROR_MISSING:-false}" = true ]; then
+      printf '%s\n' 'verb=source operation=refresh' >&2
+    fi
+    exit 1 ;;
+esac
+STUB
+chmod +x "$SANDBOX/refusing-verifier/kendex"
+no_verifier_path=""
+while IFS= read -r dir; do
+  [ -n "$dir" ] && [ ! -x "$dir/kendex" ] || continue
+  no_verifier_path="${no_verifier_path:+$no_verifier_path:}$dir"
+done <<<"$(printf '%s' "$PATH" | tr ':' '\n')"
+
+# Let Git report a failed blob read for the base inventory while the docs
+# reader still sees the same committed range and all of its paths.
+mkdir -p "$SANDBOX/unreadable-inventory"
+real_git="$(command -v git)"
+cat >"$SANDBOX/unreadable-inventory/git" <<'STUB'
+#!/usr/bin/env bash
+if [ "${5:-}" = show ] && [ "${6:-}" = "$UNREADABLE_INVENTORY:.kendex-generated.json" ]; then
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+STUB
+chmod +x "$SANDBOX/unreadable-inventory/git"
+git -C "$repo" checkout -qb invalid-inventory "$base_default"
+printf '%s\n' 'invalid inventory' >"$repo/.kendex-generated.json"
+git -C "$repo" commit -qam invalid-inventory
+base_invalid_inventory="$(git -C "$repo" rev-parse HEAD)"
+
+rows=0
+while IFS='|' read -r name mixed_base markdown classifier_path mirror_missing expected_cause; do
+  rows=$((rows + 1))
+  write_row "$name" "$mixed_base" "$markdown $rendered_skill" 3
+  PATH="$classifier_path" MIRROR_MISSING="$mirror_missing" UNREADABLE_INVENTORY="$mixed_base" REAL_GIT="$real_git" \
+    run_action merge_group "$mixed_base" "$SANDBOX/default" true
+  PATH="$classifier_path" MIRROR_MISSING="$mirror_missing" UNREADABLE_INVENTORY="$mixed_base" REAL_GIT="$real_git" \
+    run_local "$CHANGE_CLASS" merge_group "$mixed_base" "$SANDBOX/default" true
+  assert_eq "$name: class and docs membership" $'change_class=standard\ndocs_only=true' \
+    "$(sed -n '/^change_class=/p; /^docs_only=/p' "$SANDBOX/action-output")"
+  assert_eq "$name: class cause" "$expected_cause" \
+    "$(sed -n 's/^class: class=[^ ]* measured=[^ ]* cause=\([^ ]*\).*/\1/p' "$SANDBOX/action-stderr")"
+  assert_eq "$name: aggregate lane eligibility" lanes=true \
+    "$(sed -n '/^lanes=/p' "$SANDBOX/action-output")"
+  assert_eq "$name: per-lane eligibility" lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
+  assert_eq "$name: local and action agree" "$(lane_answer "$SANDBOX/action-output") $(verdicts)" \
+    "$(lane_answer "$SANDBOX/local-output") $(verdicts "$SANDBOX/local-output")"
+done <<ROWS
+mixed-verify-refused|$base_default|docs/guide.md|$SANDBOX/refusing-verifier:$PATH|false|verify-refused
+mixed-source-mirror-missing|$base_default|docs/guide.md|$SANDBOX/refusing-verifier:$PATH|true|source-mirror-missing
+mixed-no-verifier|$base_default|docs/guide.md|$no_verifier_path|false|no-verifier
+mixed-invalid-inventory|$base_invalid_inventory|docs/guide.md|$no_verifier_path|false|invalid-generated-paths
+mixed-unreadable-base-inventory|$base_default|docs/guide.md|$SANDBOX/unreadable-inventory:$no_verifier_path|false|unreadable-base-inventory
+mixed-unreadable-changed-path|$base_default|:release-notes.md|$no_verifier_path|false|unreadable-changed-path
+ROWS
+require_rows mixed-render-docs "$rows"
+
+# A newly selected derived job needs its gated nightly prerequisite. Its
+# render has known package ownership and none of the jobs reads either path.
+git -C "$repo" checkout -qb derived-base "$base_default"
+mkdir -p "$repo/.github/workflows" "$repo/tools" "$SANDBOX/derived/.github"
+cat >"$repo/.github/ci-lanes.conf" <<'LANES'
+slow:nightly slow/* # reason: external build inputs
+unrelated:nightly unrelated/* # reason: external platform fixtures
+LANES
+cp "$repo/.github/ci-lanes.conf" "$SANDBOX/derived/.github/ci-lanes.conf"
+printf '%s\n' 'true' >"$repo/tools/check.sh"
+printf '%s\n' '{"entries":{"skill:orch:codex":{"sourceRepo":"example/catalog","emitted":{"paths":[".agents/skills/orch"]}}}}' \
+  >"$repo/.kendex-lock.json"
+cat >"$repo/.github/workflows/ci.yml" <<'YAML'
+name: CI
+on: merge_group
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.classify.outputs.lanes }}
+      lane_test: ${{ steps.lanes.outputs.lane_test }}
+      lane_slow: ${{ steps.lanes.outputs.lane_slow }}
+      lane_unrelated: ${{ steps.lanes.outputs.lane_unrelated }}
+    steps:
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+      - id: lanes
+        env:
+          LANE_VERDICTS: ${{ steps.classify.outputs.lane_verdicts }}
+        run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
+YAML
+while IFS='|' read -r lane needs; do
+  cat >>"$repo/.github/workflows/ci.yml" <<YAML
+  $lane:
+    needs: $needs
+    if: \${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_$lane != 'false')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash ./tools/check.sh
+YAML
+done <<'ROWS'
+test|[changes, slow]
+slow|changes
+unrelated|changes
+ROWS
+git -C "$repo" add -A
+git -C "$repo" commit -qm derived-base
+base_derived="$(git -C "$repo" rev-parse HEAD)"
+write_row derived-refusal "$base_derived" "docs/guide.md $rendered_skill" 3
+PATH="$no_verifier_path" GITHUB_REPOSITORY=example/derived GITHUB_JOB=changes \
+  GITHUB_WORKFLOW_REF=example/derived/.github/workflows/ci.yml@refs/heads/main \
+  run_action merge_group "$base_derived" "$SANDBOX/derived" true
+assert_eq 'derived refusal: a required nightly lane runs and an unrelated one skips' \
+  lane_slow=true,lane_unrelated=false,lane_test=true "$(verdicts)"
+assert_eq 'derived refusal: the existing prerequisite closure selects the required lane' \
+  'lane: name=slow verdict=true cause=derived-reach evidence=prerequisite' \
+  "$(sed -n '/^lane: name=slow /p' "$SANDBOX/action-stderr")"
+
 rows=0
 while IFS='|' read -r name event base_name paths lines declaration default expected cause queue lane_verdicts; do
   rows=$((rows + 1))
@@ -377,8 +507,8 @@ done < <(unread_rows)
 require_rows unread-paths "$rows"
 # The local carrier must include the base declaration in its lane evidence.
 local_unread_mutant="$(mutant local-unread-omitted change-class \
-  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n%s\n'\'' "$queue_line" "$per_push_line" "$unread_line"; } >"$work/class-log"' \
-  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n'\'' "$queue_line" "$per_push_line"; } >"$work/class-log"')"
+  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n%s\n%s\n'\'' "$queue_line" "$per_push_line" "$unread_line" "$class_record"; } >"$work/class-log"' \
+  '  { cat -- "$work/class-log-head"; printf '\''%s\n%s\n%s\n'\'' "$queue_line" "$per_push_line" "$class_record"; } >"$work/class-log"')"
 control_status=0
 (PASS=0; FAIL=0; LOCAL_COMMAND="$local_unread_mutant"
   unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \

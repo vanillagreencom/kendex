@@ -35,7 +35,8 @@ unread_list_match() { # PATH GLOBS
 
 # Lane decisions shared by the installed command and the action. The caller
 # supplies the class and harness-only's paths, outside list and range log in
-# WORK, the log also holding change-class's per-push line.
+# WORK, the log also holding change-class's per-push line and closing class
+# record.
 # Results are lanes, lanes_cause, and lane_values and lane_causes per
 # declared lane. Refusals pass cause= fields to the caller's die formatter.
 #
@@ -61,6 +62,7 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local derived=false reach_status=0 prereqs=() derived_causes=()
   local declared_paths=""
   local unread_globs unread_hit queue_globs
+  local class_cause render_refusal=""
   local legacy_warning='::warning title=Legacy lane claims::Use derived workflow lane selection and retain only exceptions with an inline reason.'
   # Older library callers do not write declaration evidence.
   if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then
@@ -113,11 +115,26 @@ if [ -n "$lanes_from" ]; then
   declaration="$lanes_root/.github/ci-lanes.conf"
 fi
 
+# Markdown membership also covers inventoried skill files. Read only the
+# closing class record so diagnostics relayed from the verifier cannot
+# supply the cause. Older callers without that record retain their waiver.
+if [ "$docs" = docs_only=true ] && [ "$class" = standard ]; then
+  class_cause="$(sed -n '$s/^class: class=standard measured=[^ ]* cause=\([^ ]*\).*/\1/p' "${work:?}/class-log")" ||
+    die "cause=class-record-unreadable" "could not read change-class's closing record"
+  case "$class_cause" in
+    no-verifier | verify-* | source-mirror-missing | head-rev-missing | head-checkout-failed | \
+      file-lookup-failed | unreadable-changed-path | unreadable-base-inventory | unreadable-head-inventory | \
+      invalid-generated-paths | \
+      render-path-* | render-retirement-unproved | mixed-render-paths-unreadable)
+      render_refusal="$class_cause" ;;
+  esac
+fi
+
 if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
   lanes=true lanes_cause=full-run
 elif [ "$class" = render ] || [ "$class" = trivial ]; then
   lanes=false lanes_cause="$class"
-elif [ "$docs" = docs_only=true ]; then
+elif [ "$docs" = docs_only=true ] && [ -z "$render_refusal" ]; then
   lanes=false lanes_cause=docs-only
 else
   lanes=true lanes_cause="$class"
@@ -301,7 +318,7 @@ derive_lanes() {
   ) >"$work/lane-exceptions" 3>"$work/lane-claims" || return 2
 
   python3 "$HARNESS_CI_LIB_DIR/lane-reach.py" "$REPO" "$authority" "$compared" "$head" \
-    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" >"$work/lane-reach" || return $?
+    "$work" "$lanes_root" "$class" "$BASE_SETTINGS_FILES" "$EVENT" "$render_refusal" >"$work/lane-reach" || return $?
   [ -s "$work/lane-reach" ] || return 2
   if [ -s "$exact" ]; then
     ci_lanes_read "$exact" || return 2
@@ -547,6 +564,8 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
   elif [ "${lane_nightly[$index]}" = true ]; then
     lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
+  elif [ "$derived" = false ] && [ -n "$render_refusal" ]; then
+    lane_values[$index]=true lane_causes[$index]="cause=$render_refusal"
   elif [ -n "$unread_hit" ]; then
     lane_values[$index]=false lane_causes[$index]="cause=unread-path setting=HARNESS_CI_UNREAD_PATHS $unread_hit"
   else

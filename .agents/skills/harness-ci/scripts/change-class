@@ -515,7 +515,7 @@ if [ -n "$output" ] && [ "$output" != /dev/null ]; then
   [ -f "$work/declared" ] || die "cause=declared-paths-unreadable" \
     "the docs reader did not complete declaration discovery"
   # The lane producer reads the same evidence on the local and action routes.
-  { cat -- "$work/class-log-head"; printf '%s\n%s\n%s\n' "$queue_line" "$per_push_line" "$unread_line"; } >"$work/class-log"
+  { cat -- "$work/class-log-head"; printf '%s\n%s\n%s\n%s\n' "$queue_line" "$per_push_line" "$unread_line" "$class_record"; } >"$work/class-log"
   change_class_lanes "$class" "$lane_docs" "$event" "$repo" "$head" \
     "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" "$base" >&2
   index=0
