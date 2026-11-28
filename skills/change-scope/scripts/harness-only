@@ -354,7 +354,7 @@ if [ "$classification" = docs ]; then
         *.md | *.markdown) ;;
         *) verdict false "cause=invalid-docs-path" "a declared docs path is not Markdown" ;;
       esac
-      change_class_path "$path" launch
+      change_class_path "$path" launch file
       [ -z "$CHANGE_CLASS_PATH" ] || verdict false \
         "cause=protected-docs-path path=$(stable_value "$path")" "a declared docs path is protected"
       docs_paths="${docs_paths:+$docs_paths

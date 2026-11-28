@@ -5,9 +5,10 @@
 # the classifier through. Sourced with extglob enabled. Path helpers read no
 # diff or repository settings.
 #
-# change_class_path PATH PHASE sets CHANGE_CLASS_PATH and
+# change_class_path PATH PHASE [file] sets CHANGE_CLASS_PATH and
 # CHANGE_CLASS_PATH_CAUSE. PHASE is before-render, registry, narrow or
-# launch (all phases). An unmatched path leaves both empty.
+# launch (all phases). Launch entries can name folders unless the caller
+# supplies file. An unmatched path leaves both empty.
 # change_class_quick_path PATH returns 0 for a kendex manifest or a JSON
 # settings file that no registry or .gemini glob matches at any depth, the
 # paths beside Markdown that the cheapest class takes.
@@ -15,9 +16,10 @@
 # change_class_path_load CONF reads the narrow-phase lists once. Returns 1
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
 # narrow class. Call it before the narrow or launch phase.
-# change_class_path_match PATH GLOBS [any-depth] sets PATH_MATCH_HIT on the
+# change_class_path_match PATH GLOBS [SCOPE [MODE]] sets PATH_MATCH_HIT on the
 # first match. GLOBS is newline-separated, with bash patterns matching the
 # whole path, or with any-depth the whole path or a suffix after a `/`.
+# The location mode also considers matches below PATH.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
 # change_scope_location_load REPO loads the narrow-phase lists and
 # CHANGE_CLASS_STANDARD_PATHS from REPO's main checkout, returning 1 with
@@ -76,19 +78,62 @@ names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
   set +f
 }
 
-change_class_path_match() { # PATH GLOBS [any-depth]
-  local glob
+change_class_glob_match() { # PATH GLOB SCOPE
+  # shellcheck disable=SC2254
+  case "$1" in
+    $2) return 0 ;;
+    */$2) [ "$3" = any-depth ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Test directory boundaries of the glob and places where a plain '*' can
+# consume a slash. In the catalog list a leading '*' admits render and nested
+# project prefixes: the entry must reach the glob's named tree at a component
+# boundary. Any-depth registry globs likewise need a named component.
+change_class_descendant_match() { # DIRECTORY GLOB SCOPE
+  local dir="$1" rest="$2" scope="$3" prefix path
+  case "$scope:$rest" in
+    catalog:\*/*) rest="${rest#\*/}"; scope=any-depth ;;
+    catalog:\**/*) rest="${rest#\*}"; scope=any-depth ;;
+    repository:*[?\[\\]* | repository:*[?*+@!]\(*)
+      # The component matcher keeps literal roots with a suffix of literal
+      # path characters, slashes and plain stars.
+      local literal_roots='^@\([[:alnum:]_.-]+(\|[[:alnum:]_.-]+)+\)/[[:alnum:]_.*/-]*$'
+      if [[ ! "$rest" =~ $literal_roots ]]; then
+        # Wildcard syntax can consume or hide a slash. Keep the repository's
+        # literal directory prefix when the component boundary is unclear.
+        prefix="${rest%%[?*+@!]\(*}"
+        prefix="${prefix%%[*?\[\\]*}"
+        case "$prefix" in */*) prefix="${prefix%/*}/" ;; *) prefix="" ;; esac
+        [[ "$dir/" = "$prefix"* || "$prefix" = "$dir/"* ]]
+        return
+      fi ;;
+  esac
+  while [[ "$rest" = *[/*]* ]]; do
+    prefix="${rest%[/*]*}"
+    path="$dir"
+    case "${rest#"$prefix"}" in
+      \*\(*) rest="$prefix"; continue ;;
+      \**) path="$dir/"; rest="$prefix"; prefix="$prefix*" ;;
+      /*) rest="$prefix" ;;
+    esac
+    change_class_glob_match "$path" "$prefix" "$scope" && return 0
+  done
+  return 1
+}
+
+change_class_path_match() { # PATH GLOBS [SCOPE [MODE]]
+  local glob path="$1" scope="${3:-}" mode="${4:-}"
+  [ "$mode" != location ] || path="${path%/}"
   PATH_MATCH_HIT=""
   while IFS= read -r glob; do
     [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$1" in
-      $glob) ;;
-      */$glob) [ "${3:-}" = any-depth ] || continue ;;
-      *) continue ;;
-    esac
-    PATH_MATCH_HIT="path=$1 glob=$glob"
-    return 0
+    if change_class_glob_match "$path" "$glob" "$scope" ||
+      { [ "$mode" = location ] && change_class_descendant_match "$path" "$glob" "$scope"; }; then
+      PATH_MATCH_HIT="path=$1 glob=$glob"
+      return 0
+    fi
   done <<<"$2"
   return 1
 }
@@ -148,25 +193,27 @@ $CHANGE_CLASS_GEMINI_GLOB" any-depth || return 1
   return 1
 }
 
-change_class_path() { # PATH PHASE
+change_class_path() { # PATH PHASE [file]
+  local mode=""
   CHANGE_CLASS_PATH=""
   CHANGE_CLASS_PATH_CAUSE=""
   if [ "$2" = launch ]; then
-    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
+    [ "${3:-}" = file ] || mode=location
+    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}" repository "$mode"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
       return 0
     fi
   fi
   if [ "$2" = before-render ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" "$CHANGE_CLASS_GEMINI_GLOB" any-depth; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_GEMINI_GLOB" any-depth "$mode"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
     fi
   fi
   if [ "$2" = registry ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" "$CHANGE_CLASS_REGISTRY_GLOBS" any-depth; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_REGISTRY_GLOBS" any-depth "$mode"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
@@ -176,7 +223,7 @@ change_class_path() { # PATH PHASE
     # Markdown at any path takes the cheapest class, so a `path` glob that
     # names a whole tree, such as tools/*, holds none of its Markdown.
     case "$1" in *.md | *.markdown) return 0 ;; esac
-    if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED"; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED" catalog "$mode"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="excluded-path $PATH_MATCH_HIT"
     fi

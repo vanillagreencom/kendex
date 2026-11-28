@@ -68,6 +68,23 @@ control() { # NAME ASSERTION...
   fi
 }
 
+# Location entries can name folders that are absent from the checkout.
+while IFS='|' read -r path want; do
+  for entry in "$path" "$path/"; do
+    assert_eq "folder Location: $entry" "$want rc=0" "$(run_arm --production 1 --path "$entry")"
+  done
+done <<'FOLDERS'
+skills/orch/runtime/src/ops|standard cause=excluded-path
+skills/orch/runtime/src|standard cause=excluded-path
+.agents/skills/orch/runtime/src/ops|standard cause=excluded-path
+.github/workflows|standard cause=excluded-path
+projects/one/.codex|standard cause=configuration-source
+.gemini|standard cause=configuration-source
+skills/orch/workflows|micro cause=estimate-within-micro
+hooks/tests/fixtures|micro cause=estimate-within-micro
+projects/one|micro cause=estimate-within-micro
+FOLDERS
+
 PR_MERGE=skills/github/scripts/commands/pr-merge.sh
 rows=0
 while IFS='|' read -r args want name; do
@@ -97,6 +114,8 @@ done <<ROWS
 --production 1 --path skills/x/SKILL.md|micro cause=estimate-within-micro rc=0|a SKILL.md Location keeps the estimate's class
 --production 1 --path AGENTS.md|micro cause=estimate-within-micro rc=0|a root AGENTS.md Location keeps the estimate's class
 --production 1 --path tools/AGENTS.md|micro cause=estimate-within-micro rc=0|Markdown under a whole-tree path line keeps the estimate's class
+--production 1 --path tools/spec.md/|standard cause=excluded-path rc=0|a slash marks a folder even if its name ends in .md
+--production 1 --path tools/spec.markdown/|standard cause=excluded-path rc=0|a slash marks a folder even if its name ends in .markdown
 --production 1 --path tools/guard|standard cause=excluded-path rc=0|a script under that tree is never micro
 --production $SMALL_MAX --floor small|small cause=estimate-within-small rc=0|of two inputs naming one class the first names the cause
 --production 1 --floor small|small cause=floor class=small rc=0|a small floor raises a micro estimate
@@ -125,11 +144,17 @@ ARM_BIN="$(mutant floor-unchecked change-scope '    change_scope_floor "$floor" 
 # The repository's own standard paths come from the main checkout's
 # settings, the local file over the root one; an unreadable one is standard.
 assert_standard_setting() { # [REPO] [location|range]
-  local setting globs want root ceiling repo="${1:-$WORK}" input="${2:-location}" args
+  local setting globs want root ceiling repo="${1:-$WORK}" input="${2:-location}" location args
   args=(--path src/main.rs)
   [ "$input" != range ] || args=(--base "$BASE" --head HEAD)
-  while IFS='|' read -r setting globs want; do
+  while IFS='|' read -r setting globs want location; do
     [ -z "${SETTING_ONLY:-}" ] || [ "$SETTING_ONLY" = "$setting" ] || continue
+    if [ -n "$location" ]; then
+      [ "$input" != range ] || continue
+      args=(--path "$location")
+    elif [ "$input" = location ]; then
+      args=(--path src/main.rs)
+    fi
     root="$repo"
     ceiling="$SANDBOX"
     if [ "$setting" = resolver-failed ]; then
@@ -154,6 +179,7 @@ assert_standard_setting() { # [REPO] [location|range]
   done <<'SETTINGS'
 resolver-failed||change_class=standard class=standard measured=false delta=- cause=base-settings-unreadable
 match|src/*.rs|change_class=standard class=standard measured=true delta=- cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/main.rs glob=src/*.rs
+folder-match|src/*.rs|change_class=standard class=standard measured=true delta=- cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/generated/ glob=src/*.rs|src/generated/
 unset||change_class=micro class=micro measured=true delta=- cause=estimate-within-micro production=1
 empty||change_class=micro class=micro measured=true delta=- cause=estimate-within-micro production=1
 local-empty|src/*.rs|change_class=micro class=micro measured=true delta=- cause=estimate-within-micro production=1
@@ -168,7 +194,7 @@ settings_control() { # NAME SETTING LINE REPLACEMENT
   rm -rf -- "$WORK/kendex.settings.toml" "$WORK/.kendex" "$SANDBOX/nonrepo"
 }
 settings_control standard-paths match \
-  '    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then' '    if false; then'
+  '    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}" repository "$mode"; then' '    if false; then'
 settings_control root-refusal root-malformed \
   '    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' \
   '    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || :'
@@ -179,6 +205,27 @@ settings_control root-resolution resolver-failed \
   '  root="$(change_scope_main_root "$1")" || return 1' '  root="$(change_scope_main_root "$1")" || root="$1"'
 settings_control local-precedence local-empty \
   '    kendex_load_settings_file "$root/.kendex/settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' '    : "$root/.kendex/settings.toml" || exit 1'
+
+while read -r glob outside folders; do
+  printf '[env]\nHARNESS_CI_STANDARD_PATHS = "%s"\n' "$glob" >"$WORK/kendex.settings.toml"
+  read -r -a folder_paths <<<"$folders"
+  for path in "${folder_paths[@]}"; do
+    for entry in "$path" "$path/"; do
+      assert_eq "configured glob $glob reaches under $entry" "standard cause=repository-standard-path rc=0" \
+        "$(run_arm --production 1 --path "$entry")"
+    done
+  done
+  for entry in "$outside" "$outside/"; do
+    assert_eq "configured glob $glob leaves $entry micro" "micro cause=estimate-within-micro rc=0" \
+      "$(run_arm --production 1 --path "$entry")"
+  done
+done <<'REPOSITORY_GLOBS'
+runtime/!(kept).ts unrelated runtime/generated
+src/@(generated/api)/*.rs unrelated src/generated
+@(runtime|cli)/*.rs docs/neutral runtime cli
+runtime/generated?api/*.rs runtime-other runtime/generated
+REPOSITORY_GLOBS
+rm -- "$WORK/kendex.settings.toml"
 
 # Expected delta floors the estimate; a body with no count is standard.
 LOCATION='**Location**: `src/main.rs`'
@@ -554,14 +601,25 @@ printf '#!/bin/sh\n' >"$RANGE/hooks/guard.sh"
 git -C "$RANGE" add -A
 git -C "$RANGE" commit -qm hook
 assert_range_paths
-# The range's path rule dropped, its git read kept: the last of the arm's two
-# path-rule calls, which is the range loop's.
-cp -R "$LAYOUT" "$SANDBOX/no-range-paths"
-awk -v line='        change_class_path "$path" launch' '
-  { body[NR] = $0; if ($0 == line) last = NR }
-  END { if (!last) exit 3; for (i = 1; i <= NR; i++) print (i == last ? "        CHANGE_CLASS_PATH=\"\"" : body[i]) }
-' "$ARM" >"$SANDBOX/no-range-paths/change-scope/scripts/change-scope"
-ARM_BIN="$SANDBOX/no-range-paths/change-scope/scripts/change-scope" control no-range-paths assert_range_paths
+ARM_BIN="$(mutant no-range-paths change-scope \
+  '        change_class_path "$path" launch file' '        CHANGE_CLASS_PATH=""')" \
+  control no-range-paths assert_range_paths
+
+# Git diffs and declared Markdown paths identify files even when another
+# extension would be protected under a hypothetical folder of the same name.
+FILES="$(new_repo files)"
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = "src/*.rs"\nHARNESS_CI_DOCS_PATHS = "src/README.md"\n' \
+  >"$FILES/kendex.settings.toml"
+commit_paths "$FILES" base src/build.py src/README.md
+FILES_BASE="$(git -C "$FILES" rev-parse HEAD)"
+commit_paths "$FILES" source src/build.py
+assert_eq "a range's file has no hypothetical descendants" "micro cause=branch-class class=micro rc=0" \
+  "$(run_arm --base "$FILES_BASE" --head HEAD --repo "$FILES")"
+FILES_SOURCE="$(git -C "$FILES" rev-parse HEAD)"
+commit_paths "$FILES" docs src/README.md
+HARNESS_ONLY="$LAYOUT/change-scope/scripts/harness-only" \
+  assert_docs_verdict "a declared Markdown file has no hypothetical descendants" true \
+    --event pull_request --base "$FILES_SOURCE" --head HEAD --repo "$FILES"
 
 # A range that removes test protection launches at small, read as the size
 # path reads it, net over the range; one whose read fails is standard.
