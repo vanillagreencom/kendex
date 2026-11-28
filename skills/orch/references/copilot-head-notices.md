@@ -66,8 +66,12 @@ A `review-replies` refusal approves nothing and writes no `use1` row.
 A refusal of the request itself approves nothing and names what it judged in `refusal.fields`:
 
 - `head-moved` writes no `use1` row; the new head takes its own route.
-- `quick-proof-stale` writes no `use1` row. Run the owning lane's [review call](gates.md#the-review-call) and route its request. A new `fallback cause=quick` takes the current range's notice.
+- `quick-proof-stale` means the notice is invalid or binds a different head or base. Run the owning lane's [review call](gates.md#the-review-call) and route its result. A new `fallback cause=quick` takes the current range's notice.
+- `quick-proof-unreadable` names the failed read in the `reason` field. Restore that read and retry with the same notice while its head and base are current.
+- `quick-range-ineligible` means the classifier measured the current range and it no longer qualifies. Run the owning lane's review call and follow its ordinary review route.
 - `approval-setting-unread` means the private env file sets a key the approval reads (the token file, the login, `GH_HOST`, or a reader credential such as `GH_TOKEN`) in a form only a shell reads. Write it there as a plain value.
+
+For any quick approval refusal, leave the `use1` row unwritten. Required hosted merge checks still apply.
 
 ## While the lane's review is pending
 
