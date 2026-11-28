@@ -9,9 +9,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock::{self, Clock};
 use agent_runtime::effects::Reach;
-use agent_runtime::{process::Member, reading::Unreadable};
+use agent_runtime::{
+    process::Member,
+    reading::{Reading, Unreadable},
+};
 use serde::Serialize;
 
+use super::files::StopRecord;
 use super::{KILL_GRACE, apply, ci_env, item_of_run_dir, load};
 use crate::error::{Error, Result};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
@@ -928,13 +932,46 @@ pub(crate) fn executor_reading(
     ))
 }
 
+pub(crate) fn command_reading(run_dir: &Path) -> Result<Option<Reading<()>>> {
+    let command = read_command(run_dir)?;
+    if execution_unanswered(&command)
+        && StopRecord::read(run_dir)? == Some(StopRecord::AbandonedExecution)
+    {
+        return Ok(Some(Reading::Gone));
+    }
+    Ok(command)
+}
+
+fn execution_unanswered(command: &Option<Reading<()>>) -> bool {
+    matches!(
+        command,
+        Some(Reading::Unreadable {
+            cause: "execution-unanswered"
+        })
+    )
+}
+
+fn abandoned_execution(run: &super::files::RunFile, runner: &str) -> bool {
+    // Read the runner before the files it can still publish. A unit covers
+    // the command's separate process group. With setsid or attached, only
+    // an empty claim proves no command was spawned: execution_mark leaves
+    // it empty before spawn or after a failed spawn.
+    matches!(super::files::runner_reading(run), Reading::Gone)
+        && (runner == "systemd"
+            || matches!(runner, "setsid" | "attached")
+                && fs::read_to_string(run.dir.join("execution"))
+                    .is_ok_and(|claim| claim.is_empty()))
+        && ["command", "pid"].into_iter().all(|name| {
+            fs::symlink_metadata(run.dir.join(name))
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        })
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the run's command identity is read before a new start can use its host"
 )]
-pub(crate) fn command_reading(
-    run_dir: &Path,
-) -> Result<Option<agent_runtime::reading::Reading<()>>> {
+pub(super) fn read_command(run_dir: &Path) -> Result<Option<Reading<()>>> {
     let bytes = match fs::read(run_dir.join("command")) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1351,8 +1388,8 @@ pub(super) fn host_ready(worktree: &Path, host: &str) -> Result<&'static str> {
 /// answer is final, so the executor asks no more.
 const HOST_REFUSED: i32 = 4;
 
-/// Whether a stop has been recorded on the run: the stop path writes it
-/// before it waits for the run's close, which this executor gives.
+/// Whether a stop has been recorded on the run. A live host executor needs
+/// to react to a request as soon as it is published.
 fn stop_recorded(run_dir: &Path) -> bool {
     fs::symlink_metadata(run_dir.join("stop")).is_ok()
 }
@@ -1954,28 +1991,25 @@ pub fn stop_worktree(
 }
 
 /// End a run's command group, then its runner unless that runner is
-/// attached, by the identities its own files record. The `stop` file makes
-/// the run's ending read a stop, so `--record` reads it `verdict=no-verdict`,
-/// and `--wait` reads it `state=done stopped`, not `lost`, where the run
-/// wrote no sentinel, and `state=done guard-exit=N ... validate=no-verdict`
-/// where it wrote one. It is written
-/// before the end it records: at once on a run whose stage records the stop
-/// (`staged`), since that stage's close reads `stopped` whatever the stop
-/// finds, and otherwise only where the command group, or a runner that is
-/// not attached, does not read gone. A run whose work reads gone at a stop
-/// no stage records keeps the word its own ending reads. A host run's
-/// command runs on its host: the host stop (`release_host`) is asked
-/// whatever the run's holder reads, and a stop it does not confirm refuses
-/// `stop-failed`.
+/// attached, by the identities its own files record. The stop request
+/// tells a live executor to close. A staged stop records the request before
+/// signalling anything. For an unanswered execution claim, only confirming
+/// the runner's end and checking that no command could still be held releases
+/// the run. That confirmation remains readable without the user manager.
+/// A host run is stopped through its provider, which must confirm the stop.
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"
 )]
 pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static str>> {
-    let mut marked = false;
+    let stop = StopRecord::read(run_dir)?;
+    if stop == Some(StopRecord::AbandonedExecution) {
+        return Ok(None);
+    }
+    let mut marked = stop.is_some();
     let mut mark = |live: bool| -> Result<()> {
         if live && !marked {
-            atomic(run_dir, "stop", "stop-requested\n")?;
+            StopRecord::Requested.write(run_dir)?;
             marked = true;
         }
         Ok(())
@@ -2018,7 +2052,7 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                     );
                 return Ok((asked || held).then_some("attached"));
             }
-            let runner = super::files::fields(&run_dir.join("runner"))
+            let kind = super::files::fields(&run_dir.join("runner"))
                 .ok()
                 .and_then(|r| r.get("runner").cloned());
             if super::files::unstarted(&run)? {
@@ -2031,7 +2065,7 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                 {
                     return Ok(None);
                 }
-                match runner.as_deref() {
+                match kind.as_deref() {
                     Some("systemd") => {}
                     Some("setsid" | "attached") => return Ok(None),
                     _ => {
@@ -2041,17 +2075,23 @@ pub(crate) fn stop_files(run_dir: &Path, staged: bool) -> Result<Option<&'static
                         ));
                     }
                 }
-            } else if command_reading(run_dir)?
-                .is_some_and(|reading| !matches!(reading, agent_runtime::reading::Reading::Gone))
-                || !matches!(
-                    super::files::runner_reading(&run),
-                    agent_runtime::reading::Reading::Gone
-                )
-            {
-                return Err(super::files::unreadable(
-                    "stop-unreadable",
-                    format!("run-dir={} execution-unanswered", run_dir.display()),
-                ));
+            } else {
+                let command = read_command(run_dir)?;
+                if execution_unanswered(&command)
+                    && let Some(kind) = kind.as_deref()
+                    && abandoned_execution(&run, kind)
+                {
+                    StopRecord::AbandonedExecution.write(run_dir)?;
+                    return Ok(None);
+                }
+                if command.is_some_and(|reading| !matches!(reading, Reading::Gone))
+                    || !matches!(super::files::runner_reading(&run), Reading::Gone)
+                {
+                    return Err(super::files::unreadable(
+                        "stop-unreadable",
+                        format!("run-dir={} execution-unanswered", run_dir.display()),
+                    ));
+                }
             }
         }
         Err(e) => {
@@ -2200,6 +2240,187 @@ pub fn stop(
 mod tests {
     use super::*;
     use crate::ops::validate::{end_notice, failure_cause, memory_cap_cause, sentinel_outcome};
+    use crate::validate::files;
+
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the rows write private validation records and read the live test process identity"
+    )]
+    fn stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone() {
+        const FIXTURE: &str = "KENDEX_TEST_UNANSWERED_EXECUTION";
+        const CASE: &str = "KENDEX_TEST_STOP_CASE";
+        if let Some(worktree) = std::env::var_os(FIXTURE).map(PathBuf::from) {
+            let run = worktree.join("tmp/dev-validate-claim");
+            let case = std::env::var(CASE).unwrap();
+            match case.as_str() {
+                "pending" => {
+                    assert!(agent_runtime::confine::confined());
+                    let error = stop_files(&run, true).unwrap_err();
+                    assert!(matches!(
+                        error,
+                        Error::ValidateUnreadable {
+                            read: "stop-unreadable",
+                            ..
+                        }
+                    ));
+                    assert_eq!(StopRecord::read(&run).unwrap(), Some(StopRecord::Requested));
+                    assert_eq!(files::live(&worktree).unwrap(), Some((run, 0)));
+                }
+                "host-stop" => {
+                    assert!(!agent_runtime::confine::confined());
+                    assert_eq!(stop_files(&run, false).unwrap(), None);
+                }
+                "confirmed" => {
+                    assert!(agent_runtime::confine::confined());
+                    assert_eq!(files::live(&worktree).unwrap(), None);
+                    assert_eq!(
+                        files::RunFile::read(&run).unwrap().verdict().unwrap(),
+                        "no-verdict"
+                    );
+                    assert_eq!(stop_files(&run, true).unwrap(), None);
+                    // A requester can have read the old record before the host confirmed it.
+                    StopRecord::Requested.write(&run).unwrap();
+                    assert_eq!(
+                        StopRecord::read(&run).unwrap(),
+                        Some(StopRecord::AbandonedExecution)
+                    );
+                }
+                _ => panic!("unknown stop fixture case {case}"),
+            }
+            fs::write(worktree.join(format!("checked-{case}")), &case).unwrap();
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let pid = std::process::id();
+        let Reading::Live(identity) = agent_runtime::process::identity(pid) else {
+            panic!("the test process must have a readable identity");
+        };
+        let live_runner = format!("runner=attached\npid={pid}\nstart={}\n", identity.start);
+        let gone_runner = "runner=setsid\nstatus=exited-203\n";
+        for (case, runner, claim) in [
+            ("gone", gone_runner, ""),
+            ("live", live_runner.as_str(), ""),
+            ("closed", gone_runner, ""),
+            (
+                "separate group may hold command",
+                gone_runner,
+                "attempted\n",
+            ),
+        ] {
+            let worktree = root.join(case);
+            let run = worktree.join("tmp/dev-validate-claim");
+            fs::create_dir_all(&run).unwrap();
+            fs::write(run.join("start"), "start=1\n").unwrap();
+            fs::write(run.join("runner"), runner).unwrap();
+            fs::write(run.join("execution"), claim).unwrap();
+
+            assert!(
+                execution_unanswered(&command_reading(&run).unwrap()),
+                "{case}"
+            );
+            if case == "closed" {
+                let settings = crate::settings::load(
+                    &agent_runtime::settings::Roots {
+                        project: worktree.clone(),
+                        common: worktree.clone(),
+                    },
+                    &[],
+                    &crate::settings::Flags {
+                        state_dir: Some(worktree.join("state")),
+                        private_env: false,
+                    },
+                )
+                .unwrap();
+                let path = state::item_path(&settings.state_dir, "KEN-5938");
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                let record = serde_json::json!({"stages": [{
+                    "kind": "validate", "round_id": "claim", "start": 1, "end": 2,
+                    "run_dir": run, "outcome": "lost", "cause": "unit-ended",
+                }]})
+                .to_string();
+                fs::write(&path, &record).unwrap();
+                let result = stop_worktree(
+                    &settings,
+                    &crate::effects::fleet_mailbox(&settings),
+                    &worktree,
+                    None,
+                    &Env {
+                        now_secs: 3,
+                        now_nanos: 3_000_000_000,
+                        nonce: 0,
+                        owner: None,
+                    },
+                    Locking::FLOCK,
+                );
+                assert_eq!(result.unwrap(), WorktreeStop::default());
+                assert_eq!(fs::read_to_string(&path).unwrap(), record);
+            } else if case == "live" || !claim.is_empty() {
+                for staged in [false, true] {
+                    let error = stop_files(&run, staged).unwrap_err();
+                    assert!(
+                        matches!(error, Error::ValidateUnreadable { read: "stop-unreadable", ref cause }
+                        if cause.ends_with(" execution-unanswered"))
+                    );
+                    assert_eq!(
+                        StopRecord::read(&run).unwrap(),
+                        staged.then_some(StopRecord::Requested)
+                    );
+                    assert_eq!(files::live(&worktree).unwrap(), Some((run.clone(), 0)));
+                }
+                continue;
+            } else {
+                assert_eq!(stop_files(&run, false).unwrap(), None);
+            }
+            assert_eq!(
+                StopRecord::read(&run).unwrap(),
+                Some(StopRecord::AbandonedExecution)
+            );
+            assert_eq!(
+                files::RunFile::read(&run).unwrap().verdict().unwrap(),
+                "no-verdict"
+            );
+            assert_eq!(files::live(&worktree).unwrap(), None);
+        }
+
+        use std::os::unix::fs::PermissionsExt;
+        let worktree = root.join("systemd");
+        let run = worktree.join("tmp/dev-validate-claim");
+        fs::create_dir_all(&run).unwrap();
+        fs::write(run.join("start"), "start=1\n").unwrap();
+        let runner = "runner=systemd\nunit=orch-ken-5938\nline=runner=systemd unit=orch-ken-5938\n";
+        fs::write(run.join("runner"), runner).unwrap();
+        fs::write(run.join("execution"), "attempted\n").unwrap();
+        let systemctl = root.join("systemctl");
+        fs::write(&systemctl, "#!/bin/sh\n[ \"$*\" = '--user show -p LoadState,ActiveState --value -- orch-ken-5938.service' ] || exit 2\nprintf 'not-found\\ninactive\\n'\n").unwrap();
+        fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = std::env::join_paths(std::iter::once(root).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap();
+        for (case, confined) in [("pending", "1"), ("host-stop", "0"), ("confirmed", "1")] {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "validate::run::tests::stop_settles_an_unanswered_execution_only_after_its_recorded_runner_is_gone"])
+                .env(FIXTURE, &worktree)
+                .env(CASE, case)
+                .env("PATH", &path)
+                .env(agent_runtime::confine::CONFINED_VAR, confined)
+                .output().unwrap();
+            assert!(
+                result.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&result.stdout),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                fs::read_to_string(worktree.join(format!("checked-{case}"))).unwrap(),
+                case
+            );
+        }
+        assert_eq!(fs::read_to_string(run.join("runner")).unwrap(), runner);
+    }
 
     #[test]
     #[allow(
