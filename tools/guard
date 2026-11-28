@@ -518,10 +518,7 @@ INPUTS_NOTE_AWK='
 # Whether a note ITEM covers a repository PATH, mapped_suites' one reading
 # of an item: as a case pattern, or as a directory holding it, one spelled
 # with a trailing slash or a directory of the checkout.
-note_covers() { # ITEM PATH FILE_ONLY
-  if [ "$3" = true ]; then
-    case "$1" in *.md | *.markdown) ;; *) return 1 ;; esac
-  fi
+note_covers() { # ITEM PATH
   # shellcheck disable=SC2254 # the item is a case pattern
   case "$2" in $1) return 0 ;; esac
   case "$1" in
@@ -2440,7 +2437,10 @@ mapped_suites() { # DIR REL ROW PATH, ROW the path's tree_paths row of DIR from 
   for i in ${SCAN_NOTED[@]+"${SCAN_NOTED[@]}"}; do
     while IFS= read -r input; do
       [ -n "$input" ] || continue
-      note_covers "$input" "$input_path" "$file_only" || continue
+      if [ "$file_only" = true ]; then
+        case "$input" in *.md | *.markdown) ;; *) continue ;; esac
+      fi
+      note_covers "$input" "$input_path" || continue
       reached[i]=1
       noted="$noted$i"$'\n'
       reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3

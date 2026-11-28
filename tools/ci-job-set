@@ -1357,7 +1357,7 @@ reads() { # DOCS
     function own_skill_markdown(path, r) {
       if (crate[r] != "kendex-core" || selector[r] != "lib") return 0
       if (read[r] == "skills")
-        return path ~ /^skills\/[^/]+\/SKILL\.md$/ || ((".agents/" path) in render) || (path in project_render)
+        return path ~ /^skills\/[^\/]+\/SKILL\.md$/ || ((".agents/" path) in render) || (path in project_render)
       return read[r] == ".agents"
     }
     END {
