@@ -13,6 +13,60 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$TEST_DIR/lib/ci-job-set-case.sh"
 
+skill_markdown_row() { # READER (folder|file)
+  local reader="$1" world="$TMP/skill-markdown-$1" path=skills/demo/SKILL.md
+  local input=skills/demo/ read=read_dir suffix='' expected='[]' got
+  mkdir -p "$world"
+  cp -R "$READ_WORLD/." "$world/"
+  mkdir -p "$world/skills/demo" "$world/tools/tests"
+  printf -- '---\nname: demo\n---\n\n# Demo\n' >"$world/$path"
+  if [ "$reader" = file ]; then
+    input=$path read=read_to_string suffix=/SKILL.md
+    expected='["skill-suites-shard","cargo-linux"]'
+  fi
+  printf '#!/usr/bin/env bash\n# Inputs: %s\n' "$input" >"$world/tools/tests/read-skill.test.sh"
+  printf 'fn skill() { std::fs::%s(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills/demo%s")).unwrap(); }\n' \
+    "$read" "$suffix" >>"$world/crates/demo/src/lib.rs"
+  git -C "$world" add -A
+  got="$(SELECT_IN="$world" SELECT_JOBS=true SELECT_EVENT=merge_group selection trivial true "$path" | field jobs)"
+  check "skill Markdown retains jobs with a $reader input" "$expected" \
+    "$(jq -c 'map(select(. == "skill-suites-shard" or . == "cargo-linux"))' <<<"$got")"
+}
+if [ "${1-}" = --skill-markdown ]; then
+  skill_markdown_row "${2:-folder}"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+# The project planner reads the render, its source and instruction shims.
+# The source-only marker also keeps the declaration sweep.
+render_row() { # PATHS
+  check "the render or declaration proof keeps kendex-core --lib for $1" true \
+    "$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true "$1" |
+      field cargo_linux_matrix | jq 'any(.include[]; .crate == "kendex-core" and (.targets | index("--lib")))')"
+}
+render_addition_row() {
+  local world="$TMP/render-addition" source="skills/communication/references/ci-new-reference.md"
+  local render=".agents/$source"
+  git clone -q --shared -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false "$ROOT" "$world"
+  [ ! -e "$world/$source" ] && [ ! -e "$world/$render" ] || return 1
+  jq -e --arg path "$render" 'index($path) == null' "$world/.kendex-generated.json" >/dev/null
+  printf '# A new authored reference\n' >"$world/$source"
+  git -C "$world" add -- "$source"
+  SELECT_IN="$world" render_row "$source"
+}
+if [ "${1-}" = --render-markdown ]; then
+  case "${2-}" in
+    addition) render_addition_row ;;
+    declaration) render_row skills/price-handling/SKILL.md ;;
+    *) exit 2 ;;
+  esac
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+row_spawn skill_markdown_row folder
+row_spawn skill_markdown_row file
+row_spawn render_addition_row
+
 UNPLACED_LANES="$(lanes both false false false)"
 selection_rows=0
 while IFS='|' read -r class docs paths want spec; do
@@ -127,13 +181,6 @@ include_row() {
     "$(field cargo_lint <<<"$got") $(field cargo_linux_matrix <<<"$got" |
       jq 'any(.include[]; .crate == "kendex-app" and .targets == ["--lib"])')"
 }
-# The project planner reads the render, its source and instruction shims.
-# A nested AGENTS.md still selects the planner when missing from the checkout.
-render_row() { # PATH
-  check "the render proof keeps kendex-core --lib for $1" true \
-    "$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true "$1" |
-      field cargo_linux_matrix | jq 'any(.include[]; .crate == "kendex-core" and (.targets | index("--lib")))')"
-}
 unread_docs_row() {
   local got
   got="$(SELECT_CARGO_MATRIX=true SELECT_EVENT=merge_group selection trivial true docs/architecture/engine.md)"
@@ -143,7 +190,7 @@ unread_docs_row() {
 row_spawn suite_read_row
 row_spawn include_row
 row_spawn render_row .agents/skills/code-quality/SKILL.md
-row_spawn render_row skills/code-quality/SKILL.md
+row_spawn render_row skills/price-handling/SKILL.md
 row_spawn render_row docs/architecture/AGENTS.md
 row_spawn unread_docs_row
 

@@ -150,9 +150,11 @@ fn catalog_render(catalog: &Path, skill_file: &[u8]) -> Vec<(String, Vec<u8>)> {
 /// The installed SKILL.md, which carries the catalog's own body after its
 /// frontmatter.
 #[allow(clippy::unwrap_used)]
-fn installed_skill_file(render: &Path, catalog: &Path) -> Vec<u8> {
+fn installed_skill_file(render: &Path) -> Vec<u8> {
     let installed = fs::read_to_string(render.join("SKILL.md")).unwrap();
-    let authored = fs::read_to_string(catalog.join("skills/jarvis/SKILL.md")).unwrap();
+    let authored =
+        fs::read_to_string(crate::test_util::checkout_root().join("skills/jarvis/SKILL.md"))
+            .unwrap();
     let (_, body) = kendex_core::frontmatter::split(&authored).unwrap();
     let (_, installed_body) = kendex_core::frontmatter::split(&installed).unwrap();
     assert_eq!(installed_body, body);
@@ -161,17 +163,19 @@ fn installed_skill_file(render: &Path, catalog: &Path) -> Vec<u8> {
 
 #[allow(clippy::unwrap_used)]
 fn release(catalog: &Path) {
-    let reference = catalog.join("skills/jarvis/references/memory.md");
-    let text = fs::read_to_string(&reference).unwrap();
+    let references = catalog.join("skills/jarvis/references");
+    let memory = crate::test_util::checkout_root().join("skills/jarvis/references/memory.md");
+    let text = fs::read_to_string(&memory).unwrap();
     write(
-        &reference,
+        &references.join(memory.file_name().unwrap()),
         &format!("{text}\nKeep personal notes in memory/.\n"),
     );
     write(
-        &catalog.join("skills/jarvis/references/update.md"),
+        &references.join("update.md"),
         "# Update\nRead the release notes.\n",
     );
-    fs::remove_file(catalog.join("skills/jarvis/references/browser.md")).unwrap();
+    let browser = crate::test_util::checkout_root().join("skills/jarvis/references/browser.md");
+    fs::remove_file(references.join(browser.file_name().unwrap())).unwrap();
     commit(catalog, "Jarvis N+1");
 }
 
@@ -224,7 +228,7 @@ fn refresh_updates_jarvis_and_preserves_the_assistant_home() {
     println!("Install with private operator:\n{install_output}");
     let before = user_files(&project);
     let render = project.join(".agents/skills/jarvis");
-    let skill_file = installed_skill_file(&render, &catalog);
+    let skill_file = installed_skill_file(&render);
     assert_eq!(tree(&render), catalog_render(&catalog, &skill_file));
     release(&catalog);
     let refreshed = kendex(
