@@ -885,8 +885,10 @@ class RootRelay:
         # The mailbox judges whether an ask is still open; the journal's own
         # flag only decides how often the thread is read.
         if thread is not None and thread.kind == "ask":
-            if thread.presenter and self.mail.retains_presentations():
+            if thread.presenter:
                 outcome, answer_id = self.mail.answer(thread.envelope, text, delivery, thread.presenter)
+                if outcome != "answered":
+                    raise Refusal("lane-mail-failed", f"bound-answer-pending id={thread.envelope} delivery={delivery}")
             else:
                 outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
             if outcome == "answered":
@@ -1151,8 +1153,8 @@ class RootRelay:
                           and not presentation and thread is not None and thread.kind == "ask")
             if (thread is not None and not thread.missing
                     and (presentation.get("thread_ts") != thread.ts or not thread.permalink)
-                    and (presenting or presentation.get("presenter") == self.presenter or legacy_ask)
-                    and self.mail.retains_presentations()):
+                    and (presenting or presentation.get("presenter") == self.presenter
+                         or legacy_ask and self.mail.retains_presentations())):
                 routed.append((envelope, "confirm", {}))
             if presenting:
                 if not presentation.get("thread") and env_id not in state.carried and self.mail.retains_presentations():
@@ -1435,7 +1437,8 @@ class RootRelay:
 
     def post_ask(self, envelope: Dict) -> bool:
         """Whether the ask landed and its `open` line was journaled."""
-        retained = self.mail.retains_presentations()
+        established = (envelope.get("presentation") or {}).get("presenter") == self.presenter
+        retained = established or self.mail.retains_presentations()
         if retained:
             receipt = self.mail.present(str(envelope["id"]), self.presenter)
             if receipt is None or receipt.get("presenter") != self.presenter:
@@ -1477,7 +1480,10 @@ class RootRelay:
         pieces: List[Union[str, Verbatim]] = (
             [f"{header}: {envelope.get('text', '')}"] if thread_ts is not None
             else self.ask_pieces(envelope, f"{header}. Question from {envelope.get('from', 'overseer')}:"))
-        retained = thread_ts is None and self.mail.retains_presentations()
+        binding = self.state.threads.get(self.state.by_envelope.get(ask_id, ""))
+        established = (envelope.get("presentation") or {}).get("presenter") == self.presenter or (
+            binding is not None and binding.presenter == self.presenter)
+        retained = thread_ts is None and (established or self.mail.retains_presentations())
         if retained and not envelope.get("presentation"):
             receipt = self.mail.present(ask_id, self.presenter)
             if receipt is None or receipt["presenter"] != self.presenter:

@@ -1523,13 +1523,18 @@ sys.exit(result.returncode)
         ask = self.mail(origin, "ask", question, "--to", "owner", "--options", "first,both",
                         "--recommend", "first", "--effect", "none")
         mail = LIB.parents[2] / "mailbox/scripts/lane-mail"
+        args = ("--destination", "ssh:fixture", "--root", origin, "--id", ask)
+        result, receipt = self.run_cli("present", None, "Please choose the part to ship.", *args)
+        self.assertEqual((result.returncode, receipt["kind"]), (1, "unavailable"), result.stderr)
+        self.assertIn("manual owner-ask route", receipt["cause"])
+        self.assertFalse(any(row["kind"] == "owner-presentation" for row in self.box(origin, "to-overseer")))
+        self.assertFalse(any(row["kind"] == "notice" for row in self.box(self.home, "to-overseer")))
         presenter = "jarvis-" + owner_asks.digest([str(self.home), "ssh:fixture", str(origin), ask])
         first = self.command([mail, "present", "--item", "overseer", "--id", ask, "--presenter", presenter,
                               "--reserved"], origin)
         first.check_returncode()
         # The process stopped after the claim. The first receipt still
         # requires a reservation when the caller retries without the flag.
-        args = ("--destination", "ssh:fixture", "--root", origin, "--id", ask)
         for _ in range(2):
             result, receipt = self.run_cli("present", None, "Please choose the part to ship.", *args)
             self.assertEqual((result.returncode, receipt.get("notice")), (0, presenter), result.stderr + result.stdout)
@@ -1573,14 +1578,22 @@ sys.exit(result.returncode)
 
     def test_local_presentation_requires_a_separate_mailbox(self):
         origin = make_project(self.root / "local-overseer")
-        for checkout, expected in ((self.home, "unavailable"), (origin, "presented")):
+        custom = make_project(self.root / "custom-cleanup")
+        program = self.executable("unexpected-cleanup", '#!/bin/sh\nprintf %s run > "unexpected-cleanup-ran"\n')
+        (custom / "kendex.settings.toml").write_text(f'[env]\nLANE_MAIL_CLI="{program}"\n')
+        for checkout, expected in ((self.home, "unavailable"), (custom, "unavailable"), (origin, "presented")):
             with self.subTest(checkout=checkout.name):
                 ask = self.mail(checkout, "ask", "Should this safe step go ahead?", "--to", "owner",
                                 "--options", "yes,no", "--recommend", "no", "--effect", "none")
                 result, receipt = self.run_cli("present", None, "Please consider the original question.",
                                                "--destination", "local", "--root", checkout, "--id", ask)
                 self.assertEqual(receipt["kind"], expected, result.stderr)
-                self.assertEqual(result.returncode, int(checkout == self.home))
+                self.assertEqual(result.returncode, int(expected != "presented"))
+                if checkout == custom:
+                    self.assertIn("manual owner-ask route", receipt["cause"])
+                    self.assertFalse(any(row["kind"] == "owner-presentation"
+                                         for row in self.box(custom, "to-overseer")))
+                    self.assertFalse((custom / "unexpected-cleanup-ran").exists())
         notice, = [row for row in self.box(self.home, "to-overseer") if row["kind"] == "notice"]
         self.assertEqual(notice["presentation"]["route"]["root"], str(origin))
 

@@ -16,11 +16,10 @@ import fcntl
 import json
 import os
 import re
-import stat
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Callable, Dict, FrozenSet, Iterable, List, Optional, Set, TextIO, Union
+from typing import BinaryIO, Callable, Dict, FrozenSet, List, Optional, Set, Union
 from urllib.parse import urlsplit
 
 from refusals import LockRefusal, Refusal
@@ -90,12 +89,8 @@ def read_binding(root: Path) -> Binding:
     path = root_dir(root) / BINDING
     if not path.is_file():
         raise Refusal("root-unbound", str(root))
-    return parse_binding(path.read_text(), path)
-
-
-def parse_binding(text: str, path: Path) -> Binding:
     try:
-        raw = json.loads(text)
+        raw = json.loads(path.read_text())
         float(raw["bound_at"])
         return Binding(
             channel=str(raw["channel"]),
@@ -328,32 +323,19 @@ def journal_exists(root: Path) -> bool:
 
 
 def read_journal(root: Path) -> State:
+    state = State()
     path = root_dir(root) / JOURNAL
     if not path.is_file():
-        return State()
+        return state
     with path.open() as handle:
-        return replay_journal(handle, path)
-
-
-def replay_journal(handle: Iterable[str], path: Path) -> State:
-    state = State()
-    for number, raw in enumerate(handle, 1):
-        if not raw.strip():
-            continue
-        try:
-            state.apply(json.loads(raw))
-        except (ValueError, KeyError, TypeError) as err:
-            raise Refusal("journal-invalid", f"{path}:{number}") from err
+        for number, raw in enumerate(handle, 1):
+            if not raw.strip():
+                continue
+            try:
+                state.apply(json.loads(raw))
+            except (ValueError, KeyError, TypeError) as err:
+                raise Refusal("journal-invalid", f"{path}:{number}") from err
     return state
-
-
-def relay_record(directory: int, name: str) -> TextIO:
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-    info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
-        os.close(fd)
-        raise Refusal("journal-invalid", name)
-    return os.fdopen(fd, encoding="utf-8")
 
 
 def presentation_permalink(thread: Thread) -> bool:
@@ -367,21 +349,10 @@ def presentation_permalink(thread: Thread) -> bool:
 
 
 def presentation_threads(root: Path) -> Dict:
-    """The owning account's relay evidence for one canonical checkout."""
-    directory_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    """Jarvis's local relay confirms the exact presentation message."""
     try:
-        if not root.is_absolute() or root.resolve(strict=True) != root:
-            return {}
-        with contextlib.ExitStack() as stack:
-            directory = os.open(root, directory_flags)
-            stack.callback(os.close, directory)
-            for component in Path(DIR).parts:
-                directory = os.open(component, directory_flags, dir_fd=directory)
-                stack.callback(os.close, directory)
-            with relay_record(directory, BINDING) as handle:
-                binding = parse_binding(handle.read(), root_dir(root) / BINDING)
-            with relay_record(directory, JOURNAL) as handle:
-                state = replay_journal(handle, root_dir(root) / JOURNAL)
+        binding = read_binding(root)
+        state = read_journal(root)
     except (OSError, Refusal, ValueError):
         return {}
     return {env_id: {"ts": thread.ts, "presenter": thread.presenter, "url": thread.permalink}

@@ -3,6 +3,7 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor
 import datetime
+import filecmp
 import hashlib
 import json
 import os
@@ -132,16 +133,6 @@ verb=$3
 shift 3
 cd -- "$root"
 exec "$BASH" "$mail" "$verb" --item overseer "$@"
-"""
-# Invoke the same projection as slack listen without loading host settings.
-RELAY_FILES = ("slack/scripts/lib/store.py", "slack/scripts/lib/refusals.py")
-RELAY_READS = r"""exec python3 -IB -c '
-import json, sys
-from pathlib import Path
-sys.path.insert(0, str(Path(sys.argv[1]).parent))
-from store import presentation_threads
-print(json.dumps({root: presentation_threads(Path(root)) for root in sys.argv[2:]}))
-' "$@"
 """
 # The tracker questions still open. An item in a closed state has settled
 # every question on it, as an exact mailbox close settles one.
@@ -297,12 +288,8 @@ class Sources:
         name = package + "/scripts/" + script
         try:
             if target.host:
-                if package == "slack":
-                    closure = watch.package_files(RELAY_FILES)
-                else:
-                    if self.closure is None:
-                        self.closure = watch.package_files(watch.MAILBOX_FILES)
-                    closure = self.closure
+                if self.closure is None:
+                    self.closure = watch.package_files(watch.MAILBOX_FILES)
                 # The login shell parses only "bash -s": fish turns \\ inside
                 # single quotes into \, so a quoted command reaches bash
                 # changed. POSIX sh's INPUT FILES leaves a shell reading stdin
@@ -311,11 +298,11 @@ class Sources:
                 # DATA, the closure rides fd 3 inside the command and DATA
                 # follows it, the command's own stdin.
                 if data is None:
-                    command, payload = watch.remote_command(closure, name, args, stdin=True, shell_args=shell_args)
+                    command, payload = watch.remote_command(self.closure, name, args, stdin=True, shell_args=shell_args)
                     result = watch.run(watch.host_args(target, "bash -s"), data=command + "\n" + payload,
                                        operation=operation, timeout=self.remaining())
                 else:
-                    command, _ = watch.remote_command(closure, name, args, shell_args=shell_args)
+                    command, _ = watch.remote_command(self.closure, name, args, shell_args=shell_args)
                     result = watch.run(watch.host_args(target, "bash -s"), data=command + data,
                                        operation=operation, timeout=self.remaining())
             else:
@@ -406,31 +393,18 @@ class Sources:
                       "asks": [json.loads(line) for line in record["pending"].split("\n") if line],
                       "own": record["own"], "answered": record["answered"],
                       "outward": self.events(record["outward"])} for record in self.mailboxes(target, roots)]
-        candidates = [mailbox["root"] for mailbox in mailboxes
-                      if any((row.get("presentation") or {}).get("thread_ts")
-                             for row in mailbox["outward"]["rows"])]
-        threads = self.relay_threads(target, candidates)
         for mailbox in mailboxes:
-            mailbox["relay_threads"] = threads.get(mailbox["root"], {})
+            if mailbox["own"]:
+                mailbox["relay_threads"] = self.home_threads(mailbox["outward"])
         return mailboxes
 
-    def relay_threads(self, target, roots):
-        """Read the registered checkout's relay projection as its account."""
-        if target.host and roots:
+    def home_threads(self, outward):
+        if any((row.get("presentation") or {}).get("thread_ts") for row in outward["rows"]):
             try:
-                result = self.call(target, None, "slack", "lib/store.py", roots,
-                                   shell_args=["-c", RELAY_READS, "owner-asks"])
-                return json.loads(result.stdout)
-            except (Unavailable, ValueError) as error:
-                diagnostic(error, "owner-asks-presentation-threads")
-                return {}
-        threads = {}
-        for root in roots:
-            try:
-                threads[root] = self.caller("slack", "slack", ["listen", "--root", root, "--presentation-threads"])
+                return self.caller("slack", "slack", ["listen", "--root", self.session.home, "--presentation-threads"])
             except Unavailable as error:
                 diagnostic(error, "owner-asks-presentation-threads")
-        return threads
+        return {}
 
     def open_tracker(self, tracker, mailboxes, requests):
         if tracker is None:
@@ -531,6 +505,37 @@ class Sources:
         return self.call(target, root, "mailbox", "lane-mail", [root, verb, *args],
                          shell_args=["-c", script, "owner-asks"], data=data, check=check)
 
+    def origin_retains_presentation(self, target, root):
+        if target.host:
+            return False
+        bash = self.session.env["JARVIS_BASH"]
+        try:
+            common = watch.mailbox_root(bash, Path(root))
+            if Path(root) != common:
+                return False
+            runtime = watch.orch_runtime()
+            status = json.loads(watch.checked([bash, runtime, "watch", "status", "--fleet"], common,
+                                              operation="presentation-cleanup", timeout=self.remaining()))
+            if status["protocol"] != "orch-runtime-v1" or status["ok"] is not True:
+                return False
+            claim = status["result"]["claim"]
+            if claim is not None and claim["standing"] != "gone":
+                # An active watch uses launch-time arguments. Status cannot
+                # prove which mailbox program those arguments named.
+                return False
+            installed_packages = common / ".agents/skills"
+            installed = installed_packages / "mailbox/scripts/lane-mail"
+            program = watch.checked([bash, runtime.with_name("orch-env"), "LANE_MAIL_CLI", installed], common,
+                                    operation="presentation-cleanup", timeout=self.remaining()).rstrip("\n")
+            if Path(program) != installed:
+                return False
+            caller_packages = watch.LIB.parents[2]
+            return os.access(installed, os.X_OK) and all(
+                filecmp.cmp(installed_packages / name, caller_packages / name, shallow=False)
+                for name in watch.MAILBOX_FILES)
+        except (OSError, ValueError, TypeError, KeyError, watch.Failure):
+            return False
+
     def present(self, destination, root, ask_id, introduction, reserved):
         if not introduction.strip():
             raise Unavailable("Write Jarvis's introduction to the original question.")
@@ -539,6 +544,12 @@ class Sources:
             bash = self.session.env["JARVIS_BASH"]
             if watch.mailbox_root(bash, Path(root)) == watch.mailbox_root(bash, Path(self.session.home)):
                 raise Unavailable("Jarvis's own question has its own presentation route.")
+        outward = self.events(self.mailbox(target, root, "events", ["--box", "to-overseer"]).stdout)
+        original = next((row for row in outward["rows"] if row["id"] == ask_id and row["kind"] == "ask"), None)
+        if original is None:
+            raise Unavailable("The original mailbox no longer holds the question.")
+        if not original.get("presentation") and not self.origin_retains_presentation(target, root):
+            raise Unavailable("The origin's mailbox cleanup is unconfirmed. Use the manual owner-ask route.")
         presenter = "jarvis-" + digest([self.session.home, destination, root, ask_id])
         args = ["--id", ask_id, "--presenter", presenter]
         if reserved:
@@ -561,13 +572,15 @@ class Sources:
     def presentation_status(self, target, root, ask_id, receipt):
         presenter = receipt["presenter"]
         thread = None
-        try:
-            # Direct presenters are established by their relay. A delegated
-            # presentation is confirmed only in the home mailbox's relay.
-            source = target if presenter.startswith("slack:") else self.target("local")
-            thread = presentation_links(self.destination(source)).get((target.key, root, ask_id, presenter))
-        except Unavailable as error:
-            diagnostic(error, "owner-asks-presentation-threads")
+        if not presenter.startswith("slack:"):
+            try:
+                home = self.session.home
+                outward = self.events(self.mailbox(self.target("local"), home, "events", ["--box", "to-overseer"]).stdout)
+                mailbox = {"destination": "local", "root": home, "own": True, "outward": outward,
+                           "relay_threads": self.home_threads(outward)}
+                thread = presentation_links([mailbox]).get((target.key, root, ask_id, presenter))
+            except Unavailable as error:
+                diagnostic(error, "owner-asks-presentation-threads")
         return {"presentation": {"presenter": presenter, "at": receipt["at"]}, "thread": thread,
                 "delivery": "confirmed" if thread else "unconfirmed"}
 
