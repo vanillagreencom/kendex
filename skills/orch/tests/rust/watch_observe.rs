@@ -12994,6 +12994,736 @@ fn rows_none_uses_the_non_pi_pane_and_unreadable_rows_stay_unjudged() {
 
 const CODEX_LIVE_FAILURE: &str = include_str!("../fixtures/oversee-watch/codex-api-error-live.txt");
 
+/// The worktree script writes the map in a real linked checkout. Only the
+/// session delivery endpoint is faked, so the tests can inspect every paste.
+struct RestackWatch {
+    _temp: tempfile::TempDir,
+    main: PathBuf,
+    tree: PathBuf,
+    bin: PathBuf,
+    state: PathBuf,
+    delivery: &'static str,
+    head: String,
+    server: Server,
+    fleet: Fleet,
+    pane: String,
+}
+
+impl RestackWatch {
+    fn new(dropped: bool, aliased: bool, direct: bool) -> Self {
+        Self::with_replay(dropped, aliased, direct, false)
+    }
+
+    fn with_replay(dropped: bool, aliased: bool, direct: bool, replay: bool) -> Self {
+        use std::fs;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let main = root.join("main");
+        let origin = root.join("origin.git");
+        let bin = root.join("bin");
+        for dir in [&main, &bin, &root.join("trees")] {
+            fs::create_dir(dir).unwrap();
+        }
+        write_executable(&bin.join("gh"), "#!/bin/sh\n[ \"$1 $2\" = 'pr list' ]\n");
+        Self::git(&root, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+        Self::git(&main, &["init", "-q", "-b", "main"]);
+        for args in [
+            ["config", "gc.auto", "0"],
+            ["config", "maintenance.auto", "false"],
+        ] {
+            Self::git(&main, &args);
+        }
+        std::os::unix::fs::symlink(root.join("trees"), root.join("alias")).unwrap();
+        let base = if aliased { "../alias" } else { "../trees" };
+        let delivery = if direct { "push-base" } else { "pr" };
+        fs::write(main.join("kendex.settings.toml"), format!(
+            "[env]\nWORKTREE_DEFAULT_BRANCH = \"main\"\nWORKTREE_BASE_DIR = \"{base}\"\nORCH_DELIVERY = \"{delivery}\"\nDEV_VALIDATE_CMD = \"true\"\nDEV_VALIDATE_RANGE_CMD = \"true\"\n"
+        )).unwrap();
+        fs::write(
+            main.join(".gitignore"),
+            "tmp/\n.agents\ngh-1-bin/\ngh-1-screen-0.txt\n",
+        )
+        .unwrap();
+        fs::write(
+            main.join(".kendex-generated.json"),
+            "[\".kendex-generated.json\"]\n",
+        )
+        .unwrap();
+        Self::git(&main, &["add", "."]);
+        Self::git(&main, &["commit", "-qm", "base"]);
+        Self::git(
+            &main,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        Self::git(&main, &["push", "-qu", "origin", "main"]);
+        let created = Self::worktree(&main, &bin, &["create", "KEN-1"]);
+        assert!(created.status.success(), "{}", stderr(&created));
+        let tree = root
+            .join(if aliased { "alias" } else { "trees" })
+            .join("ken-1");
+        let physical = tree.canonicalize().unwrap();
+        let agents = Self::skill("../.agents").canonicalize().unwrap();
+        for dir in [&tree, &main] {
+            std::os::unix::fs::symlink(&agents, dir.join(".agents")).unwrap();
+        }
+        fs::write(tree.join("feature"), "feature\n").unwrap();
+        Self::git(&tree, &["add", "feature"]);
+        Self::git(&tree, &["commit", "-qm", "fix(KEN-1): feature"]);
+        if direct && !dropped {
+            fs::write(tree.join("followup"), "follow-up\n").unwrap();
+            Self::git(&tree, &["add", "followup"]);
+            Self::git(&tree, &["commit", "-qm", "fix(KEN-1): follow-up"]);
+        }
+        let original = Self::git(&tree, &["rev-parse", "HEAD"]);
+        let file = if dropped { "feature" } else { "base-moved" };
+        fs::write(main.join(file), "feature\n").unwrap();
+        Self::git(&main, &["add", file]);
+        Self::git(&main, &["commit", "-qm", "base advances"]);
+        Self::git(&main, &["push", "-q", "origin", "main"]);
+        let state = main.join("tmp");
+        let item = item_record(&state, "KEN-1");
+        fs::write(
+            item,
+            json!({"issue_id":"KEN-1","worktree":tree,"branch":"ken-1"}).to_string(),
+        )
+        .unwrap();
+        let server = Server::start(&root, "fleet");
+        let fleet = Fleet::new(&server);
+        let (pane, identity) = redrawing(
+            &server,
+            &tree,
+            "gh-1",
+            "codex",
+            "› Work on KEN-1\n• Restack finished\n› Ask Codex to do anything\n",
+        );
+        await_drawn(&server, &pane, "Restack finished");
+        let cwd = support::tmux(
+            &server.socket,
+            &["display-message", "-p", "-t", &pane, "#{pane_current_path}"],
+        );
+        assert_eq!(
+            String::from_utf8(cwd.stdout).unwrap().trim(),
+            physical.to_str().unwrap()
+        );
+        fleet.set_lanes(vec![lane_record(
+            "KEN-1",
+            "gh-1",
+            "codex",
+            &server,
+            &pane,
+            Some(&identity),
+            &tree,
+        )]);
+        fleet.set_overseer(json!({"server_socket":server.socket}));
+        let mut fixture = Self {
+            _temp: temp,
+            main: main.clone(),
+            tree,
+            bin: bin.clone(),
+            state,
+            delivery,
+            head: String::new(),
+            server,
+            fleet,
+            pane,
+        };
+        fixture.op(json!({"mode":"check-live-round","landing":true}));
+        let out = if replay {
+            let paused = Self::worktree(&main, &bin, &["create", "KEN-1", "--restack", "--replay"]);
+            assert_eq!(paused.status.code(), Some(1), "{}", stderr(&paused));
+            assert!(
+                stderr(&paused).contains("worktree-replay-conflicts:"),
+                "{}",
+                stderr(&paused)
+            );
+            Self::worktree(&main, &bin, &["restack", "skip", "KEN-1"])
+        } else {
+            Self::worktree(&main, &bin, &["create", "KEN-1", "--restack"])
+        };
+        assert!(out.status.success(), "{}", stderr(&out));
+        fixture.head = Self::git(&fixture.tree, &["rev-parse", "HEAD"]);
+        assert_ne!(fixture.head, original);
+        if dropped {
+            assert_eq!(
+                fixture.head,
+                Self::git(&fixture.main, &["rev-parse", "HEAD"])
+            );
+            assert!(
+                stderr(&out)
+                    .lines()
+                    .any(|line| line == format!("rebase-map: {original} dropped"))
+            );
+        }
+        let markers = fixture.main.join(".git/lane-mail");
+        fs::create_dir_all(&markers).unwrap();
+        fs::write(markers.join("ken-1"), format!("{}\n", physical.display())).unwrap();
+        fs::create_dir_all(fixture.tree.join("tmp/lane-mail/KEN-1")).unwrap();
+        fixture
+    }
+
+    fn skill(path: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path)
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = program("git").args(args).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+    }
+
+    fn worktree(main: &Path, bin: &Path, args: &[&str]) -> std::process::Output {
+        program(Self::skill("worktree/scripts/worktree"))
+            .args(args)
+            .env("ORCH_RUNTIME_BINARY", binary())
+            .env("PATH", tool_path(&[bin]))
+            .current_dir(main)
+            .output()
+            .unwrap()
+    }
+
+    fn op(&self, request: Value) -> Value {
+        self.push_result(request, 0)
+    }
+
+    fn push_result(&self, mut request: Value, exit: i32) -> Value {
+        request["op"] = json!("record-push");
+        request["worktree"] = json!(self.tree);
+        let out = isolated()
+            .args([
+                "op",
+                "--item",
+                "KEN-1",
+                "--request-json",
+                &request.to_string(),
+            ])
+            .env("WORKTREE_CLI", Self::skill("worktree/scripts/worktree"))
+            .env("ORCH_STATE_DIR", &self.state)
+            .env("WORKTREE_DEFAULT_BRANCH", "main")
+            .env("ORCH_DELIVERY", self.delivery)
+            .env("DEV_VALIDATE_CMD", "true")
+            .env("DEV_VALIDATE_RANGE_CMD", "true")
+            .env("PATH", tool_path(&[&self.bin]))
+            .current_dir(&self.main)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(exit),
+            "{request}: {}{}",
+            stderr(&out),
+            String::from_utf8_lossy(&out.stdout)
+        );
+        reply(&out)["result"].clone()
+    }
+
+    fn hook(&self, arm: Option<&str>) -> std::process::Output {
+        let payload = self.tree.join("tmp/hook-input.json");
+        std::fs::write(&payload, r#"{"prompt":"Continue the landing."}"#).unwrap();
+        isolated()
+            .args(["turn-end", "--hook-dir"])
+            .arg(self.tree.join(".codex/hooks"))
+            .args(arm)
+            .env("ORCH_STATE_DIR", &self.state)
+            .env("LANE_MAIL_ITEM", "KEN-1")
+            .env("LANE_MAIL_CLI", lane_mail())
+            .stdin(std::fs::File::open(payload).unwrap())
+            .current_dir(&self.tree)
+            .output()
+            .unwrap()
+    }
+
+    fn held_prompt(&self) {
+        let rows = self.tree.join("tmp/lane-mail/KEN-1/session-rows.jsonl");
+        let prompt = self.hook(Some("prompt"));
+        assert!(prompt.status.success(), "{}", stderr(&prompt));
+        self.stop();
+        let Reading::Live(row) = lane_rows(&rows) else {
+            panic!("prompt row missing");
+        };
+        assert_eq!(row.event.as_deref(), Some("UserPromptSubmit"));
+    }
+
+    fn stop(&self) {
+        let out = self.hook(None);
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "Stop did not hold the guarded landing: {}",
+            stderr(&out)
+        );
+        assert!(
+            stderr(&out).contains(&format!(
+                "landing-step=restack-before-push head={}",
+                self.head
+            )),
+            "{}",
+            stderr(&out)
+        );
+    }
+
+    fn landing(&self) -> Value {
+        let path = item_record(&self.state, "KEN-1");
+        serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["restack_landing"]
+            .clone()
+    }
+
+    fn mail(&self, args: &[&str]) {
+        let out = program(lane_mail())
+            .current_dir(&self.tree)
+            .args(args)
+            .args(["--item", "KEN-1", "--root", self.tree.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "mail {args:?}: {}", stderr(&out));
+    }
+
+    fn asked(&self, driver: &mut LaneDriver<'_>) -> String {
+        for _ in 0..2 {
+            let out = driver.pass(&self.fleet.read());
+            assert!(out.failed.is_none(), "{:?}", out.failed);
+        }
+        let row = format!("restack|{}", self.head);
+        assert_eq!(
+            driver.baseline.get("resume", "restack:KEN-1"),
+            Some(row.as_str()),
+            "watch did not request the exact restacked head"
+        );
+        row
+    }
+
+    fn wake(&self, driver: &LaneDriver<'_>) {
+        let clock = FakeClock::new();
+        let tick = orch_runtime::watch::Tick {
+            duty: orch_runtime::schedule::Duty::Wake,
+            now: clock.now(),
+            wall: driver.now,
+            baseline: &driver.baseline,
+            clock: &clock,
+        };
+        let out =
+            orch_runtime::watch::wake::body(&self.fleet.path(), &driver.settings)(&tick).unwrap();
+        assert!(out.failed.is_none(), "{:?}", out.failed);
+    }
+
+    fn marks(&self) -> Value {
+        let path = orch_runtime::watch::wake::record_path(&self.fleet.path());
+        match std::fs::read(path) {
+            Ok(raw) => serde_json::from_slice::<Value>(&raw).unwrap()["marks"].clone(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Value::Null,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    fn delivery_fake(&self) -> PathBuf {
+        let fake = self.bin.join("agent-runtime");
+        write_executable(
+            &fake,
+            format!(
+                r#"#!/bin/sh
+case " $* " in
+  *" --line-digest "*) result='"delivery":"unconfirmed","cause":"turn-unmatched"' ;;
+  *" --no-paste "*) result='"delivery":"read","turns":0' ;;
+  *)
+    while [ "$1" != --line ]; do
+      [ "$#" -gt 0 ] || exit 1
+      shift
+    done
+    printf '%s\n' "$2" >>'{log}'
+    case "$2" in
+      *"restacked head "*) result='"delivery":"unconfirmed","cause":"turn-unmatched"' ;;
+      *) result='"delivery":"confirmed","turns_after":1' ;;
+    esac
+    ;;
+esac
+printf '{{"ok":true,"result":{{%s}}}}\n' "$result"
+"#,
+                log = self.bin.join("pastes").display()
+            ),
+        );
+        fake
+    }
+
+    fn pastes(&self) -> Vec<String> {
+        std::fs::read_to_string(self.bin.join("pastes"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+#[test]
+fn guarded_restack_replay_skip_recovers_the_all_dropped_head() {
+    if !isolated_row("guarded_restack_replay_skip_recovers_the_all_dropped_head") {
+        return;
+    }
+    let fixture = RestackWatch::with_replay(true, false, false, true);
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn renewed_restack_accepts_the_zero_topic_rebase_and_rejects_a_reset() {
+    if !isolated_row("renewed_restack_accepts_the_zero_topic_rebase_and_rejects_a_reset") {
+        return;
+    }
+    let mut fixture = RestackWatch::new(true, false, false);
+    let prior = fixture.head.clone();
+    fixture.op(json!({"mode":"check-live-round","landing":true}));
+    assert_eq!(fixture.landing()["head"], prior);
+    let map = PathBuf::from(RestackWatch::git(
+        &fixture.tree,
+        &["rev-parse", "--absolute-git-dir"],
+    ))
+    .join("kendex-rebase-map");
+    let before = std::fs::read(&map).unwrap();
+    RestackWatch::git(
+        &fixture.main,
+        &["commit", "--allow-empty", "-qm", "base moves again"],
+    );
+    RestackWatch::git(&fixture.main, &["push", "-q", "origin", "main"]);
+    let next = RestackWatch::git(&fixture.main, &["rev-parse", "HEAD"]);
+    RestackWatch::git(&fixture.tree, &["reset", "-q", "--hard", &next]);
+    assert!(
+        !stderr(&fixture.hook(None)).contains("landing-step=restack-before-push"),
+        "a reset to the new base must not stand in for guarded restack"
+    );
+    RestackWatch::git(&fixture.tree, &["reset", "-q", "--hard", &prior]);
+    let out = RestackWatch::worktree(
+        &fixture.main,
+        &fixture.bin,
+        &["create", "KEN-1", "--restack"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(&map).unwrap(),
+        before,
+        "zero-topic rebase writes no new hop"
+    );
+    assert_eq!(
+        RestackWatch::git(&fixture.tree, &["rev-parse", "HEAD"]),
+        next
+    );
+    fixture.head = next;
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn local_restack_observation_and_delivery_follow_the_exported_state_directory() {
+    if !isolated_row("local_restack_observation_and_delivery_follow_the_exported_state_directory") {
+        return;
+    }
+    let mut fixture = RestackWatch::new(false, false, false);
+    let state = fixture.fleet.runner.state_dir().to_path_buf();
+    std::fs::rename(
+        item_record(&fixture.state, "KEN-1"),
+        item_record(&state, "KEN-1"),
+    )
+    .unwrap();
+    fixture.state = state;
+    fixture.op(json!({"mode":"check-live-round","landing":true}));
+    fixture.stop();
+    let fake = fixture.delivery_fake();
+    lane_driver!(
+        fixture.server,
+        fixture.fleet,
+        readers,
+        driver,
+        &[
+            ("ORCH_AGENT_RUNTIME", fake.to_str().unwrap()),
+            ("LANE_MAIL_CLI", lane_mail().to_str().unwrap()),
+        ]
+    );
+    driver.settings.roots.project = fixture.main.clone();
+    driver.settings.roots.common = fixture.main.clone();
+    fixture.asked(&mut driver);
+    fixture.wake(&driver);
+    assert_eq!(
+        fixture.pastes().len(),
+        1,
+        "wake reopens the same state used by observation"
+    );
+    assert!(fixture.pastes()[0].contains(&fixture.head));
+}
+
+#[test]
+fn restack_after_a_held_stop_keeps_the_open_prompt_eligible() {
+    if !isolated_row("restack_after_a_held_stop_keeps_the_open_prompt_eligible") {
+        return;
+    }
+    let fixture = RestackWatch::new(false, false, false);
+    fixture.held_prompt();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn restack_delivery_proceeds_past_a_confirmed_provider_row_left_by_held_stop() {
+    if !isolated_row("restack_delivery_proceeds_past_a_confirmed_provider_row_left_by_held_stop") {
+        return;
+    }
+    let fixture = RestackWatch::new(false, false, false);
+    let fake = fixture.delivery_fake();
+    lane_driver!(
+        fixture.server,
+        fixture.fleet,
+        readers,
+        driver,
+        &[
+            ("ORCH_AGENT_RUNTIME", fake.to_str().unwrap()),
+            ("LANE_MAIL_CLI", lane_mail().to_str().unwrap()),
+        ]
+    );
+    redraw(
+        &fixture.server,
+        &fixture.pane,
+        &fixture.tree,
+        "tmp/api-error.txt",
+        CODEX_LIVE_FAILURE,
+        "not supported",
+    );
+    let state = fixture.fleet.read();
+    for _ in 0..2 {
+        driver.pass(&state);
+    }
+    let ordinary = driver.baseline.get("resume", "gh-1").unwrap().to_owned();
+    assert!(ordinary.starts_with("api-error|"));
+    fixture.wake(&driver);
+    assert_eq!(fixture.marks()["KEN-1"]["outcome"]["wake"], "delivered");
+    redraw(
+        &fixture.server,
+        &fixture.pane,
+        &fixture.tree,
+        "tmp/idle.txt",
+        "› Resume the orch workflow\n• Restack finished\n› Ask Codex to do anything\n",
+        "Restack finished",
+    );
+    fixture.held_prompt();
+    fixture.asked(&mut driver);
+    assert_eq!(
+        driver.baseline.get("resume", "gh-1"),
+        Some(ordinary.as_str())
+    );
+    fixture.wake(&driver);
+    assert_eq!(
+        fixture.pastes().len(),
+        2,
+        "the confirmed ordinary row must let the restack through"
+    );
+    assert_eq!(
+        fixture.marks()["restack:KEN-1"]["outcome"]["wake"],
+        "unconfirmed"
+    );
+}
+
+#[test]
+fn direct_prepare_retires_an_all_dropped_restack_already_on_the_base() {
+    if !isolated_row("direct_prepare_retires_an_all_dropped_restack_already_on_the_base") {
+        return;
+    }
+    let fixture = RestackWatch::new(true, false, true);
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+    let prepared = fixture.push_result(json!({"mode":"prepare"}), 1);
+    assert!(
+        prepared["push"]["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("worktree-push-base-empty: ")
+    );
+    assert!(
+        fixture.landing().is_null(),
+        "empty direct prepare proves that the landing is integrated"
+    );
+    assert!(!stderr(&fixture.hook(None)).contains("landing-step=restack-before-push"));
+    driver.pass(&fixture.fleet.read());
+    assert!(driver.baseline.get("resume", "restack:KEN-1").is_none());
+}
+
+#[test]
+fn guarded_all_dropped_restack_holds_stop_and_requests_its_final_head() {
+    if !isolated_row("guarded_all_dropped_restack_holds_stop_and_requests_its_final_head") {
+        return;
+    }
+    let fixture = RestackWatch::new(true, false, false);
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    let row = fixture.asked(&mut driver);
+    let again = driver.pass(&fixture.fleet.read());
+    assert!(
+        !again
+            .changes
+            .iter()
+            .any(|change| matches!(change, Change::Set {
+        kind, identity, value
+    } if kind == "resume" && identity == "restack:KEN-1" && value == &row))
+    );
+}
+
+#[test]
+fn guarded_restack_through_a_symlinked_base_requests_the_physical_launchs_head() {
+    if !isolated_row("guarded_restack_through_a_symlinked_base_requests_the_physical_launchs_head")
+    {
+        return;
+    }
+    let fixture = RestackWatch::new(false, true, false);
+    assert_ne!(fixture.tree, fixture.tree.canonicalize().unwrap());
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+}
+
+#[test]
+fn restack_request_survives_an_acknowledged_halt_before_delivery() {
+    if !isolated_row("restack_request_survives_an_acknowledged_halt_before_delivery") {
+        return;
+    }
+    let fixture = RestackWatch::new(false, false, false);
+    let fake = fixture.delivery_fake();
+    lane_driver!(
+        fixture.server,
+        fixture.fleet,
+        readers,
+        driver,
+        &[
+            ("ORCH_AGENT_RUNTIME", fake.to_str().unwrap()),
+            ("LANE_MAIL_CLI", lane_mail().to_str().unwrap()),
+        ]
+    );
+    driver.halted = |lane| Mailbox::new(lane_mail().to_path_buf()).lane_halted(lane);
+    let row = fixture.asked(&mut driver);
+    let directive = fixture.tree.join("tmp/directive");
+    std::fs::write(&directive, "Hold for a restart.\n").unwrap();
+    fixture.mail(&["send", "--halt", "--file", directive.to_str().unwrap()]);
+    fixture.mail(&["inbox"]);
+    let state = fixture.fleet.read();
+    let mailbox = Mailbox::new(lane_mail().to_path_buf());
+    assert!(
+        mailbox
+            .inbox_peek("KEN-1", &fixture.tree)
+            .unwrap()
+            .unread
+            .is_empty()
+    );
+    assert!(mailbox.lane_halted(&state.lanes[0]).unwrap());
+    let idle = driver.pass(&state);
+    assert!(idle.failed.is_none(), "{:?}", idle.failed);
+    assert_eq!(
+        driver.baseline.get("resume", "restack:KEN-1"),
+        Some(row.as_str())
+    );
+    fixture.wake(&driver);
+    assert!(fixture.pastes().is_empty());
+    assert!(fixture.marks()["restack:KEN-1"].is_null());
+    std::fs::write(&directive, "Continue the landing.\n").unwrap();
+    fixture.mail(&["send", "--directive", "--file", directive.to_str().unwrap()]);
+    assert!(!mailbox.lane_halted(&state.lanes[0]).unwrap());
+    fixture.wake(&driver);
+    fixture.wake(&driver);
+    let pasted = fixture.pastes();
+    assert_eq!(pasted.len(), 1, "{pasted:?}");
+    assert!(pasted[0].contains(&fixture.head));
+    assert_eq!(fixture.marks()["restack:KEN-1"]["resume"], row);
+}
+
+#[test]
+fn restack_delivery_receipt_survives_ordinary_mail_and_api_retry() {
+    if !isolated_row("restack_delivery_receipt_survives_ordinary_mail_and_api_retry") {
+        return;
+    }
+    let fixture = RestackWatch::new(false, false, false);
+    let fake = fixture.delivery_fake();
+    lane_driver!(
+        fixture.server,
+        fixture.fleet,
+        readers,
+        driver,
+        &[
+            ("ORCH_AGENT_RUNTIME", fake.to_str().unwrap()),
+            ("LANE_MAIL_CLI", lane_mail().to_str().unwrap()),
+        ]
+    );
+    fixture.asked(&mut driver);
+    fixture.wake(&driver);
+    let restack = fixture.marks()["restack:KEN-1"].clone();
+    assert_eq!(restack["outcome"]["wake"], "unconfirmed");
+    driver.baseline.apply(Change::Set {
+        kind: "unread".to_owned(),
+        identity: "KEN-1".to_owned(),
+        value: "ordinary".to_owned(),
+    });
+    fixture.wake(&driver);
+    assert_eq!(fixture.marks()["KEN-1"]["outcome"]["wake"], "delivered");
+    assert_eq!(fixture.marks()["restack:KEN-1"], restack);
+    redraw(
+        &fixture.server,
+        &fixture.pane,
+        &fixture.tree,
+        "tmp/api-error.txt",
+        CODEX_LIVE_FAILURE,
+        "not supported",
+    );
+    let state = fixture.fleet.read();
+    for _ in 0..2 {
+        driver.pass(&state);
+    }
+    let api_resume = driver.baseline.get("resume", "gh-1").unwrap().to_owned();
+    assert!(api_resume.starts_with("api-error|"));
+    fixture.wake(&driver);
+    assert_eq!(fixture.marks()["KEN-1"]["resume"], api_resume);
+    assert_eq!(fixture.marks()["KEN-1"]["outcome"]["wake"], "delivered");
+    assert_eq!(fixture.marks()["restack:KEN-1"], restack);
+    fixture.wake(&driver);
+    assert_eq!(fixture.pastes().len(), 3);
+    redraw(
+        &fixture.server,
+        &fixture.pane,
+        &fixture.tree,
+        "tmp/api-recovered.txt",
+        "› Resume the orch workflow\n• Work resumed\n› Ask Codex to do anything\n",
+        "Work resumed",
+    );
+    for _ in 0..2 {
+        driver.pass(&state);
+    }
+    assert!(driver.baseline.get("resume", "gh-1").is_none());
+    assert_eq!(fixture.marks()["restack:KEN-1"], restack);
+}
+
+#[test]
+fn direct_prepare_keeps_the_guarded_restack_open_until_confirmed_publication() {
+    if !isolated_row("direct_prepare_keeps_the_guarded_restack_open_until_confirmed_publication") {
+        return;
+    }
+    let mut fixture = RestackWatch::new(false, false, true);
+    assert!(RestackWatch::git(&fixture.tree, &["status", "--porcelain"]).is_empty());
+    let prepared = fixture.op(json!({"mode":"prepare"}));
+    let prepared_head = prepared["prepared"]["commit"].as_str().unwrap();
+    assert_ne!(
+        prepared_head, fixture.head,
+        "prepare folded the restacked commits"
+    );
+    fixture.head = prepared_head.to_owned();
+    fixture.stop();
+    lane_driver!(fixture.server, fixture.fleet, readers, driver);
+    fixture.asked(&mut driver);
+    let published = fixture.op(json!({
+        "mode":"publish", "base":prepared["prepared"]["before"], "head":fixture.head
+    }));
+    assert_eq!(published["delivery"]["commit"], fixture.head);
+    let path = item_record(&fixture.main.join("tmp"), "KEN-1");
+    let doc: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(doc.get("restack_landing").is_none());
+    driver.pass(&fixture.fleet.read());
+    assert!(driver.baseline.get("resume", "restack:KEN-1").is_none());
+}
+
 #[test]
 fn a_current_codex_failure_ends_a_working_row_but_scrollback_does_not() {
     if !isolated_row("a_current_codex_failure_ends_a_working_row_but_scrollback_does_not") {

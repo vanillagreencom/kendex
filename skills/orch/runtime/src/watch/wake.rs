@@ -116,10 +116,26 @@ use agent_runtime::effects::overseer_socket;
 pub const UNREAD_KIND: &str = "unread";
 /// The baseline row kind the lane and controller duties ask a resume with.
 pub const RESUME_KIND: &str = "resume";
+pub(super) const RESTACK_CAUSE: &str = "restack";
 const RESUME_READ_ROW: &str = "resume-read-unavailable";
 /// The resume row's cause for a session at a usage wall: typed past the
 /// banner once its account reads room.
 pub const WALL_CAUSE: &str = "usage-limit";
+
+pub(super) fn restack_key(item: &str) -> String {
+    format!("{RESTACK_CAUSE}:{item}")
+}
+
+pub(super) fn restack_item(key: &str) -> Option<&str> {
+    key.strip_prefix(RESTACK_CAUSE)?.strip_prefix(':')
+}
+
+fn receipt_key(target: &str, cause: Option<&str>) -> String {
+    match cause {
+        Some(RESTACK_CAUSE) => restack_key(target),
+        _ => target.to_owned(),
+    }
+}
 
 /// The cause of the resume row `row` where its key opens with the session
 /// key `session` (`<cause>|<session>|…`), the one reading of whose session
@@ -215,6 +231,7 @@ impl Resume {
         let (cause, _) = row.split_once('|')?;
         let ended = match cause {
             WALL_CAUSE => "its account's usage limit, which has since reset",
+            RESTACK_CAUSE => "an open guarded restack",
             "length" => "the output limit",
             stop::API_ERROR => "an API error",
             cause
@@ -239,6 +256,12 @@ impl Resume {
     /// The line typed for `target`: the resume sentence, then the inbox
     /// line, so the resumed turn reads the mail that waited too.
     fn line(&self, target: &str) -> String {
+        if self.cause == RESTACK_CAUSE {
+            let head = self.row.strip_prefix("restack|").expect("restack row");
+            return format!(
+                "Continue the orch landing for {target} at restacked head {head}. Resume the guarded restack workflow from this head through validation and publication."
+            );
+        }
         if super::verifying::is_reading_lane(target) {
             return format!(
                 "Continue the post-merge check for {target} using your original brief and box. Your last turn ended on {}. {}",
@@ -895,6 +918,31 @@ impl Wake {
             let Some(mut resume) = Resume::of(&name, &row) else {
                 continue;
             };
+            if resume.cause == RESTACK_CAUSE {
+                let Some(item) = restack_item(&name) else {
+                    continue;
+                };
+                let Some(lane) = fleet.lanes.iter().find(|lane| lane.item == item) else {
+                    continue;
+                };
+                // The ordinary route spends one row once its mark has
+                // an outcome. A held Stop can leave that row in the baseline.
+                let ordinary_pending = tick
+                    .baseline
+                    .get(RESUME_KIND, &super::lanes::lane_name(lane))
+                    .filter(|row| asks_resume(row))
+                    .is_some_and(|row| {
+                        record.get(item).is_none_or(|mark| {
+                            mark.resume.as_deref() != Some(row) || mark.outcome.is_none()
+                        })
+                    });
+                if !ordinary_pending
+                    && self.restack(lane, &resume, &socket, tick, &mut record, &mut produced)?
+                {
+                    provider_resumes.insert(item.to_owned());
+                }
+                continue;
+            }
             if name == OVERSEER_TARGET {
                 let Some(overseer) = fleet.overseer.as_ref().filter(|o| {
                     o.extra.get("off").is_none_or(Value::is_null)
@@ -1065,6 +1113,68 @@ impl Wake {
         Ok(produced)
     }
 
+    /// Recheck the exact head and the mailbox halt before the first paste.
+    /// An attempted head keeps its own receipt through subsequent mail.
+    fn restack(
+        &self,
+        lane: &Lane,
+        resume: &Resume,
+        socket: &Path,
+        tick: &Tick,
+        record: &mut WakeRecord,
+        produced: &mut Produced,
+    ) -> Result<bool> {
+        let Some(mut target) = lane_target(lane, socket) else {
+            return Ok(false);
+        };
+        if let Some(mark) = record
+            .get(&resume.lane)
+            .filter(|mark| mark.resume.as_deref() == Some(resume.row.as_str()))
+            .cloned()
+        {
+            if mark.pane == target.pane
+                && mark.server == target.server
+                && mark.server_start == target.server_start
+            {
+                self.repeat(&target, mark, Some(RESTACK_CAUSE), record, produced)?;
+            }
+            return Ok(false);
+        }
+        let failure = |produced: &mut Produced, cause: &str| {
+            super::lanes::fail(
+                produced,
+                format!("restack-unread item={} cause={cause}", lane.item),
+            );
+        };
+        match super::lanes::open_restack(
+            lane,
+            &self.settings.roots.project,
+            &self.settings.state_dir,
+        ) {
+            Ok(Some((cwd, head))) if resume.row.strip_prefix("restack|") == Some(head.as_str()) => {
+                target.cwd = cwd;
+            }
+            Ok(_) => return Ok(false),
+            Err(cause) => {
+                failure(produced, &cause);
+                return Ok(false);
+            }
+        }
+        let mailbox = Mailbox::new(crate::effects::fleet_mailbox(&self.settings).mail_program);
+        match mailbox.lane_halted(lane) {
+            Ok(false) => {}
+            Ok(true) => return Ok(false),
+            Err(cause) => {
+                failure(produced, &format!("halt-unread {cause}"));
+                return Ok(false);
+            }
+        }
+        self.first_pass(&target, "", Some(resume), tick, record, produced)?;
+        Ok(record
+            .get(&resume.lane)
+            .is_some_and(|mark| mark.resume.as_deref() == Some(resume.row.as_str())))
+    }
+
     /// Set or drop the target's mark in `record` and write the record
     /// whole, durably, before the caller goes on.
     fn write(&self, record: &mut WakeRecord, target: &str, mark: Option<WakeMark>) -> Result<()> {
@@ -1140,7 +1250,7 @@ impl Wake {
             cause: OUTCOME_LOST.to_owned(),
         });
         mark.owner = owner_word(name, &mark);
-        self.write(record, name, Some(mark))?;
+        self.write(record, &receipt_key(name, resume), Some(mark))?;
         produced.events.push(Event::WakeUnconfirmed {
             target: name.to_owned(),
             cause: OUTCOME_LOST.to_owned(),
@@ -1162,6 +1272,7 @@ impl Wake {
         produced: &mut Produced,
     ) -> Result<()> {
         let name = target.name.clone();
+        let key = receipt_key(&name, resume);
         match &mark.outcome {
             Some(WakeOutcome::Delivered { .. }) => return Ok(()),
             // A limit stands as read: the pane is not read again for it,
@@ -1202,7 +1313,7 @@ impl Wake {
                 mark.outcome = Some(WakeOutcome::Delivered { turns_after });
                 // Woken after all: nothing is owed to the owner.
                 mark.owner = None;
-                self.write(record, &name, Some(mark))?;
+                self.write(record, &key, Some(mark))?;
                 produced
                     .events
                     .extend(delivered(&name, resume.map(str::to_owned)));
@@ -1222,7 +1333,7 @@ impl Wake {
                 if !had_outcome {
                     mark.owner = owner_word(&name, &mark);
                 }
-                self.write(record, &name, Some(mark))?;
+                self.write(record, &key, Some(mark))?;
                 produced.events.push(Event::WakeUnconfirmed {
                     target: name,
                     cause,
@@ -1244,7 +1355,7 @@ impl Wake {
                     cause: cause.clone(),
                 });
                 mark.owner = owner_word(&name, &mark);
-                self.write(record, &name, Some(mark))?;
+                self.write(record, &key, Some(mark))?;
                 produced.events.push(Event::WakeLimit {
                     target: name,
                     harness,
@@ -1461,7 +1572,8 @@ impl Wake {
         produced: &mut Produced,
     ) -> Result<()> {
         let name = target.name.clone();
-        let standing = record.get(&name).cloned();
+        let key = receipt_key(&name, resume.map(|r| r.cause.as_str()));
+        let standing = record.get(&key).cloned();
         let line = resume.map_or_else(|| line_for(&name), |r| r.line(&name));
         let mut mark = WakeMark {
             pane: target.pane.clone(),
@@ -1506,7 +1618,8 @@ impl Wake {
             );
         };
         let clear_refusal = |produced: &mut Produced| {
-            if let Some(resume) = provider_stop
+            if let Some(resume) =
+                resume.filter(|r| provider_stop.is_some() || r.cause == RESTACK_CAUSE)
                 && tick.baseline.get(RESUME_READ_ROW, &resume.lane).is_some()
             {
                 produced
@@ -1573,7 +1686,13 @@ impl Wake {
                 self.untyped(target, standing.as_ref(), resume, &mark, record, produced)?;
                 return Ok(());
             }
-            Read::Limit { harness, cause } => limit(&mut mark, harness, cause),
+            Read::Limit { harness, cause } => {
+                if let Some(resume) = resume.filter(|r| r.cause == RESTACK_CAUSE) {
+                    report_refusal(produced, resume, &cause);
+                    return Ok(());
+                }
+                limit(&mut mark, harness, cause)
+            }
             Read::Idle { turns } => {
                 mark.turns_before = if matches!(target.route, Route::Pane) {
                     turns
@@ -1589,7 +1708,7 @@ impl Wake {
                 };
                 clear_refusal(produced);
                 // The mark is on disk before anything is typed.
-                self.write(record, &name, Some(mark.clone()))?;
+                self.write(record, &key, Some(mark.clone()))?;
                 match self.paste(target, &line, mark.turns_before, room)? {
                     Paste::Confirmed { turns_after } => {
                         mark.outcome = Some(WakeOutcome::Delivered { turns_after });
@@ -1619,7 +1738,7 @@ impl Wake {
                             record,
                             produced,
                         )? {
-                            self.write(record, &name, standing)?;
+                            self.write(record, &key, standing)?;
                         }
                         return Ok(());
                     }
@@ -1627,7 +1746,7 @@ impl Wake {
             }
         };
         mark.owner = owner_word(&name, &mark);
-        self.write(record, &name, Some(mark))?;
+        self.write(record, &key, Some(mark))?;
         produced.events.extend(events);
         Ok(())
     }
@@ -1649,7 +1768,7 @@ impl Wake {
         record: &mut WakeRecord,
         produced: &mut Produced,
     ) -> Result<bool> {
-        let Some(resume) = resume.filter(|r| !r.wall) else {
+        let Some(resume) = resume.filter(|r| !r.wall && r.cause != RESTACK_CAUSE) else {
             return Ok(false);
         };
         let kept = WakeMark {

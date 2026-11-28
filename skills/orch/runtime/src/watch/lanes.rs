@@ -643,6 +643,7 @@ struct Observed<'a> {
     screen: Option<String>,
     row: Option<rows::Row>,
     provider_running: bool,
+    restack_idle: bool,
     state: LaneState,
 }
 
@@ -844,6 +845,7 @@ fn read_lane<'a>(
         screen: None,
         row: None,
         provider_running: false,
+        restack_idle: false,
         state,
     };
     let harness_up = match host.status {
@@ -912,6 +914,7 @@ fn read_lane<'a>(
             screen: screen.ok(),
             row: live_row(row_reading),
             provider_running: harness_up,
+            restack_idle: false,
             state,
         };
     }
@@ -941,6 +944,7 @@ fn read_lane<'a>(
                 screen: (readers.capture)(&kept).ok(),
                 row: live_row(row_reading),
                 provider_running: false,
+                restack_idle: false,
                 state: LaneState::Exited,
             };
         }
@@ -959,14 +963,31 @@ fn read_lane<'a>(
         ),
         Reading::Gone | Reading::Unreadable { .. } => (None, None),
     };
-    let state = judge(&Inputs {
+    let inputs = Inputs {
         pane: Some(&pane),
         process: process.as_ref(),
         screen: screen.as_ref(),
         rows: current_rows,
         harness,
         account_room,
-    });
+    };
+    let state = judge(&inputs);
+    // A held Stop writes PreToolUse or keeps the existing UserPromptSubmit.
+    // Check the live composer separately
+    // for a landing wake, leaving the ordinary turn verdict in place.
+    let restack_idle = state == LaneState::Working
+        && harness == Some(Harness::Codex)
+        && matches!(current_rows, Some(Reading::Live(row)) if matches!(row.event.as_deref(), Some("PreToolUse" | "UserPromptSubmit")))
+        && matches!(
+            classify(&Inputs {
+                rows: None,
+                ..inputs
+            }),
+            LaneState::Idle {
+                capacity: false,
+                cause: None
+            }
+        );
     Observed {
         lane,
         name,
@@ -975,6 +996,7 @@ fn read_lane<'a>(
         screen: screen.and_then(Result::ok),
         row: live_row(row_reading),
         provider_running: harness_up,
+        restack_idle,
         state,
     }
 }
@@ -1232,8 +1254,11 @@ pub fn observe(pass: &Pass) -> Produced {
             &names
         };
         for identity in pass.baseline.identities(kind) {
-            let controller_resume = kind == wake::RESUME_KIND && identity == wake::OVERSEER_TARGET;
-            if !(kept.contains(&identity) || controller_resume) {
+            let other_resume = kind == wake::RESUME_KIND
+                && (identity == wake::OVERSEER_TARGET
+                    || wake::restack_item(&identity)
+                        .is_some_and(|item| in_flight.iter().any(|lane| lane.item == item)));
+            if !(kept.contains(&identity) || other_resume) {
                 out.changes.push(clear(kind, &identity));
             }
         }
@@ -1529,6 +1554,12 @@ fn observe_one(
         .as_deref()
         .map(observe::below_last_turn)
         .unwrap_or_default();
+    if obs.restack_idle {
+        match wake::load_record(&pass.state_dir.join(wake::WAKE_FILE)) {
+            Ok(wakes) => queue_restack(obs.lane, pass, &wakes, out),
+            Err(error) => fail(out, error.to_string()),
+        }
+    }
     // The wall is judged before the kind's lines: an older screen settles
     // nothing, and the lane then takes the unjudged path below.
     let (state, reading) = match &obs.state {
@@ -1779,6 +1810,7 @@ fn observe_one(
                 continue_lane(obs, cause, &key, &wakes, pass, out);
                 return reading;
             }
+            queue_restack(obs.lane, pass, &wakes, out);
             let continued = left && owed;
             if reported && !continued {
                 return reading;
@@ -1816,6 +1848,94 @@ fn observe_one(
         }
     }
     reading
+}
+
+/// Ask once per landed head. Its row and wake mark have a separate
+/// identity so an idle pass, ordinary mail or an API retry cannot spend it.
+fn queue_restack(
+    lane: &Lane,
+    pass: &Pass,
+    wakes: &crate::ops::wake::WakeRecord,
+    out: &mut Produced,
+) {
+    let key = wake::restack_key(&lane.item);
+    let prior = pass.baseline.get(wake::RESUME_KIND, &key);
+    let head = match open_restack(lane, pass.hosted.project, pass.state_dir) {
+        Ok(Some((_, head))) => head,
+        Ok(None) => {
+            if prior.is_some() {
+                out.changes.push(clear(wake::RESUME_KIND, &key));
+            }
+            return;
+        }
+        Err(cause) => {
+            fail(
+                out,
+                format!("restack-unread item={} cause={cause}", lane.item),
+            );
+            return;
+        }
+    };
+    let row = format!("{}|{head}", wake::RESTACK_CAUSE);
+    if prior != Some(row.as_str())
+        && wakes.get(&key).and_then(|m| m.resume.as_deref()) != Some(row.as_str())
+    {
+        match (pass.route.halted)(lane) {
+            Ok(false) => out.changes.push(set(wake::RESUME_KIND, &key, row)),
+            Ok(true) => {}
+            Err(cause) => fail(
+                out,
+                format!(
+                    "restack-unread item={} halt-unread cause={cause}",
+                    lane.item
+                ),
+            ),
+        }
+    }
+}
+
+/// The local checkout's own item state, bound to its physical path for
+/// both the landing read and the wake's prompt receipt.
+pub(super) fn open_restack(
+    lane: &Lane,
+    project: &Path,
+    fleet_state_dir: &Path,
+) -> Result<Option<(PathBuf, String)>, String> {
+    if lane.status != LaneStatus::Running
+        || lane.harness.as_deref() != Some("codex")
+        || hosted::host_of(lane) != "local"
+    {
+        return Ok(None);
+    }
+    let Some(root) = lane.mail_root.as_deref().map(Path::new) else {
+        return Ok(None);
+    };
+    let worktree = match std::fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("checkout={} {error}", root.display())),
+    };
+    let common = lane_common(&worktree)?;
+    let state_dir = if common == lane_common(project)? {
+        fleet_state_dir.to_path_buf()
+    } else {
+        state_dir_for(&worktree, common)?
+    };
+    match handoff_standing(&state_dir, lane) {
+        HandoffReading::None => {}
+        HandoffReading::Stands { .. } => return Ok(None),
+        HandoffReading::Unreadable { path } => {
+            return Err(format!("handoff-unread path={}", path.display()));
+        }
+    }
+    let path = state::item_path(&state_dir, &lane.item);
+    match item_doc(&path) {
+        Reading::Live(doc) => crate::ops::push::open_restack(&doc, &lane.item, &worktree)
+            .map(|head| head.map(|head| (worktree, head)))
+            .map_err(|cause| cause.to_string()),
+        Reading::Gone => Ok(None),
+        Reading::Unreadable { cause } => Err(format!("path={} cause={cause}", path.display())),
+    }
 }
 
 /// The lane and wake duties each own their read and clear their own row.
@@ -4254,20 +4374,27 @@ fn lane_counters(
 /// through a `git` run: a run would carry this process's environment and
 /// walk up from the root into whatever repository holds it.
 fn lane_state_dir(root: &Path) -> Result<PathBuf, String> {
+    state_dir_for(root, lane_common(root)?)
+}
+
+fn lane_common(root: &Path) -> Result<PathBuf, String> {
     let gitfile = root.join(".git");
     let unread = |cause: String| format!("gitfile-unread path={} {cause}", gitfile.display());
-    let common = match std::fs::metadata(&gitfile) {
-        Ok(meta) if meta.is_dir() => root.to_path_buf(),
+    match std::fs::metadata(&gitfile) {
+        Ok(meta) if meta.is_dir() => Ok(root.to_path_buf()),
         Ok(_) => {
             let text = std::fs::read_to_string(&gitfile)
                 .map_err(|e| unread(format!("cause={:?}", e.kind())))?;
             marker::git_dirs_of(&text)
                 .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
-                .ok_or_else(|| unread("cause=no-linked-worktree".to_owned()))?
+                .ok_or_else(|| unread("cause=no-linked-worktree".to_owned()))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => root.to_path_buf(),
-        Err(e) => return Err(unread(format!("cause={:?}", e.kind()))),
-    };
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(root.to_path_buf()),
+        Err(e) => Err(unread(format!("cause={:?}", e.kind()))),
+    }
+}
+
+fn state_dir_for(root: &Path, common: PathBuf) -> Result<PathBuf, String> {
     let read = |path: &Path| agent_runtime::settings::read_text(path);
     let dir = settings::state_dir_named(root, &read).map_err(|e| e.to_string())?;
     Ok(if dir.is_absolute() {
@@ -4677,6 +4804,7 @@ mod tests {
                 ..rows::Row::default()
             }),
             provider_running: false,
+            restack_idle: false,
             state: LaneState::Working,
         }
     }
@@ -5375,6 +5503,7 @@ mod tests {
                     ..rows::Row::default()
                 }),
                 provider_running: false,
+                restack_idle: false,
                 state: state.clone(),
             };
             let pass = Pass {
