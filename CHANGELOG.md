@@ -10,8 +10,10 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ### Added
 
-- Consumer refresh now includes catalog history in refresh pull requests and direct landing commits so repository owners can see what changed in the catalogs they use.
-- Catalog hook authors can declare `reads-registration: true` to mark a Pi hook that needs to know which installation started it. If a legacy carrier cannot identify that installation, the hook refuses to run or reports the ambiguity and skips its work when declared advisory.
+- Consumer refresh reports retired settings from the rendered catalog and names the kendex changes in its pull request or direct landing commit.
+- Every Pi hook kendex installs names its install, project or global, to a pi-hooks carrier older than 0.19.3, which names none. `ui-copy-note` reads its skills from that install today. Where `PI_CODING_AGENT_DIR` points at a project's `.pi`, one hook file is both installs, and such a carrier cannot say which one started it. In that project `ui-copy-note` then reports `kendex-hook-scope-overlap`, names pi-hooks 0.19.3 and skips its note. Every other kendex hook finds its install from its own path and runs as before. A catalog hook that reads that install declares `reads-registration: true`. In that project such a hook exits 2 under the same key, unless its `safety` line opens `Advisory reader.`.
+
+  You do: if `ui-copy-note` reports `kendex-hook-scope-overlap`, update pi-hooks to 0.19.3 or later, or point `PI_CODING_AGENT_DIR` at a directory outside the project.
 
 ### Changed
 
@@ -19,9 +21,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
   You do: give the landing app Workflows read and write in its settings, and accept the new permission on each installation.
 
-- The shared refresh classifier can now mark eligible kendex manifest, JSON settings, or Markdown changes as `trivial` regardless of line count. Changes to catalog sources or the manifest that selects them, kendex locks, harness registries, and paths configured for standard review still take the standard route. An otherwise trivial range keeps the standard route when it cannot verify a changed inventoried render.
-
-  You do: remove `HARNESS_CI_TRIVIAL_MAX_LINES` and `HARNESS_CI_TRIVIAL_SETTINGS` from your kendex settings if present.
+- With neither compatibility override set, the shared refresh classifier can now mark eligible kendex manifest, JSON settings, or Markdown changes as `trivial` regardless of line count. Changes to catalog sources or the manifest that selects them, kendex locks, harness registries, and paths configured for standard review still take the standard route. An otherwise trivial range keeps the standard route when it cannot verify a changed inventoried render.
 
 - The shared refresh classifier counts Cargo lockfile lines separately when it can verify that the lock belongs to the changed workspace manifest. Its diagnostics distinguish a path outside the render inventory from an inventory it could not read.
 - The shared refresh classifier derives CI lane eligibility from workflow inputs and commands, including runner dependencies, and from declared path claims. A refusal to verify a generated file beside ordinary Markdown keeps CI lanes eligible.
@@ -38,11 +38,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - In a copy that follows its default branch and is behind origin's, `kendex check` now names `git pull --ff-only` instead of `kendex refresh` for a package that reads behind, where origin's copy records that package at another commit. The pull brings that record, and a refresh would write a record the copy must not commit. The check offers the pull only where it settles the line: the checkout is on the default branch, has no commits of its own, and its install record is the committed one. Otherwise it keeps naming the refresh. Where the report names the pull, its `Next:` step is that pull, not a project refresh: the refresh rewrites the install record, and git then refuses the pull. Where kendex cannot tell which fix applies, because git cannot answer or origin's copy of the install record cannot be read, the line names neither and says so, and `kendex check --verbose` shows the cause. The check reads only what this clone last fetched. In `kendex check --json`, this fix carries the remedy verb `pull`.
 - When a catalog has yet to be downloaded, kendex names `kendex source refresh` as the fix.
 - A consumer refresh whose render would land through the landing app but meets a busy merge queue no longer opens a pull request. The run prints `refresh-land=skipped value=queued` and `refresh-state=deferred reason=queued`. A later refresh run that meets an empty queue lands the render with no pull request, CI run or review, where the repository's rulesets take the landing push.
-- Consumer refresh reports retired settings from the rendered catalog and names the kendex changes in its pull request or direct landing commit.
 - Retained refresh drafts link to an oversized catalog report only when the linked commit contains the report from the current run.
-- Every Pi hook kendex installs names its install, project or global, to a pi-hooks carrier older than 0.19.3, which names none. `ui-copy-note` reads its skills from that install today. Where `PI_CODING_AGENT_DIR` points at a project's `.pi`, one hook file is both installs, and such a carrier cannot say which one started it. In that project `ui-copy-note` then reports `kendex-hook-scope-overlap`, names pi-hooks 0.19.3 and skips its note. Every other kendex hook finds its install from its own path and runs as before. A catalog hook that reads that install declares `reads-registration: true`. In that project such a hook exits 2 under the same key, unless its `safety` line opens `Advisory reader.`.
-
-  You do: if `ui-copy-note` reports `kendex-hook-scope-overlap`, update pi-hooks to 0.19.3 or later, or point `PI_CODING_AGENT_DIR` at a directory outside the project.
+- The shared v1 consumer refresh workflow's classifier honors `HARNESS_CI_TRIVIAL_SETTINGS` and `HARNESS_CI_TRIVIAL_MAX_LINES` from the target branch's committed settings and warns when it uses either override. Remove the overrides to use the current trivial defaults, and use `HARNESS_CI_STANDARD_PATHS` for paths that still need standard review.
 - Update download errors report the correct attempt count across curl versions.
 - Warnings about unfetched installed versions carry a typed `source-refresh` remedy in the desktop bindings. The Updates page and `kendex updates` render the existing advice from the drift report's shared templates.
 
