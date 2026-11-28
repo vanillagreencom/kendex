@@ -14,6 +14,13 @@ use agent_runtime::record::Locking;
 use crate::marker;
 use crate::ops::push;
 use crate::settings::Settings;
+use crate::watch::github;
+
+fn close_env(credential: &github::Credential) -> Vec<(&str, &OsStr)> {
+    let mut env = crate::settings::worktree_env().to_vec();
+    env.extend(github::credential_env(credential));
+    env
+}
 
 /// How long one git read or one worktree package call may run.
 const CLI_TIMEOUT: Duration = Duration::from_secs(60);
@@ -235,9 +242,8 @@ fn judge_worktree(pinned: &Pinned) -> std::result::Result<Option<KeptReason>, St
 /// which bounds and counts it under the `worktree` tag, with `main` as the
 /// child's working directory: the package takes its repository from the
 /// directory it runs in, so the removal runs in the main worktree, never
-/// inside the tree it deletes. The package inherits the runtime's
-/// environment. `Err` is a run with no reply, held so the next close or
-/// reconcile asks again: a package that never started (a `main` that cannot
+/// inside the tree it deletes. `Err` is a run with no reply, held for the
+/// next close or reconcile: a package that never started (a `main` that cannot
 /// be entered included) removed nothing, `removal-not-started`; one that
 /// outran the bound may have removed it, `removal-unanswered`.
 fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<RemoveReply, String> {
@@ -249,7 +255,7 @@ fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<Rem
         &["remove", path],
         host::Place {
             cwd: Some(Path::new(main)),
-            env: crate::settings::worktree_env(),
+            env: &close_env(&github::renewed_credential()),
         },
         CLI_TIMEOUT,
     )
@@ -755,7 +761,7 @@ pub(super) fn merged(cli: &Path, project: &Path, item: &str) -> std::result::Res
         &["merged", item],
         host::Place {
             cwd: Some(project),
-            env: crate::settings::worktree_env(),
+            env: &close_env(&github::renewed_credential()),
         },
         CLI_TIMEOUT,
     )
@@ -846,9 +852,6 @@ pub(super) fn release_branches(
     main: &Path,
     item: &str,
 ) -> std::result::Result<BranchRelease, String> {
-    let credential = crate::watch::github::renewed_credential();
-    let mut env: Vec<(&str, &OsStr)> = crate::settings::worktree_env().to_vec();
-    env.extend(crate::watch::github::credential_env(&credential));
     let out = host::run_tagged_in(
         "close",
         "worktree",
@@ -857,7 +860,7 @@ pub(super) fn release_branches(
         &["release-branches", item],
         host::Place {
             cwd: Some(main),
-            env: &env,
+            env: &close_env(&github::renewed_credential()),
         },
         RELEASE_TIMEOUT,
     )

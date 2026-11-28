@@ -8440,6 +8440,120 @@ fn hosted_mail_root_reaches_close_ask_and_last_mail() {
     assert_eq!(last["envelopes"][0]["kind"], "notice", "{last}");
 }
 
+/// The watch renews on a refused terminal read and then closes the hosted
+/// lane. With no recorded merge, that close must give `worktree merged`
+/// both renewed variables along with the runtime path it already passes.
+#[test]
+fn a_watch_terminal_close_passes_its_renewed_sign_in_to_worktree_merged() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let repo = repository_fixture(dir.path());
+    let scripts = repo.join(".agents/skills/github/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    write_executable(
+        &scripts.join("gh-auth-ladder"),
+        r#"#!/bin/sh
+if [ -f expired ]; then
+  printf 'GH_TOKEN=renewed-fixture\nGITHUB_TOKEN=renewed-secondary\n'
+else
+  printf 'GH_TOKEN=starting-fixture\nGITHUB_TOKEN=starting-secondary\n'
+fi
+"#,
+    );
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    write_executable(
+        &bin.join("gh"),
+        r#"#!/bin/sh
+case "$1 $2" in
+  'api repos/o/r/issues/1')
+    if [ "$GH_TOKEN" != renewed-fixture ] || [ "$GITHUB_TOKEN" != renewed-secondary ]; then
+      touch expired
+      echo 'gh: expired fixture (HTTP 401)' >&2
+      exit 1
+    fi
+    echo '{"number":1,"state":"closed","state_reason":"completed","user":null,"author_association":"NONE"}' ;;
+  'api repos/o/r/pulls?'*) echo '[]' ;;
+  'api search/issues?'*) echo '{"total_count":0,"incomplete_results":false,"items":[]}' ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
+    let worktree = bin.join("worktree");
+    write_executable(
+        &worktree,
+        r#"#!/bin/sh
+[ "$*" = 'merged issue-1' ] || exit 2
+if [ "$GH_TOKEN" = renewed-fixture ] && [ "$GITHUB_TOKEN" = renewed-secondary ] &&
+   [ -x "$ORCH_RUNTIME_BINARY" ]; then
+  echo received > merged-child
+else
+  echo wrong-env > merged-child
+  exit 2
+fi
+"#,
+    );
+    let host = named_host(&bin, "lane-host");
+    std::fs::write(
+        bin.join("lane-host.json"),
+        json!({
+            "capabilities": {"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tpane=local\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n"},
+            "list": {"stdout": ""},
+            "close --item issue-1": {"stdout": "kept=full\n"},
+            "close --item issue-1 --merged": {"stdout": "kept=none\n"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mut row = lane("issue-1", "stopped", &runner, Value::Null);
+    row["host"] = json!(host);
+    row["tracker"] = json!("github");
+    row["repo"] = json!("o/r");
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([row]);
+    runner.write_fleet(&fleet);
+
+    let log = dir.path().join("watch.err");
+    let mut command = isolated();
+    runner.apply_env(&mut command);
+    command
+        .current_dir(&repo)
+        .arg("--state-dir")
+        .arg(runner.state_dir())
+        .args([
+            "watch",
+            "run",
+            "--fleet",
+            "--mail-program",
+            &lane_mail().display().to_string(),
+            "--mail-root",
+            repo.to_str().unwrap(),
+            "--socket",
+            server.socket.to_str().unwrap(),
+        ])
+        .env("PATH", tool_path(&[&bin]))
+        .env("WORKTREE_CLI", worktree)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&log).unwrap());
+    let mut watch = Owned(command.spawn().unwrap());
+    let close = runner.wait_intent_settled("close-resources:issue-1:", Duration::from_secs(30));
+    let stop = runner.run(&["watch", "stop", "--fleet"]);
+    assert!(stop.status.success(), "{}", stderr(&stop));
+    assert!(watch.0.wait().unwrap().success());
+    let log = std::fs::read_to_string(log).unwrap();
+    assert_eq!(close["outcome"], "confirmed", "{close}\n{log}");
+    assert!(log.contains("github-sign-in-renewed generation=1"), "{log}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("merged-child"))
+            .as_deref()
+            .ok(),
+        Some("received\n"),
+        "the existing merged child did not receive the renewed pair: {log}"
+    );
+}
+
 #[test]
 fn hosted_mail_root_missing_at_confirmation_is_unread_to_the_watch() {
     use orch_runtime::watch::{Change, hosted};
