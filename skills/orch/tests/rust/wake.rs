@@ -2035,10 +2035,11 @@ done
     stop();
     continue_once(&mut baseline, 0);
 
-    // Replace an older watch whose active record still holds its checkout.
+    // Replace an older watch whose active record has no saved mail root.
     let lane = record["lanes"][0].as_object_mut().unwrap();
     lane.remove("session_rows_at_launch");
     lane.remove("mail_root_confirmed");
+    lane.insert("mail_root".to_owned(), Value::Null);
     let mut mismatched = record.clone();
     mismatched["lanes"][0]["launch"]["start"] = json!("an-earlier-process");
     fleet.write_fleet(&mismatched);
@@ -2063,8 +2064,6 @@ done
         reads_before
     );
 
-    let lane = record["lanes"][0].as_object_mut().unwrap();
-    lane.insert("mail_root".to_owned(), lane["checkout"].clone());
     {
         let phase = record["intents"]
             .as_array_mut()
@@ -2076,6 +2075,10 @@ done
         assert!(phase.remove("hosted_mail_root").is_some());
     }
     fleet.write_fleet(&record);
+    assert_eq!(
+        fleet.read_fleet()["lanes"][0].get("mail_root"),
+        Some(&Value::Null)
+    );
     stop();
     baseline = Baseline::default();
     let pass = observe_ssh_worker(&fleet, &mut baseline, &clock);
@@ -2091,6 +2094,10 @@ done
     assert_eq!(typed().lines().count(), 1);
     stop();
     continue_once(&mut baseline, 1);
+    assert_eq!(
+        fleet.read_fleet()["lanes"][0].get("mail_root"),
+        Some(&Value::Null)
+    );
 
     stop();
     std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
@@ -2126,13 +2133,13 @@ done
     let refuse_status = host.tools.join("refuse-status");
     std::fs::write(&refuse_status, "").unwrap();
     let refused = wake(&mut baseline);
+    assert!(refused.events.is_empty(), "{refused:?}");
     assert!(
-        matches!(refused.events.as_slice(), [watch::Event::LaneUnreadable { lane, cause }]
-            if lane == lane_name && cause.contains(&host.provider()) && cause.contains("255")
-                && cause.contains("session-rows-read-failed")),
-        "{refused:?}"
+        !refuse_status.exists(),
+        "root recovery must reach the SSH status refusal"
     );
-    assert!(!refuse_status.exists());
+    assert_eq!(fleet.mark("KEN-1"), prior);
+    assert_eq!(typed().lines().count(), 2);
     for first in [true, false] {
         if !first {
             let observed = observe_ssh_worker(&fleet, &mut baseline, &clock);
