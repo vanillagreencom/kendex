@@ -17,7 +17,8 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # diff. The rows ask over no diff, so no reach runs before the refusal.
 # The main push and the schedule take the proof routes below.
 # ARGUMENT|EVENT|EXPECTED
-if [ "${1-}" != --inventory-proof ] && [ "${1-}" != --checkout-reads ]; then
+if [ "${1-}" != --inventory-proof ] && [ "${1-}" != --checkout-reads ] &&
+  [ "${1-}" != --skill-markdown ]; then
 refused_rows=0
 refused_row() { # ARGUMENT EVENT EXPECTED
   check "event ${2:-unset}, called with ${1:-no argument}" "$3" \
@@ -371,6 +372,32 @@ push_commit() { # MESSAGE PATH... — PUSH_AFTER names the commit of PATH...
   git -C "$PUSH_REPO" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm "$1"
   PUSH_AFTER="$(git -C "$PUSH_REPO" rev-parse HEAD)"
 }
+# The earlier non-doc edit selects its own suite without forcing whole
+# shards. The recorded successful push still precedes both commits.
+skill_markdown_row() { # EARLIER_PATH SKIPPED
+  local earlier="$1" event_before="$PUSH_BEFORE" world="skill-markdown$ROW_TAG" selected
+  # Keep the fixture path from becoming an exact input of this suite.
+  local markdown=skills/price-handling/README".md"
+  own_push_repo
+  if [ -n "$earlier" ]; then
+    printf '\n# Earlier push\n' >>"$PUSH_REPO/$earlier"
+    push_commit earlier "$earlier"
+    event_before=$PUSH_AFTER
+  fi
+  printf '\nAdditional plain prose.\n' >>"$PUSH_REPO/$markdown"
+  push_commit newest "$markdown"
+  PUSH_SHA=$PUSH_AFTER
+  push_world no-run "$world"
+  PUSH_BEFORE=$event_before
+  selected="$(push_select "$world" "${SELECT_WITH:-$JOB_SET}")"
+  case "$selected" in exit=*) echo "$selected" >&2; return 1 ;; esac
+  check "main skill Markdown with ${earlier:-no earlier input} skips the folder reader" "$2" \
+    "$(in_list skipped_suites tools/tests/ci-aggregate.test.sh)"
+}
+skill_markdown_rows() {
+  row_spawn skill_markdown_row '' true
+  row_spawn skill_markdown_row refresh/tests/refresh-reviews.test.sh false
+}
 CHECKOUT_TEMPLATE=docs/checkout-mit-template.txt
 main_checkout_row() { # PATH EXPECTED SKIPPED
   local reader=crates/core/src/author/scaffold.rs got
@@ -411,13 +438,19 @@ $CHECKOUT_TEMPLATE|["refresh","orch-rest","rest","jarvis"]|0
 ROWS
 }
 case "${1-}" in
+  --skill-markdown)
+    skill_markdown_rows
+    rows_join
+    printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+    [ "$FAIL" -eq 0 ]
+    exit ;;
   --checkout-reads)
     main_checkout_rows
     rows_join
     printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
     [ "$FAIL" -eq 0 ]
     exit ;;
-  '') main_checkout_rows ;;
+  '') main_checkout_rows; skill_markdown_rows ;;
 esac
 
 # The probes and the counts each row's expectation is made of.

@@ -1521,9 +1521,8 @@ fi
 # --suite-reach over the changed paths. REACH_SUITES holds its suites and
 # Pi-package trees, one per line, and REACH_TARGETS its Rust targets as a
 # JSON list. REACH_PLACED records which paths it can place in a package.
-# REACH_READ stays false where the query failed: the selection
-# then runs every shard, suite and target. The query's notes that a tree ran
-# whole, and its findings, are forwarded on stderr as reach-note lines, and
+# REACH_READ says whether the selection can use the narrowed reach. The
+# query's whole-tree notes and findings are forwarded as reach-note lines, and
 # its progress lines as they are, each as it arrives.
 REACH_READ=false
 REACH_SUITES=""
@@ -1613,10 +1612,9 @@ linear_controls_needed() {
   ' "${controls[@]}"
 }
 
-# Both event projections take their skip evidence here. A producer that
-# refused or stopped before completing its read authorizes no skips in its
-# roster. Its `suites-unplaced=1`, a path neither the reach nor an excluding
-# owner places, stays in read_lines for each projection to judge.
+# Both event projections take their skip evidence here. An unread suite
+# or Rust read keeps the full suite and skill runtime roster. A path neither
+# read can place keeps it too, outside the docs-only rule.
 read_selection() { # DOCS
   [ "$CHECKOUT_READ" = true ] || return 0
   if [ "$SUITE_INPUTS_READ" = true ]; then
@@ -1644,6 +1642,7 @@ read_selection() { # DOCS
     read_lines=""
     REACH_READ=false
   fi
+  [[ $1 == true || $read_lines != *suites-unplaced=1* ]] || REACH_READ=false
 }
 
 # Every shell suite a shard step can hand --suite-list, one per line.
@@ -1865,7 +1864,7 @@ macos_shard() { # SHARDS
 select_row() { # CLASS DOCS PATHS EVENT
   local class="$1" docs="$2" event="$4" platform=false uitree=false build=false
   local shards skipped macos=false catalog=false smoke=false linux=false rust matrix="" each known=false
-  local checkout=false windows=false reach=$REACH_READ
+  local checkout=false windows=false
   paths="$3"
   case "$docs" in
     true | false) ;;
@@ -1890,19 +1889,18 @@ select_row() { # CLASS DOCS PATHS EVENT
   fi
   catalog_input && catalog=true
   [ "$docs" = true ] || ! any "$UI_INPUTS" || uitree=true
-  [[ $docs == true || $read_lines != *suites-unplaced=1* ]] || reach=false
   case "$read_lines" in *compiled=1*) catalog=true smoke=true ;; esac
   case "$read_lines" in *workflow-smoke=1*) smoke=true ;; esac
   case "$read_lines" in *included=1* | *build=1* | *workflow-lint=1*) build=true ;; esac
   case "$read_lines" in *checkout=1* | *build=1*) checkout=true ;; esac
   case "$read_lines" in *windows=1* | *build=1*) windows=true ;; esac
-  choose_shards "$reach" "$checkout" "$docs" || exit 2
+  choose_shards "$REACH_READ" "$checkout" "$docs" || exit 2
   shards=$SHELL_SHARDS
   skipped=$SHELL_SKIPPED
   any_outside "$PROSE" && macos_shard "$shards" && macos=true
   [ "$SHELL_FULL" = false ] || macos=true
   rust=$FULL_RUNTIME_TARGETS
-  if [ "$reach" = true ] && ! any "$LANE_SOURCES"; then
+  if [ "$REACH_READ" = true ] && ! any "$LANE_SOURCES"; then
     rust=$REACH_TARGETS
   fi
 
@@ -1991,9 +1989,7 @@ if [ "${EVENT:-}" = push ]; then
   fi
   main_build=true
   main_checkout=true
-  main_reach=false
   main_docs=false
-  REACH_READ=false
   if [ "$range_read" = true ]; then
     if any "$SKILL_MARKDOWN" && [[ $'\n'$paths != *$'\n'\"* ]] &&
       docs_verdict="$("$TOOLS_DIR/../skills/change-scope/scripts/harness-only" --mode docs --event push \
@@ -2002,8 +1998,6 @@ if [ "${EVENT:-}" = push ]; then
       main_docs=true
     fi
     read_selection "$main_docs"
-    main_reach=$REACH_READ
-    [[ $main_docs == true || $read_lines != *suites-unplaced=1* ]] || main_reach=false
     main_build=false
     main_checkout=false
     case "$read_lines" in *included=1* | *build=1*) main_build=true ;; esac
@@ -2016,11 +2010,11 @@ if [ "${EVENT:-}" = push ]; then
   else
     printf 'ci-job-set: main-range=unread coverage=full cause=%s\n' "${RANGE_CAUSE:-push-diff-unread}" >&2
   fi
-  choose_shards "$main_reach" "$main_checkout" "$main_docs"
+  choose_shards "$REACH_READ" "$main_checkout" "$main_docs"
   main_linux=$SHELL_SHARDS
   main_skipped=$SHELL_SKIPPED
   main_targets=$FULL_RUNTIME_TARGETS
-  if [ "$main_reach" = true ] && ! any "$LANE_SOURCES"; then main_targets=$REACH_TARGETS; fi
+  if [ "$REACH_READ" = true ] && ! any "$LANE_SOURCES"; then main_targets=$REACH_TARGETS; fi
   main_macos="$(jq -c --arg roster "$MACOS_SHARDS" '[.[] | select(. as $s | $roster | split(" ") | index($s))]' <<<"$main_linux")" || exit 2
   RUNTIME_PUBLISH="$(runtime_publish)" || exit 2
   main_proof
