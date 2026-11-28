@@ -12045,6 +12045,67 @@ fn a_start_naming_no_session_opens_in_the_session_the_fleets_lanes_open_in() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn the_fleet_walk_requires_stated_policy_to_cross_from_native() {
+    let mut world = MarksWorld::new();
+    world.plant(
+        None,
+        &[
+            measured_account("aclaude", 20),
+            measured_codex("bcodex", 20),
+        ],
+    );
+    let cwd = world.path().to_str().unwrap();
+    let path = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
+    world.write_fleet(&world.dir("aclaude"));
+    let mut fleet: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    fleet["controller"]["permission"] = json!("native");
+    fleet["controller"]["extra_args"] = json!(["--permission-mode", "dontAsk"]);
+    std::fs::write(path, fleet.to_string()).unwrap();
+    let preference = (
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+        "codex::high,claude::high",
+    );
+    for (policy, crosses) in [
+        (None, false),
+        (Some(""), false),
+        (Some("native"), false),
+        (Some("bypass"), true),
+    ] {
+        let mut env = vec![preference];
+        env.extend(policy.map(|word| ("AGENT_RUNTIME_LAUNCH_PERMISSION", word)));
+        let result = reply(&world.run(
+            &["successor", "--fleet", "--cwd", cwd, "--predecessor", "%1"],
+            &env,
+        ));
+        assert_eq!(result["ok"], true, "{policy:?}: {result}");
+        let pending = &result["result"]["successor"];
+        if crosses {
+            assert_eq!(pending["harness"], "codex", "{result}");
+            assert_eq!(pending["permission"], "bypass", "{result}");
+        } else {
+            assert_eq!(pending["harness"], "claude", "{policy:?}: {result}");
+            assert_eq!(pending["permission"], "native", "{result}");
+            assert_eq!(
+                pending["extra_args"],
+                json!(["--permission-mode", "dontAsk"])
+            );
+            let codex = &result["result"]["walk"]["skipped"][0];
+            assert_eq!(codex["harness"], "codex", "{result}");
+            assert_eq!(
+                codex["reason"], "entry-permission-untransferable",
+                "{result}"
+            );
+        }
+    }
+    let fresh = reply(&world.run(&["successor", "--fleet", "--cwd", cwd], &[preference]));
+    assert_eq!(fresh["result"]["successor"]["harness"], "codex", "{fresh}");
+    assert_eq!(
+        fresh["result"]["successor"]["permission"], "bypass",
+        "{fresh}"
+    );
+}
+
+#[test]
 fn succession_uses_the_authorized_target_posture_in_preference_order() {
     use agent_runtime::accounts::walk::{self, Hosted, WalkRequest};
     use agent_runtime::accounts::{AccountRow, Judged, PickAnswer, PickRequest};
@@ -12179,7 +12240,7 @@ fn succession_uses_the_authorized_target_posture_in_preference_order() {
                                 })
                             },
                             pick: &mut pick,
-                            controller_launch: policy.map(|_| &settings.launch),
+                            controller_launch: Some(&settings.launch),
                         },
                         request,
                         NOW,

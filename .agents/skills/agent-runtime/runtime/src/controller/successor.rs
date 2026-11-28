@@ -735,6 +735,7 @@ mod tests {
         let account_state = Setting::of("account-state", Ok(std::path::PathBuf::from("/none")));
         let launch = LaunchSettings {
             permission: Setting::of("permission", Ok(Permission::Bypass)),
+            permission_stated: true,
         };
         let controller = ControllerSettings {
             question_tool: Setting::of("question-tool", Ok(QuestionToolSetting::Off)),

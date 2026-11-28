@@ -2580,9 +2580,6 @@ struct HandOverSettings {
     roots: settings::Roots,
     engine: settings::EngineSettings,
     launch: settings::LaunchSettings,
-    // Standalone succession takes authority from a stated policy or the
-    // predecessor. The first-launch default alone authorizes no change.
-    launch_permission_set: bool,
     controller: settings::ControllerSettings,
     accounts: AccountSettings,
     copilot_home: Option<String>,
@@ -2607,7 +2604,6 @@ impl HandOverSettings {
         Ok(HandOverSettings {
             engine: settings::EngineSettings::read(&values),
             launch: settings::LaunchSettings::read(&values),
-            launch_permission_set: values.get(settings::LAUNCH_PERMISSION_KEY).is_some(),
             controller: settings::ControllerSettings::read(&values),
             copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
             pi_root: values.get(PI_ROOT_KEY).map(str::to_owned),
@@ -2842,7 +2838,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
                     &project,
                     Some(&record),
                     request,
-                    loaded.launch_permission_set.then_some(&loaded.launch),
+                    Some(&loaded.launch),
                     now,
                 )
             };

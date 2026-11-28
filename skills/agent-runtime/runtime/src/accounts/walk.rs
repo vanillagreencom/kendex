@@ -840,7 +840,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             (Scope::Overseer, Some(launch), Some(source))
                 if source.harness != harness && !callers_model =>
             {
-                Some(launch.permission.get()?)
+                launch.succession_permission()?
             }
             _ => None,
         };
