@@ -65,7 +65,7 @@ The admission applies one file rule to first launch, both kinds of join, path ad
 | Evidence unreadable | Refuses `holder-unreadable` |
 
 - A joined launch's reply's `.result.report` reads `op` `joined` with the `holder`. Send nothing after it.
-- Under `ORCH_DELIVERY=push-base`, a launch can pass a local holder in review. The later writer can finish on the admitted set and yields on confirmed stop. The earlier writer keeps recovery precedence. An append-only exception gives no exclusive recovery hold for the append.
+- Under `ORCH_DELIVERY=push-base`, a launch can pass a local holder in review. A later writer admitted on a shared claim can finish on its set and yields on confirmed stop. An earlier writer resuming its own retained claim in that repository keeps recovery precedence. An append-only exception gives no exclusive recovery hold for the append.
 - A `github` item's own pull request is no holder against it.
 - The lane record keeps the set as `touched` and the scope as `in_scope`.
 - A local or hosted lane's opening brief carries the record's set as one `Admitted paths:` line, a JSON array, ahead of the closing lines [lane-directive.md § Brief file](lane-directive.md#brief-file) lists. That section's item 1 says which records render the line. A `joined` directive carries the holder's widened set the same way, under the same rule ([lane-directive.md § A joined launch](lane-directive.md#a-joined-launch)). Each dev round the lane delegates carries the set ([dev-start.md § 2](../workflows/dev-start.md#2-delegate)).
@@ -231,16 +231,16 @@ On surface 2, record the preparation before calling the native launcher. Wait fo
 - `[OBLIGATION_OR_NULL]` is the accepted object from [Obligation lineage](lane-directive.md#obligation-lineage), or JSON `null` when unknown.
 - `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it stamps.
 - Supply additional writable files in the lane's `touched` array and proven append-only exceptions in `in_scope`. The admission also reads the tracked item's Location.
-- A native relaunch uses the same preparation step and keeps the recorded scope. Prepare it from the checkout where the native launcher will run.
+- A native relaunch uses the same preparation step and keeps the recorded scope. Use `checkout` for the existing repository checkout the launcher will use. Set `mail_root` to null when the launcher creates the worktree. After launch, include the worktree's path as `mail_root` in the confirmed observation once known.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"create","lane":{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"preparing","obligation":[OBLIGATION_OR_NULL]}}'
+.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"create","checkout":"[EXISTING_CHECKOUT]","lane":{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":null,"surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"preparing","obligation":[OBLIGATION_OR_NULL]}}'
 ```
 
 After the launcher answers, write a native observation to `tmp/lane-merge-[ITEM_KEY].json` and merge it. Name the intent and its evidence in the file. Use `confirmed` with the running session's identifier when known, `failed` when the attempt is proved unable to write, and `unconfirmed` while either outcome is possible. A pending intent keeps the set until the native outcome is known.
 
 ```json
-{"intent_id":"[INTENT_ID]","outcome":"confirmed","evidence":"[OBSERVED_RUNNING_SESSION]","session_id":"[SESSION_ID_OR_NULL]"}
+{"intent_id":"[INTENT_ID]","outcome":"confirmed","evidence":"[OBSERVED_RUNNING_SESSION]","session_id":"[SESSION_ID_OR_NULL]","mail_root":"[OBSERVED_WORKTREE_PATH]"}
 ```
 
 ```bash

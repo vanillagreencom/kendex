@@ -85,15 +85,15 @@ A transition refusal exits 1 with `ok: false` and records nothing. Fix what the 
 - `overseer-foreign`: launch from that repository's fleet, or list it in `ORCH_CONNECTED_REPOS`, as `route` says.
 - `item-foreign`: file it in its own tracker and follow `route` and [peer-mail.md](peer-mail.md#addressing).
 - `item-ineligible`: the item is a container; launch its unblocked children.
-- `launch-overlap`: retry after the holder releases the file through a confirmed park or terminal close. A first launch may name the file in `in_scope` for a proven append-only addition. A relaunch keeps the record's scope (§ Recovery relaunch).
-- `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. Retry after the holder releases the file.
+- `launch-overlap`: retry after the lane holder releases its claim through a confirmed park or terminal close. If `holder=#N` names an open pull request, wait until it stops holding the path. A first launch may name the file in `in_scope` for a proven append-only addition. A relaunch keeps the record's scope (§ Recovery relaunch).
+- `join-unreachable`: the holder is hosted or a cloud session, which no join reaches. With `file`, retry after that claim releases. With `blockers`, retry a standalone launch after the tracker clears the blockers or join their carrier once it becomes eligible.
   - A hosted lane that carries the launch's blockers refuses with no branch read, naming them as `blockers`.
   - A hosted lane that holds a shared path always refuses, naming the held path as `file`. The refusal says whether its head commit, read on its host and compared by GitHub with the repository's default branch, changes a shared path.
   - A head that changes a shared path refuses with `item`, `file`, `holder` and `route`.
   - Any other refusal adds `branch`, `unknown` where the head itself was unread, and `cause`. `worktree-unproved` is a head that changes none of the launch's paths. A cloud session's head is never read.
 - `read-only-unconfined`: nothing can hold the lane to changing no file, as `cause` names: a cloud session (`cloud`), or a harness this machine cannot confine. Launch it here on a harness the confinement holds, or on an ssh host. A first launch, or one over a `done` record, may instead leave out `read_only`; a relaunch keeps the record's (§ Recovery relaunch).
 - `join-confined`: the holder's confinement bars the join. For a shared-file tie, retry after the holder releases the file. For a launch-blocker tie, retry a standalone launch once Linear clears the launch blockers. Retry the join if the holder becomes eligible under [§ A joined launch](#a-joined-launch). For `confinement-unproved`, wait for the holder's launch to report its confinement before retrying the join.
-- `join-unsent`, `join-tier-narrower`: repair the mailbox, or launch after the holder releases the file.
+- `join-unsent`, `join-tier-narrower`: repair the mailbox or use a cycle the carrier can ship, as the refusal names. For a standalone launch, wait for release of a shared-file claim or clearance of the tracker blockers, according to the tie.
 - `tier-narrower`: brief the judged cycle.
 - `lane-repo-conflict`: leave `repo` out of the `admit-paths` request; the lane's own is judged.
 - `launch-class-missing`: name both `class` and `class_reason`, under [skill-rules.md § Model class](skill-rules.md#model-class). A relaunch naming neither keeps the record's.
@@ -296,7 +296,7 @@ Compose the steps below by hand to change the harness, account or brief, to supp
 - A recorded `desktop` stands whatever the request names, and so does the record's `read_only`, set or not.
 - A relaunch naming no `permission` runs the `AGENT_RUNTIME_LAUNCH_PERMISSION` posture: carry the record's word.
 - A relaunch keeps the record's touched set, scope, [Ancestor gate](skill-rules.md#ancestor-gate) and tier.
-- A close without a landing retains a checked recovery set. A close that must acquire recovery authority checks the whole set before stopping anything, using writable Location paths where the record holds none. Recovery on a new repository checks that repository first and protects both repositories while the launch is unresolved. Confirmation transfers the claim; a proved launch failure restores the original claim and retry binding. Under `ORCH_DELIVERY=push-base`, a relaunch can pass a local writer in review and yields on its own confirmed stop.
+- A close without a landing retains a checked recovery set. A close that must acquire recovery authority checks the whole set before stopping anything, using writable Location paths where the record holds none. Recovery on a new repository checks that repository first and protects both repositories while the launch is unresolved. Confirmation transfers the claim; a proved launch failure restores the original claim and retry binding. Under `ORCH_DELIVERY=push-base`, a later writer admitted on a shared claim yields on confirmed stop. An earlier claimant resuming its own retained claim in that repository keeps recovery precedence.
 - A record that reads `done` takes the request as the item's next phase, judged as a first launch, its tier read from the new brief.
 
 ### Watch recovery

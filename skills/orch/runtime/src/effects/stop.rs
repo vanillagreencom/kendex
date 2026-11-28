@@ -28,7 +28,9 @@ use super::lane_operation::{BranchKept, KeptBranch, LaneOperation, Unread, Workt
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
 use crate::settings::Settings;
-use crate::state::{CloseGround, CloseKind, Lane, LaneMembers, TerminalVerdict};
+use crate::state::{
+    CloseGround, CloseKind, HostedClose, HostedCloseDisposition, Lane, LaneMembers, TerminalVerdict,
+};
 use crate::watch::hosted::{self, Asked, HostClosed};
 use crate::watch::lanes::{self, LaneState};
 use crate::watch::mail::ClosingMail;
@@ -52,10 +54,19 @@ fn remove_local_gh_token(lane: &Lane) -> Result<()> {
 /// `stale` is what the reconcile of the same request already read stale,
 /// counted no second time here.
 pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Result<EffectOutcome> {
-    let (lane, item) = lane_for_intent(run.engine.path, intent_id)?;
+    let (mut lane, item) = lane_for_intent(run.engine.path, intent_id)?;
     let intent = read_intent(run.engine.path, intent_id)?;
     let members = LaneMembers::of(run.engine.path, &intent)?;
-    let overseer = fleet(run.engine.path)?.overseer;
+    let fleet = fleet(run.engine.path)?;
+    let hosted = match &members.hosted_close {
+        Some(plan) => Some(plan.clone()),
+        None => crate::ops::lane::unsettled_hosted_close(run.engine.path, &fleet.intents, &lane)?,
+    };
+    if let Some(root) = hosted.as_ref().and_then(|plan| plan.mail_root.as_ref()) {
+        lane.mail_root = Some(root.clone());
+        lane.mail_root_confirmed = true;
+    }
+    let overseer = fleet.overseer;
     let harness = pane_harness(
         run.engine.path,
         &lane,
@@ -75,6 +86,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
             .map(|h| Target::new(&run.settings.engine.harness_binaries, h))
             .transpose()?,
         ground: members.close.as_ref(),
+        hosted: hosted.as_ref(),
         cycle: members.cycle.as_ref().map(|row| &row.cycle),
         overseer: overseer.as_ref(),
         prior: intent.observation.as_ref(),
@@ -105,14 +117,19 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         // provider's reading of the lane answers; a close with no stated
         // ground goes on only where that reading is the harness gone.
         if lane.viewer() {
-            let provider = provider_stops(close.ground, &lane);
+            let provider = provider_stops(close.ground, &lane, close.hosted);
             let stop = if provider && close.no_landing() {
                 "provider"
             } else {
                 "window-only"
             };
             let mut observation = json!({"identity": "none", "stop": stop});
-            if provider && close.no_landing() {
+            if provider
+                && close.no_landing()
+                && !close
+                    .hosted
+                    .is_some_and(|plan| plan.disposition == HostedCloseDisposition::Unsettled)
+            {
                 match close.guard_hosted(run, &operation) {
                     Ok(true) => observation["host_stop"] = json!("stopped processes=0"),
                     Ok(false) => {}
@@ -216,6 +233,7 @@ struct Close<'a> {
     lane: &'a Lane,
     target: Option<Target>,
     ground: Option<&'a CloseGround>,
+    hosted: Option<&'a HostedClose>,
     /// The merge cycle this close records on the lane when it confirms.
     cycle: Option<&'a Value>,
     /// The controller record, whose tmux socket the lane's pane is looked
@@ -482,32 +500,43 @@ impl Close<'_> {
         if observation.get("host_stop").is_some() {
             return Ok(true);
         }
-        if let Some(receipt) = self
-            .prior
-            .and_then(|o| o.get("host_stop"))
-            .and_then(Value::as_str)
-            .filter(|r| r.starts_with("stopped ") || r.starts_with("stop-skipped "))
-        {
+        if let Some(receipt) = host_stop_receipt(self.prior) {
             observation["host_stop"] = json!(receipt);
             return Ok(true);
         }
-        let harness = self.lane.harness.as_deref().unwrap_or_default();
+        let Some(harness) = self
+            .hosted
+            .map(|plan| plan.harness.as_str())
+            .or(self.lane.harness.as_deref())
+            .filter(|h| !h.is_empty())
+        else {
+            observation["host_stop"] = json!("harness-unsupported");
+            observation["harness"] = json!("unknown");
+            return Ok(false);
+        };
         let scripts = crate::watch::overseer::scripts_dir(&self.settings.roots.project);
-        let host = hosted::host_of(self.lane);
-        // A full close already judged its running host before the intent.
-        // On a retry, check for a completed stop before asking again.
-        if (self.previously_signalled || harness == "copilot")
-            && matches!(
-                hosted::status(&scripts, host, self.item, harness),
-                Ok(hosted::HostStatus::Exited)
-            )
+        let host = self
+            .hosted
+            .map_or_else(|| hosted::host_of(self.lane), |plan| plan.host.as_str());
+        let unsettled = self
+            .hosted
+            .is_some_and(|plan| plan.disposition == HostedCloseDisposition::Unsettled);
+        if (unsettled || self.previously_signalled || harness == "copilot")
+            && super::lane_operation::hosted_writer_absent(self.settings, host, self.item, harness)
         {
             observation["host_stop"] = json!("stopped processes=0");
             return Ok(true);
         }
+        if unsettled && let Err((key, fields)) = self.no_ask(operation) {
+            observation["host_stop"] = json!(key);
+            observation["detail"] = fields;
+            return Ok(false);
+        }
+        let capabilities = hosted::capabilities(&scripts, host);
         if harness == "copilot"
             && !self.lane.exits_in_window()
-            && hosted::capabilities(&scripts, host)
+            && capabilities
+                .as_ref()
                 .is_ok_and(|caps| caps.pane == hosted::PaneKind::Verb)
         {
             // Give Copilot its session totals before falling back to the host stop.
@@ -515,14 +544,14 @@ impl Close<'_> {
             if hosted::send_key(&scripts, host, self.item, "C-c").is_ok()
                 && hosted::send_text(&scripts, host, self.item, &self.settings.state_dir, "/exit")
                     .is_ok()
-                && matches!(operation.host_exited(self.lane, harness)?, Ok(true))
+                && matches!(operation.host_exited(self.lane, host, harness)?, Ok(true))
             {
                 observation["host_stop"] = json!("stopped processes=0");
                 return Ok(true);
             }
         }
-        let answer = operation.host_stop(self.lane, harness)?;
-        let processes = match read_stop(answer, self.no_landing()) {
+        let answer = operation.host_stop(self.lane, host, harness)?;
+        let processes = match read_stop(answer, self.no_landing() || unsettled) {
             StopRead::Stopped(processes) => processes,
             StopRead::Skipped(cause) => {
                 observation["host_stop"] = json!(format!(
@@ -539,7 +568,20 @@ impl Close<'_> {
                 return Ok(false);
             }
         };
-        match operation.host_exited(self.lane, harness)? {
+        let pane_absent = self
+            .lane
+            .launch
+            .as_ref()
+            .is_none_or(|launch| launch.pane.is_none());
+        if pane_absent
+            && capabilities
+                .as_ref()
+                .is_ok_and(|caps| caps.pane != hosted::PaneKind::Verb)
+        {
+            observation["host_stop"] = json!(format!("stopped processes={processes}"));
+            return Ok(true);
+        }
+        match operation.host_exited(self.lane, host, harness)? {
             Ok(true) => {
                 observation["host_stop"] = json!(format!("stopped processes={processes}"));
                 Ok(true)
@@ -593,7 +635,7 @@ impl Close<'_> {
         // The close-out and worktree release can carry the mailbox into
         // the main checkout. The lane's credential must leave first.
         remove_local_gh_token(self.lane)?;
-        if provider_stops(self.ground, self.lane)
+        if provider_stops(self.ground, self.lane, self.hosted)
             && !self.host_stopped(&mut operation, &mut observation)?
         {
             return Ok(self.hold(operation, observation));
@@ -888,10 +930,10 @@ impl Close<'_> {
 /// `closed=absent`, a stop of a group already ended signals nothing), so
 /// the reconcile of such a close never confirms it and its repeat runs the
 /// close again.
-fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane) -> bool {
+fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane, hosted: Option<&HostedClose>) -> bool {
     ground.is_some_and(CloseGround::ends_item)
         || provider_closes(ground, lane)
-        || provider_stops(ground, lane)
+        || provider_stops(ground, lane, hosted)
 }
 
 /// Whether the close's effect asks the provider's stop: a lane that exits
@@ -899,22 +941,17 @@ fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane) -> bool {
 /// host-absent close, which has no host to ask; and a hosted viewer's lane
 /// on the `no-landing` ground, whose kept sandbox the provider's close
 /// never ends and whose window runs no harness.
-fn provider_stops(ground: Option<&CloseGround>, lane: &Lane) -> bool {
-    let kept_viewer = lane.viewer()
-        && lane.provider_hosted()
-        && matches!(ground, Some(CloseGround::NoLanding { .. }));
-    let running_host = lane.provider_hosted()
-        && lane.status.in_flight()
-        && matches!(
-            ground,
-            Some(
-                CloseGround::NoLanding { .. }
-                    | CloseGround::Terminal { .. }
-                    | CloseGround::Ended { .. }
-            )
-        );
-    (lane.exits_in_window() || kept_viewer || running_host)
-        && !ground.is_some_and(CloseGround::host_absent)
+fn provider_stops(ground: Option<&CloseGround>, lane: &Lane, hosted: Option<&HostedClose>) -> bool {
+    match hosted {
+        Some(plan) => plan.disposition != HostedCloseDisposition::Exited,
+        None => {
+            (lane.exits_in_window()
+                || lane.viewer()
+                    && lane.provider_hosted()
+                    && matches!(ground, Some(CloseGround::NoLanding { .. })))
+                && !ground.is_some_and(CloseGround::host_absent)
+        }
+    }
 }
 
 /// Whether the close's effect needs a hosted viewer's harness read gone
@@ -1017,6 +1054,11 @@ fn reconcile_observation(item: &str, observation: Value, prior: Option<&Value>) 
 /// The [`RECEIPTS`] `prior` recorded, on an observation that records none of
 /// its own.
 fn keep_receipts(observation: &mut Value, prior: Option<&Value>) {
+    if observation.get("host_stop").is_none()
+        && let Some(receipt) = host_stop_receipt(prior)
+    {
+        observation["host_stop"] = json!(receipt);
+    }
     for key in RECEIPTS {
         if let Some(kept) = prior.and_then(|p| p.get(key))
             && observation.get(key).is_none()
@@ -1024,6 +1066,13 @@ fn keep_receipts(observation: &mut Value, prior: Option<&Value>) {
             observation[key] = kept.clone();
         }
     }
+}
+
+fn host_stop_receipt(observation: Option<&Value>) -> Option<&str> {
+    observation
+        .and_then(|o| o.get("host_stop"))
+        .and_then(Value::as_str)
+        .filter(|r| r.starts_with("stopped ") || r.starts_with("stop-skipped "))
 }
 
 /// The close cells of the reconcile matrix. The durable set the close
@@ -1040,7 +1089,8 @@ fn keep_receipts(observation: &mut Value, prior: Option<&Value>) {
 /// processes by token and closing its own panes.
 pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.engine.path, &intent.id)?;
-    let overseer = fleet(run.engine.path)?.overseer;
+    let fleet = fleet(run.engine.path)?;
+    let overseer = fleet.overseer;
     let overseer = overseer.as_ref();
     let mut operation = LaneOperation::open_close(run, intent, &lane)?;
     // Every standing handle is read by its own key first: a wake the lane's
@@ -1081,6 +1131,12 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     // read: a validation stop owed holds; the wake is read through the one
     // identity reader and discharged where gone; a close-out the ground owes
     // holds last.
+    let members = LaneMembers::of(run.engine.path, intent)?;
+    let hosted = match &members.hosted_close {
+        Some(plan) => Some(plan.clone()),
+        None => crate::ops::lane::unsettled_hosted_close(run.engine.path, &fleet.intents, &lane)?,
+    };
+    let hosted_work = provider_stops(members.close.as_ref(), &lane, hosted.as_ref());
     let settled = |mut operation: LaneOperation, mut observation: Value| -> Result<EffectOutcome> {
         if operation.owes_validation() {
             observation["validate"] = json!("stop-failed");
@@ -1099,10 +1155,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
                 return Ok(hold(operation, observation));
             }
         }
-        if owes_close_out(
-            LaneMembers::of(run.engine.path, intent)?.close.as_ref(),
-            &lane,
-        ) {
+        if owes_close_out(members.close.as_ref(), &lane, members.hosted_close.as_ref()) {
             observation["close_out"] = json!("owed");
             return Ok(hold(operation, observation));
         }
@@ -1128,7 +1181,10 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             // `unconfirmed` cell, closed by hand; a set that recorded any
             // handle is judged by what the reads above found.
             let judged = pane(&mut operation, &mut observation)?;
-            if judged && !(observation["pane"] == "unrecorded" && operation.recorded_nothing()) {
+            if judged
+                && (hosted_work
+                    || !(observation["pane"] == "unrecorded" && operation.recorded_nothing()))
+            {
                 settled(operation, observation)
             } else {
                 Ok(hold(operation, observation))

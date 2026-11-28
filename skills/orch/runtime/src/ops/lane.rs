@@ -37,8 +37,9 @@ use super::{
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, CloseKind, FileHold, Lane, LaneMembers, LaneStatus, ModelClass,
-    PreviousFiles, Reservation, Selection, TerminalVerdict,
+    self, ClaimRead, CloseFiles, CloseGround, CloseKind, FileHold, HostedClose,
+    HostedCloseDisposition, Lane, LaneMembers, LaneStatus, ModelClass, PreviousFiles, Reservation,
+    Selection, TerminalVerdict,
 };
 use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::intent::Intent;
@@ -488,6 +489,10 @@ pub struct Ended {
 /// The identity fields a close supplies for a record that left them empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloseIdentity {
+    /// The high-level close's read before the transition. The JSON caller
+    /// cannot supply provider evidence through the identity fields.
+    #[serde(skip)]
+    pub(crate) provider_exited: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1377,7 +1382,9 @@ pub(super) fn launch_lane(
     let position = lanes.iter().position(|l| l.item == r.item);
     let record = position.map(|index| &lanes[index]);
     if let Some(surface) = record
-        .filter(|lane| lane.native_surface())
+        .filter(|lane| {
+            lane.native_surface() && (lane.status.in_flight() || lane.file_launch.is_some())
+        })
         .and_then(|lane| lane.surface.as_deref())
     {
         return Err(surface_refused(
@@ -1445,7 +1452,7 @@ pub(super) fn launch_lane(
     }
     if let (Some(index), Some(ids)) = (position, &own) {
         let previous = &lanes[index];
-        refuse_pending_launch(previous)?;
+        refuse_pending_launch(previous, &intents)?;
         if previous.status.in_flight() {
             return Err(Error::LaneLive {
                 item: r.item.clone(),
@@ -1503,21 +1510,10 @@ pub(super) fn launch_lane(
         Some(index) => {
             let record = &lanes[index];
             let tracker = r.tracker.as_deref().or(record.tracker.as_deref());
-            let repo = r.repo.as_deref().or(record.repo.as_deref());
+            let repo = r.repo.as_deref();
             let binding =
                 admission::bound(path, &r.item, tracker, repo, Path::new(&r.mail_root), host)?;
-            let mut judged = admission::relaunch_held(
-                path,
-                &lanes,
-                &intents,
-                record,
-                tracker,
-                binding.repo.as_deref(),
-                env,
-                host,
-            )?;
-            judged.binding = binding;
-            judged
+            admission::relaunch_held(path, &lanes, &intents, record, tracker, &binding, env, host)?
         }
         None => admission::judge(path, &lanes, &intents, &candidate, env, host)?,
     };
@@ -1592,7 +1588,7 @@ pub(super) fn launch_lane(
         let binding = retry_binding(lane_doc_mut(path, doc, index)?);
         Some(PreviousFiles {
             binding,
-            claim: admission::retained(&lanes[index], host)?,
+            claim: admission::retained(path, &intents, &lanes[index], env, host)?,
         })
     } else {
         None
@@ -1632,6 +1628,20 @@ pub(super) fn launch_lane(
                 if let Some(value) = value {
                     record::set(lane, key, value.as_str());
                 }
+            }
+            if lanes[index].native_surface() {
+                record::set(lane, "surface", "tmux");
+            }
+            if r.repo.is_none()
+                && judged.binding.repo.as_deref().is_some_and(|repo| {
+                    lanes[index]
+                        .file_repo
+                        .as_deref()
+                        .or(lanes[index].repo.as_deref())
+                        .is_none_or(|previous| !previous.eq_ignore_ascii_case(repo))
+                })
+            {
+                record::set(lane, "repo", serde_json::to_value(&judged.binding.repo)?);
             }
             // The lane runs where this launch opens it, a request naming no
             // host in a window here, whatever host the record named before.
@@ -1852,11 +1862,13 @@ pub(super) fn close_owned_resources(
         Standing::Clear => {}
         Standing::Same(mut intent) => {
             landing_on_repeat(path, doc, &mut intent, r)?;
+            let members = LaneMembers::of(path, &intent)?;
             cloud_close_proved(
                 path,
                 &open,
                 &lane,
-                LaneMembers::of(path, &intent)?.close.as_ref(),
+                members.close.as_ref(),
+                cloud_path_claim(&lane, members.close_files.as_ref()),
             )?;
             return Ok(CloseRequested {
                 lane,
@@ -1875,14 +1887,22 @@ pub(super) fn close_owned_resources(
         None => lane,
     };
     let ground = close_ground(&lane, r, host)?;
-    cloud_close_proved(path, &open, &lane, Some(&ground))?;
     let retain = matches!(&ground, CloseGround::NoLanding { park: None, .. });
     let close_files = admission::closing(path, &lanes, &open, &lane, retain, env, host)?;
+    cloud_close_proved(
+        path,
+        &open,
+        &lane,
+        Some(&ground),
+        cloud_path_claim(&lane, Some(&close_files)),
+    )?;
+    let hosted_close = hosted_close(path, &open, &lane, r, &ground)?;
     let mut intent = new_intent(EffectOp::CloseResources, &r.item, env)?;
     LaneMembers {
         lane_since: lane.session_since.clone(),
         close: Some(ground),
-        close_files,
+        close_files: Some(close_files),
+        hosted_close,
         cycle: r.cycle.clone(),
         disposed: r.disposed.clone(),
         ..LaneMembers::default()
@@ -1895,6 +1915,116 @@ pub(super) fn close_owned_resources(
     })
 }
 
+fn cloud_path_claim(lane: &Lane, files: Option<&CloseFiles>) -> bool {
+    match files {
+        Some(CloseFiles::Claim(claim)) => !claim.touched.is_empty(),
+        Some(CloseFiles::Read(ClaimRead::Yielded)) => false,
+        Some(CloseFiles::Read(ClaimRead::Unreadable { .. })) | None => lane
+            .touched
+            .as_ref()
+            .map_or(lane.tracker.is_some() || lane.file_launch.is_some(), |p| {
+                !p.is_empty()
+            }),
+    }
+}
+
+fn hosted_close(
+    path: &Path,
+    intents: &[Intent],
+    lane: &Lane,
+    r: &CloseOwnedResources,
+    ground: &CloseGround,
+) -> Result<Option<HostedClose>> {
+    if let Some(hosted) = unsettled_hosted_close(path, intents, lane)? {
+        return Ok(Some(hosted));
+    }
+    let Some(provider) = lane
+        .host
+        .as_ref()
+        .filter(|h| h.as_str() != "local" && lane.provider_hosted() && !ground.host_absent())
+    else {
+        return Ok(None);
+    };
+    let disposition = if r
+        .identity
+        .as_ref()
+        .is_some_and(|identity| identity.provider_exited)
+    {
+        HostedCloseDisposition::Exited
+    } else if lane.exits_in_window()
+        || (lane.status.in_flight()
+            && (r.identity.is_some() || matches!(ground, CloseGround::NoLanding { .. }))
+            && !matches!(ground, CloseGround::Exited))
+    {
+        HostedCloseDisposition::Stop
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(HostedClose {
+        host: provider.clone(),
+        harness: required_hosted_harness(lane, lane.harness.clone())?,
+        disposition,
+        mail_root: None,
+    }))
+}
+
+pub(crate) fn unsettled_hosted_close(
+    path: &Path,
+    intents: &[Intent],
+    lane: &Lane,
+) -> Result<Option<HostedClose>> {
+    let Some(provider) = lane
+        .host
+        .as_ref()
+        .filter(|h| h.as_str() != "local" && lane.provider_hosted())
+    else {
+        return Ok(None);
+    };
+    let pending = admission::unsettled_launch(lane, intents).filter(|i| {
+        i.phase.as_ref().is_some_and(|phase| match phase {
+            Phase::Preparing { step, .. } => step == state::HOST_EXEC,
+            Phase::Opening { .. }
+            | Phase::WindowOpened { .. }
+            | Phase::Delivering { .. }
+            | Phase::Delivered { .. }
+            | Phase::IdentityRead { .. } => true,
+            Phase::CloudCreate { .. } => false,
+        })
+    });
+    let Some(pending) = pending else {
+        return Ok(None);
+    };
+    let selection = LaneMembers::of(path, pending)?.selection;
+    let harness = required_hosted_harness(
+        lane,
+        selection
+            .map(|s| s.harness)
+            .or_else(|| lane.harness.clone()),
+    )?;
+    let mail_root = pending.phase.as_ref().and_then(|phase| match phase {
+        Phase::Preparing { at, .. } if at.starts_with('/') && at != provider => Some(at.clone()),
+        Phase::Opening { opening } => opening.hosted_mail_root.clone(),
+        phase => phase
+            .opened()
+            .and_then(|opened| opened.hosted_mail_root.clone()),
+    });
+    Ok(Some(HostedClose {
+        host: provider.clone(),
+        harness,
+        disposition: HostedCloseDisposition::Unsettled,
+        mail_root,
+    }))
+}
+
+fn required_hosted_harness(lane: &Lane, harness: Option<String>) -> Result<String> {
+    harness.filter(|h| !h.is_empty()).ok_or_else(|| {
+        surface_refused(
+            "harness-unsupported",
+            &[("item", &lane.item), ("harness", "unknown")],
+        )
+    })
+}
+
 const CLOUD_WRITER_ABSENT: &str = "cloud-writer-absent";
 
 /// The runtime stops the cloud lane's window, not its writer. A manual
@@ -1904,10 +2034,12 @@ fn cloud_close_proved(
     intents: &[Intent],
     lane: &Lane,
     ground: Option<&CloseGround>,
+    current_claim: bool,
 ) -> Result<()> {
     if lane.kind.as_deref() != Some(CLOUD_KIND)
-        || !matches!(lane.file_hold, Some(FileHold::Exclusive | FileHold::Shared))
-        || !(lane.status.in_flight() || lane.file_launch.is_some())
+        || lane.read_only
+        || lane.file_hold == Some(FileHold::Released)
+        || !(lane.status.in_flight() || admission::unsettled_launch(lane, intents).is_some())
     {
         return Ok(());
     }
@@ -1919,7 +2051,7 @@ fn cloud_close_proved(
         .transpose()?
         .flatten()
         .is_some_and(|claim| !claim.touched.is_empty());
-    if !source_hold && lane.touched.as_ref().is_some_and(Vec::is_empty) {
+    if !source_hold && !current_claim {
         return Ok(());
     }
     match ground {
@@ -2087,6 +2219,16 @@ pub(super) fn park_lane(
     r: &ParkLane,
     env: &Env,
 ) -> Result<LaneParked> {
+    park_record(path, doc, r, env, false)
+}
+
+fn park_record(
+    path: &Path,
+    doc: &mut Document,
+    r: &ParkLane,
+    env: &Env,
+    native: bool,
+) -> Result<LaneParked> {
     let lanes = lanes(path, doc)?;
     let index = lanes
         .iter()
@@ -2094,12 +2236,13 @@ pub(super) fn park_lane(
         .ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
-    journal::no_open_intent(&intents(path, doc)?, &r.item)?;
+    let open = intents(path, doc)?;
+    journal::no_open_intent(&open, &r.item)?;
     let lane = &lanes[index];
-    refuse_pending_launch(lane)?;
+    refuse_pending_launch(lane, &open)?;
     // A park stops a hosted sandbox with its disk kept; a local lane has
     // none, as `close-lane`'s park refuses it.
-    if lane.host.is_none() || lane.kind.as_deref() == Some("local") {
+    if !native && (lane.host.is_none() || lane.kind.as_deref() == Some("local")) {
         return Err(Error::ParkRefused {
             item: r.item.clone(),
             reason: "local",
@@ -2129,7 +2272,10 @@ pub(super) fn park_lane(
             })
         }
         LaneStatus::Stopped => {
-            if let Some(reservation) = &r.reservation {
+            let reservation = r.reservation.as_ref().filter(|term| {
+                !native || clock::epoch_secs(&term.until).is_some_and(|until| until > env.now_secs)
+            });
+            if let Some(reservation) = reservation {
                 check_reservation(&r.item, reservation, env)?;
             }
             let mut parked = Map::new();
@@ -2157,7 +2303,7 @@ pub(super) fn park_lane(
             record::set(lane, "parked", Value::Object(parked));
             sandbox_ended(lane);
             record::delete(lane, "pending_pr");
-            if let Some(reservation) = &r.reservation {
+            if let Some(reservation) = reservation {
                 record::set(lane, "reservation", serde_json::to_value(reservation)?);
             }
             Ok(LaneParked {
@@ -2517,14 +2663,19 @@ pub(super) fn record_launch_outcome(
                 .is_some_and(|l| occupancy::identity_of(l).is_none());
             let lane = lane_doc_mut(path, doc, index)?;
             record::set(lane, "status", LaneStatus::Stopped.word());
+            let superseded = r
+                .observation
+                .as_ref()
+                .and_then(|o| o.get("cause"))
+                .and_then(Value::as_str)
+                == Some(super::SUPERSEDED_LAUNCH);
+            if superseded && lane.get("file_launch").is_none() {
+                record::set(lane, "file_launch", intent.id.as_str());
+            }
             // Supersession hands the provisional writer to close. It can
             // still start or publish, even before the close intent lands.
             if lane.get("file_launch").and_then(Value::as_str) == Some(intent.id.as_str())
-                && r.observation
-                    .as_ref()
-                    .and_then(|o| o.get("cause"))
-                    .and_then(Value::as_str)
-                    != Some(super::SUPERSEDED_LAUNCH)
+                && !superseded
             {
                 restore_files(lane, files.previous_files.as_ref())?;
             }
@@ -2586,10 +2737,10 @@ fn keep_recovery_precedence(judged: &mut admission::Judged, previous: Option<&Pr
     }
 }
 
-fn refuse_pending_launch(lane: &Lane) -> Result<()> {
-    match &lane.file_launch {
+fn refuse_pending_launch(lane: &Lane, intents: &[Intent]) -> Result<()> {
+    match admission::unsettled_launch(lane, intents) {
         Some(intent) => Err(agent_runtime::Error::IntentOpen {
-            intent: intent.clone(),
+            intent: intent.id.clone(),
             op: EffectOp::LaunchSession.word(),
             target: lane.item.clone(),
         }
@@ -2744,6 +2895,7 @@ fn cloud_close_logged(doc: &Document, item: &str, lane: &Document) -> bool {
 fn sandbox_ended(lane: &mut Document) {
     record::delete(lane, state::SANDBOX);
     record::delete(lane, state::PARK_OWED);
+    record::delete(lane, state::PARK_FILES);
 }
 
 /// Recovery close reasons retire an attempt without judging its outcome.
@@ -2808,6 +2960,7 @@ pub(super) fn record_close_outcome(
                 &intents(path, doc)?,
                 &standing,
                 members.close.as_ref(),
+                cloud_path_claim(&standing, members.close_files.as_ref()),
             )?;
             let previous_files = match &standing.file_launch {
                 Some(id) => intents(path, doc)?
@@ -2905,24 +3058,37 @@ pub(super) fn record_close_outcome(
                 restore_files(lane, previous_files.as_ref())?;
             } else {
                 record::delete(lane, "file_launch");
+                let owes_park = matches!(
+                    members.close,
+                    Some(CloseGround::NoLanding { park: Some(_), .. })
+                );
+                let checked = match &members.close_files {
+                    Some(CloseFiles::Claim(claim)) => Some(claim),
+                    Some(CloseFiles::Read(_)) | None => None,
+                };
                 let retain = no_landing
-                    && members.close_files.as_ref().is_some_and(|c| {
+                    && checked.is_some_and(|c| {
                         matches!(c.hold, FileHold::Exclusive | FileHold::Retained)
                     });
-                if retain && let Some(claim) = &members.close_files {
+                if (retain || owes_park)
+                    && let Some(claim) = checked
+                {
                     if standing.touched.is_none() {
                         record::set(lane, state::UNBOUNDED, true);
                     }
                     record::set(lane, "touched", serde_json::to_value(&claim.touched)?);
                 }
-                let owes_park = matches!(
-                    members.close,
-                    Some(CloseGround::NoLanding { park: Some(_), .. })
-                );
+                if owes_park
+                    && let Some(files @ CloseFiles::Read(ClaimRead::Unreadable { .. })) =
+                        &members.close_files
+                {
+                    record::set(lane, state::PARK_FILES, serde_json::to_value(files)?);
+                }
                 let hold = if retain {
                     FileHold::Retained
                 } else if owes_park
-                    && (members.close_files.is_some() || standing.status.in_flight())
+                    && (checked.is_some()
+                        || members.close_files.is_none() && standing.status.in_flight())
                 {
                     FileHold::Shared
                 } else {
@@ -2959,6 +3125,8 @@ pub(super) fn record_close_outcome(
 pub enum RecordSurfaceLane {
     Create {
         lane: Value,
+        #[serde(default)]
+        checkout: Option<PathBuf>,
     },
     Close {
         item: String,
@@ -3028,6 +3196,7 @@ struct NativeObservation {
     outcome: Outcome,
     evidence: String,
     session_id: Option<String>,
+    mail_root: Option<PathBuf>,
 }
 
 pub(super) fn record_surface_lane(
@@ -3040,7 +3209,7 @@ pub(super) fn record_surface_lane(
     let rows = lanes(path, doc)?;
     let open = intents(path, doc)?;
     match r {
-        RecordSurfaceLane::Create { lane } => {
+        RecordSurfaceLane::Create { lane, checkout } => {
             let read: Lane = serde_json::from_value(lane.clone())
                 .map_err(|e| surface_refused("lane-invalid", &[("cause", &e.to_string())]))?;
             tmux_refused(&read.item, lane)?;
@@ -3056,10 +3225,10 @@ pub(super) fn record_surface_lane(
                 ));
             }
             journal::no_open_intent(&open, &read.item)?;
-            let checkout =
-                read.mail_root.as_deref().map(Path::new).ok_or_else(|| {
-                    surface_refused("surface-preparation", &[("item", &read.item)])
-                })?;
+            let checkout = checkout
+                .as_deref()
+                .or_else(|| read.mail_root.as_deref().map(Path::new))
+                .ok_or_else(|| surface_refused("surface-preparation", &[("item", &read.item)]))?;
             let previous = index
                 .map(|i| &rows[i])
                 .filter(|lane| lane.status != LaneStatus::Done);
@@ -3084,27 +3253,18 @@ pub(super) fn record_surface_lane(
                 let prior = lane_doc_mut(path, doc, index.expect("previous lane has an index"))?;
                 Some(PreviousFiles {
                     binding: retry_binding(prior),
-                    claim: admission::retained(standing, host)?,
+                    claim: admission::retained(path, &open, standing, env, host)?,
                 })
             } else {
                 None
             };
             let mut judged = if let Some(standing) = previous {
                 let tracker = read.tracker.as_deref().or(standing.tracker.as_deref());
-                let repo = read.repo.as_deref().or(standing.repo.as_deref());
+                let repo = read.repo.as_deref();
                 let binding = admission::bound(path, &read.item, tracker, repo, checkout, host)?;
-                let mut judged = admission::relaunch_held(
-                    path,
-                    &rows,
-                    &open,
-                    standing,
-                    tracker,
-                    binding.repo.as_deref(),
-                    env,
-                    host,
-                )?;
-                judged.binding = binding;
-                judged
+                admission::relaunch_held(
+                    path, &rows, &open, standing, tracker, &binding, env, host,
+                )?
             } else {
                 admission::judge(
                     path,
@@ -3163,10 +3323,12 @@ pub(super) fn record_surface_lane(
             };
             admission::record(path, doc, index, &judged, previous.is_some())?;
             let row = lane_doc_mut(path, doc, index)?;
+            record::set(row, "checkout", serde_json::to_value(checkout)?);
             record::set(row, "session_since", at.as_str());
             record::set(row, "running_at", Value::Null);
             record::set(row, "launch", Value::Null);
             record::set(row, state::UNBOUNDED, true);
+            unpark(path, row, index, &at)?;
             let intent = native_intent(
                 path,
                 doc,
@@ -3198,11 +3360,17 @@ pub(super) fn record_surface_lane(
             if lane.status == LaneStatus::Done {
                 return Err(Error::LaneDone { item: item.clone() });
             }
-            if park
-                .as_ref()
-                .is_some_and(|park| park.item != *item || park.owed || *keep)
-            {
+            if park.as_ref().is_some_and(|park| {
+                park.item != *item
+                    || park.owed
+                    || *keep
+                    || !matches!(lane.status, LaneStatus::Running | LaneStatus::Stopped)
+                    || lane.file_launch.is_some()
+            }) {
                 return Err(surface_refused("surface-park", &[("item", item)]));
+            }
+            if let Some(reservation) = park.as_ref().and_then(|park| park.reservation.as_ref()) {
+                check_reservation(item, reservation, env)?;
             }
             let kind = if park.is_some() {
                 CloseKind::Park
@@ -3225,6 +3393,7 @@ pub(super) fn record_surface_lane(
                     intent,
                     Outcome::Failed,
                     super::SUPERSEDED_LAUNCH,
+                    None,
                     None,
                     env,
                 )?;
@@ -3250,7 +3419,7 @@ pub(super) fn record_surface_lane(
                 LaneMembers {
                     lane_since: lane.session_since.clone(),
                     close: Some(ground),
-                    close_files,
+                    close_files: Some(close_files),
                     ..LaneMembers::default()
                 },
                 park.as_ref(),
@@ -3289,6 +3458,24 @@ pub(super) fn record_surface_lane(
                         &[("item", item), ("intent", &observation.intent_id)],
                     )
                 })?;
+            if let Some(root) = &observation.mail_root {
+                if intent.op != EffectOp::LaunchSession || observation.outcome != Outcome::Confirmed
+                {
+                    return Err(surface_refused("surface-observation", &[("item", item)]));
+                }
+                let standing = &rows[index];
+                let binding = admission::bound(
+                    path,
+                    item,
+                    standing.tracker.as_deref(),
+                    admission::lane_repo(standing),
+                    root,
+                    host,
+                )?;
+                if binding.repo.as_deref() != standing.file_repo.as_deref() {
+                    return Err(surface_refused("lane-repo-conflict", &[("item", item)]));
+                }
+            }
             let written = settle_native(
                 path,
                 doc,
@@ -3296,6 +3483,7 @@ pub(super) fn record_surface_lane(
                 observation.outcome,
                 &observation.evidence,
                 observation.session_id,
+                observation.mail_root.as_deref(),
                 env,
             )?;
             surface_result(path, doc, index, "merge", &written.intent)
@@ -3330,6 +3518,10 @@ fn native_intent(
     Ok(intent)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the native observation settles its checked journal intent"
+)]
 fn settle_native(
     path: &Path,
     doc: &mut Document,
@@ -3337,18 +3529,23 @@ fn settle_native(
     outcome: Outcome,
     evidence: &str,
     session_id: Option<String>,
+    mail_root: Option<&Path>,
     env: &Env,
 ) -> Result<journal::OutcomeWritten> {
-    let request = serde_json::from_value(json!({
+    let mut observed = json!({
         "intent_id": intent.id, "outcome": outcome, "session_id": session_id,
         "observation": { "cause": evidence },
-    }))?;
+    });
+    if let Some(root) = mail_root {
+        observed["mail_root"] = serde_json::to_value(root)?;
+    }
+    let request = serde_json::from_value(observed)?;
     let written = super::record_fleet_outcome(path, doc, &request, env)?;
     if written.recorded_now
         && outcome == Outcome::Confirmed
         && let Some(park) = intent.extra.get("native_park")
     {
-        park_lane(path, doc, &serde_json::from_value(park.clone())?, env)?;
+        park_record(path, doc, &serde_json::from_value(park.clone())?, env, true)?;
     }
     Ok(written)
 }
@@ -3429,26 +3626,28 @@ pub(super) fn check_lane_field(lane: &Document, key: &str) -> Result<()> {
         .and_then(Value::as_str)
         .is_some_and(|s| !matches!(s, "tmux" | "cloud"));
     let admitted = admitted || lane.get("touched").is_some_and(Value::is_array);
-    if matches!(key, "file_hold" | "file_repo" | "file_launch")
-        || ((admitted || native)
-            && matches!(
-                key,
-                "status"
-                    | "repo"
-                    | "tracker"
-                    | "touched"
-                    | "in_scope"
-                    | "read_only"
-                    | "surface"
-                    | "kind"
-                    | "host"
-                    | "mail_root"
-                    | "checkout"
-                    | "launch"
-                    | "session_since"
-                    | state::PARK_OWED
-                    | state::UNBOUNDED
-            ))
+    if matches!(
+        key,
+        "file_hold" | "file_repo" | "file_launch" | state::PARK_FILES
+    ) || ((admitted || native)
+        && matches!(
+            key,
+            "status"
+                | "repo"
+                | "tracker"
+                | "touched"
+                | "in_scope"
+                | "read_only"
+                | "surface"
+                | "kind"
+                | "host"
+                | "mail_root"
+                | "checkout"
+                | "launch"
+                | "session_since"
+                | state::PARK_OWED
+                | state::UNBOUNDED
+        ))
     {
         return Err(super::records::owned_refusal(
             key,

@@ -217,13 +217,13 @@ tmux set-environment ORCH_MERGE_AUTONOMY ask
 Launch each item through [lane-launch.md](../references/lane-launch.md), in this order:
 
 1. Assign its tier under [§ Item Tier](../references/lane-launch.md#item-tier).
-2. Launch it under [§ Lane directive](../references/lane-launch.md#lane-directive). A first launch judges the files the item touches under [§ Shared files](../references/lane-launch.md#shared-files).
+2. On surface 2, commit the preparation under [§ Lane record](../references/lane-launch.md#lane-record). Wait for its intent before invoking the native launcher. On the tmux surface, launch under [§ Lane directive](../references/lane-launch.md#lane-directive). Surface 3 runs in the overseer session.
    - Carry the answer to question 3 under the project-management skill's `references/filing.md` § Judge the approach in the launch ruling. If the item lacks that line or carries a different answer, post the current answer on the item before launch.
-3. Record it under [§ Lane record](../references/lane-launch.md#lane-record).
+3. On surface 2, merge the launcher observation under [§ Lane record](../references/lane-launch.md#lane-record).
 
 ### Recovery relaunch
 
-Relaunch a dead or walled lane through the runtime, as [lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch) states.
+Relaunch a dead or walled managed lane through [lane-directive.md § Recovery relaunch](../references/lane-directive.md#recovery-relaunch). On surface 2, settle the [native close](../references/lane-reach.md#closes-the-watch-makes), then record a new preparation, start the native launcher, and merge its observation under [§ Lane record](../references/lane-launch.md#lane-record).
 
 ## 4. Watch And Advance
 

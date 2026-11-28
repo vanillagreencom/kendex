@@ -560,7 +560,7 @@ pub(crate) const SUPERSEDED_LAUNCH: &str = "superseded-by-close";
     clippy::disallowed_methods,
     reason = "the close and native record store entries need the same kernel reads as launch"
 )]
-pub(crate) fn admission_host(settings: &Settings) -> Host<'_> {
+pub fn admission_host(settings: &Settings) -> Host<'_> {
     Host::kernel()
         .caps(settings)
         .admitting(Clis {

@@ -3869,6 +3869,36 @@ fn a_kept_sandbox_retires_the_attempt_and_asks_the_provider_for_no_stop_or_close
     assert!(std::fs::symlink_metadata(&item_state).is_ok());
 }
 
+#[test]
+fn a_legacy_hosted_keep_refuses_a_conflicting_location_before_provider_mutation() {
+    let fleet = Fleet::hosted(4);
+    let mut stopped = hosted_lane("KEN-1");
+    stopped["status"] = json!("stopped");
+    stopped["tracker"] = json!("linear");
+    fleet.write_lanes(vec![
+        stopped,
+        json!({
+            "item":"KEN-2", "status":"stopped", "repo":"o/r",
+            "file_hold":"retained", "touched":["src/shared.rs"],
+        }),
+    ]);
+    fleet.plant_tracker("KEN-1", "started");
+    let file = fleet.state_dir().join("linear.json");
+    let mut tracker: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    tracker["issues get"] = json!({"body":{"description":"**Location**: `src/shared.rs`"}});
+    std::fs::write(&file, tracker.to_string()).unwrap();
+    let before = fleet.fleet();
+    let answer = fleet.close(json!({"op":"close-lane","mode":"keep-sandbox","item":"KEN-1"}));
+    assert_eq!(answer["refusal"]["key"], "launch-overlap", "{answer}");
+    assert_eq!(fleet.fleet(), before);
+    assert!(
+        !fleet
+            .provider_calls()
+            .iter()
+            .any(|call| call.starts_with("stop ") || call.starts_with("close "))
+    );
+}
+
 /// A Claude cloud session, which nothing here stops: on its tracker's
 /// terminal verdict the close ends the record and the item's files, asks
 /// no provider (the dispatcher answers the cloud kind's line itself), says
@@ -3905,6 +3935,39 @@ fn a_cloud_close_ends_the_record_keeps_the_session_and_writes_its_close_row() {
         ),
         "{log:?}"
     );
+}
+
+#[test]
+fn cloud_close_requires_manual_absence_for_legacy_and_current_writers() {
+    for existing in [false, true] {
+        let fleet = Fleet::hosted(4);
+        let mut lane = json!({
+            "item":"KEN-1", "harness":"claude", "host":"claude-cloud", "kind":"claude-cloud",
+            "repo":"o/r", "session_id":"S1", "status":"running", "touched":["src/shared.rs"],
+            "session_since":"2026-01-29T15:00:00Z", "launched_at":"2026-01-29T15:00:00Z",
+            "mail_root":fleet.state_dir().join("no-such-cloud-root"),
+        });
+        if existing {
+            lane["file_hold"] = json!("exclusive");
+        }
+        fleet.write_lanes(vec![lane]);
+        fleet.plant_tracker("KEN-1", "completed");
+        let before = fleet.fleet();
+        let answer = fleet.close(json!({"op":"close-lane","item":"KEN-1"}));
+        assert_eq!(
+            answer["refusal"]["key"], "cloud-writer-unsettled",
+            "{answer}"
+        );
+        assert_eq!(fleet.fleet(), before);
+        assert!(fleet.provider_calls().is_empty());
+        let settled = fleet.close(json!({"op":"close-owned-resources","item":"KEN-1",
+             "ended":{"source":"cloud-writer-absent"}}));
+        assert_eq!(
+            settled["result"]["effect"]["report"]["intent"]["outcome"], "confirmed",
+            "{settled}"
+        );
+        assert_eq!(fleet.lane("KEN-1")["status"], "done");
+    }
 }
 
 /// A repository under `dir` with a linked worktree on branch `lane` as the

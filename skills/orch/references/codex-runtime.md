@@ -226,10 +226,11 @@ Spawn a generated agent without a full-history fork.
 
 [handoff.md](../workflows/handoff.md) with `harness=codex-app` is the default for a multi-issue handoff when the runtime exposes `codex_app` thread tools.
 
-1. Create exactly one thread per issue with `codex_app.create_thread`.
-2. Target a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}`, the branch `.agents/skills/orch/scripts/resolve-base-branch` prints.
-3. Start the thread with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and record the returned thread ID.
+1. Commit the [native preparation](lane-launch.md#lane-record) from the saved repository checkout before calling the app.
+2. Create exactly one thread per issue with `codex_app.create_thread`. Target a worktree environment whose `startingState` is `{type: "branch", branchName: "[BASE_BRANCH]"}`, the branch `.agents/skills/orch/scripts/resolve-base-branch` prints.
+3. Start the thread with `$orch start [ISSUE_ID]` or `$orch start github [OWNER/REPO]#[N]`, and retain the returned thread ID.
 4. Where the runtime separates creation from prompting, call `codex_app.send_message_to_thread` once with that prompt.
+5. Merge the observed outcome against the preparation intent with the thread ID and the worktree path once known.
 
 Use a `working-tree` starting state only when the user asks for a dirty local snapshot. Generated agents are discoverable only when tracked under `.codex/agents/*.toml` in the saved project branch; setup hooks and worktree links run too late.
 

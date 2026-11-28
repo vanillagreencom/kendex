@@ -682,7 +682,14 @@ fn supersede_launch(
         } else {
             None
         };
-        if !present && cloud.is_none() && preparing.is_none() {
+        let hosted_pending = launch
+            .intent
+            .observation
+            .as_ref()
+            .and_then(|o| o.get("host_writer_pending"))
+            .and_then(Value::as_bool)
+            == Some(true);
+        if !present && !hosted_pending && cloud.is_none() && preparing.is_none() {
             return Err(Error::Runtime(agent_runtime::Error::IntentOpen {
                 intent: launch.intent.id.clone(),
                 op: launch.intent.op.word(),

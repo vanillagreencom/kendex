@@ -4278,28 +4278,8 @@ fn persist(
     locking: Locking,
     settings: &Settings,
 ) -> Result<ops::Applied> {
-    let host = kernel_host(settings);
+    let host = ops::admission_host(settings);
     ops::apply_on(path, request, env, locking, &host)
-}
-
-/// The host a fleet transition judges against: the caps a launch judges, the
-/// kernel's reads, the programs the admission reads through and the settings
-/// the accounts judge reads a launch's account under.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the command's one construction of the kernel host, handed to the store entries alone"
-)]
-fn kernel_host(settings: &Settings) -> ops::Host<'_> {
-    ops::Host::kernel()
-        .caps(settings)
-        .admitting(ops::Clis {
-            tracker: settings.reads.tracker_cli.clone(),
-            gh: PathBuf::from("gh"),
-            scope_paths: settings.scope_paths_cli.clone(),
-            resolver: orch_runtime::repo::resolver(&settings.roots.project),
-            scripts: orch_runtime::watch::overseer::scripts_dir(&settings.roots.project),
-        })
-        .judging(settings)
 }
 
 /// The `admit` verb's one store entry: the judgement committed under the
@@ -4315,7 +4295,7 @@ fn admit(
     locking: Locking,
     settings: &Settings,
 ) -> Result<ops::PathsAdmitted> {
-    let host = kernel_host(settings);
+    let host = ops::admission_host(settings);
     let request = ops::Request::AdmitPaths(Box::new(request.clone()));
     let applied = ops::apply_on(path, &request, env, locking, &host)?;
     match applied.report {

@@ -9601,6 +9601,46 @@ fn a_pane_verb_launch_whose_stop_is_unanswered_holds_its_slot() {
         "the held launch asks no create: {:?}",
         world.verbs()
     );
+    let mut fleet = world.runner.fleet();
+    fleet["lanes"][0]["touched"] = json!(["src/shared.rs"]);
+    world.runner.write_fleet(&fleet);
+    let remote = world.host();
+    let mut held = json!({"capture --item KEN-H": {"exit":1},
+        "stop --item KEN-H --harness claude": {"exit":255}});
+    for file in [
+        "to-lane.jsonl",
+        "to-overseer.jsonl",
+        "to-lane.cursor",
+        "to-lane.cursor.lock",
+    ] {
+        held[format!("cat --item KEN-H {remote}/tmp/lane-mail/KEN-H/{file}")] = json!({"exit":2});
+    }
+    world.plant_detached("exec true", held);
+    let recovery = json!({"op":"close-owned-resources", "item":"KEN-H",
+        "no_landing":{"reason":"restart-recovery","source":"test","interrupt":true}});
+    let contender =
+        json!({"op":"admit-paths","item":"KEN-C","repo":"o/r","paths":["src/shared.rs"]});
+    // A failed provider stop cannot settle the superseded detached writer.
+    let close = effect_report(&world.runner.op_fleet(&recovery));
+    assert_eq!(close["intent"]["outcome"], "unconfirmed", "{close}");
+    assert_eq!(
+        close["intent"]["observation"]["host_stop"], "stop-failed",
+        "{close}"
+    );
+    assert_eq!(
+        reply(&world.runner.op_fleet(&contender))["refusal"]["key"],
+        "launch-overlap"
+    );
+
+    world.plant_detached(
+        "exec true",
+        json!({
+            "status --item KEN-H --harness claude": {"stdout":"exited\n"},
+        }),
+    );
+    let close = effect_report(&world.runner.op_fleet(&recovery));
+    assert_eq!(close["intent"]["outcome"], "confirmed", "{close}");
+    assert_eq!(reply(&world.runner.op_fleet(&contender))["ok"], true);
 }
 
 /// A launch whose process ends inside the exec leaves the `host-exec` phase
@@ -9686,9 +9726,38 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
         )] = json!({"exit": 2});
     }
     world.plant_detached("exec true", answers);
+    let provider = PathBuf::from(world.provider());
+    let fixture = std::fs::read_to_string(&provider).unwrap();
+    std::fs::remove_file(&provider).unwrap();
+    let proof = fixture.replacen("set -u\n", r#"set -u
+if [ "${1:-}" = stop ]; then
+  jq -e '.intents[] | select(.op == "close-resources" and .target == "KEN-H" and
+    (.outcome == "not-started" or .outcome == "unconfirmed")) |
+    .close_files.touched == ["src/shared.rs"]' "$ORCH_TEST_FLEET" > "$ORCH_TEST_STOP_PROOF" || exit 65
+fi
+"#, 1);
+    assert_ne!(fixture, proof);
+    support::write_executable(&provider, &proof);
+    let proof_path = state.join("provider-stop-claim");
+    world.runner.env.extend([
+        (
+            "ORCH_TEST_FLEET".into(),
+            state
+                .join(agent_runtime::record::FLEET_FILE_NAME)
+                .display()
+                .to_string(),
+        ),
+        (
+            "ORCH_TEST_STOP_PROOF".into(),
+            proof_path.display().to_string(),
+        ),
+    ]);
     let panes = server.panes();
     let launched = effect_report(&world.runner.op_fleet(&world.request()));
     assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    let mut fleet = world.runner.fleet();
+    fleet["lanes"][0]["touched"] = json!(["src/shared.rs"]);
+    world.runner.write_fleet(&fleet);
     let viewer = new_panes(&server, &panes);
     assert_eq!(viewer.len(), 1, "{viewer:?}");
     let viewer = viewer[0].clone();
@@ -9733,6 +9802,7 @@ fn a_pane_verb_lane_launched_is_read_and_closed_through_its_provider() {
             .op_fleet(&json!({"op": "close-lane", "item": "KEN-H"})),
     );
     assert_eq!(closed["result"]["word"], "closed", "{closed}");
+    assert_eq!(std::fs::read_to_string(proof_path).unwrap().trim(), "true");
     assert_eq!(world.runner.fleet()["lanes"][0]["status"], "done");
     let verbs = world.verbs();
     let stop = verbs

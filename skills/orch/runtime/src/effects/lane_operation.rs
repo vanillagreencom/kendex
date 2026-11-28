@@ -678,16 +678,14 @@ impl<'a> LaneOperation<'a> {
     pub(super) fn host_stop(
         &mut self,
         lane: &Lane,
+        host: &str,
         harness: &str,
     ) -> Result<std::result::Result<crate::watch::hosted::HostStopped, crate::watch::hosted::Asked>>
     {
         let _signalled = self.engine.signal()?;
         let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
         Ok(crate::watch::hosted::stop_answer(
-            &scripts,
-            crate::watch::hosted::host_of(lane),
-            &lane.item,
-            harness,
+            &scripts, host, &lane.item, harness,
         ))
     }
 
@@ -697,15 +695,11 @@ impl<'a> LaneOperation<'a> {
     pub(super) fn host_exited(
         &self,
         lane: &Lane,
+        host: &str,
         harness: &str,
     ) -> Result<std::result::Result<bool, String>> {
         let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
-        let read = || match crate::watch::hosted::status(
-            &scripts,
-            crate::watch::hosted::host_of(lane),
-            &lane.item,
-            harness,
-        ) {
+        let read = || match crate::watch::hosted::status(&scripts, host, &lane.item, harness) {
             Ok(crate::watch::hosted::HostStatus::Exited) => Some(Ok(true)),
             Ok(crate::watch::hosted::HostStatus::Running) => None,
             Err(cause) => Some(Err(cause)),
@@ -895,6 +889,22 @@ fn standing_value(obligation: &LaneObligation) -> Value {
     match obligation {
         LaneObligation::Validation => json!({"kind": "validation"}),
         LaneObligation::Worktree { path } => json!({"kind": "worktree", "path": path}),
+    }
+}
+
+/// A local transport can go away while the provider still runs the writer.
+pub(super) fn hosted_writer_absent(
+    settings: &Settings,
+    host: &str,
+    item: &str,
+    harness: &str,
+) -> bool {
+    use crate::watch::hosted::{self, HostStatus};
+    let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
+    match hosted::status(&scripts, host, item, harness) {
+        Ok(HostStatus::Exited) => true,
+        Ok(HostStatus::Running) => false,
+        Err(cause) => hosted::status_unowned(&cause, item),
     }
 }
 

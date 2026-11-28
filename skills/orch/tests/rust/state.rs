@@ -3932,8 +3932,8 @@ fn native_preparation_and_close_hold_checked_paths_until_observation() {
     let store = Store::new();
     store.init_fleet();
     let create = |item: &str| {
-        json!({"op": "record-surface-lane", "step": "create", "lane": {
-            "item": item, "harness": "codex", "mail_root": store.dir.path(),
+        json!({"op": "record-surface-lane", "step": "create", "checkout": store.dir.path(), "lane": {
+            "item": item, "harness": "codex", "mail_root": null,
             "surface": "gui", "status": "preparing", "touched": ["src/lib.rs"],
         }})
     };
@@ -3944,16 +3944,17 @@ fn native_preparation_and_close_hold_checked_paths_until_observation() {
     let contender = create("KEN-4501");
     assert_eq!(store.fleet_op_refused(&contender).0, "launch-overlap");
 
+    let worktree = store.dir.path().join("native-worktree");
     let merge = |intent: &Value, outcome: &str, evidence: &str| {
-        let file = store.write_file(
-            "native-observation.json",
-            &json!({
-                "intent_id": intent["id"], "outcome": outcome, "evidence": evidence
-            })
-            .to_string(),
-        );
+        let mut observation = json!({
+            "intent_id": intent["id"], "outcome": outcome, "evidence": evidence
+        });
+        if intent["op"] == "launch-session" && outcome == "confirmed" {
+            observation["mail_root"] = json!(worktree);
+        }
+        let file = store.write_file("native-observation.json", &observation.to_string());
         store.fleet_op_ok(&json!({
-            "op": "record-surface-lane", "step": "merge", "item": "KEN-4500", "file": file,
+            "op": "record-surface-lane", "step": "merge", "item": intent["target"], "file": file,
         }))
     };
     let launch = &start["intent"];
@@ -3962,10 +3963,11 @@ fn native_preparation_and_close_hold_checked_paths_until_observation() {
         "preparing"
     );
     assert_eq!(store.fleet_op_refused(&contender).0, "launch-overlap");
-    assert_eq!(
-        merge(launch, "confirmed", "native session running")["value"]["status"],
-        "running"
-    );
+    assert!(!worktree.exists());
+    fs::create_dir(&worktree).unwrap();
+    let launched = merge(launch, "confirmed", "native session running");
+    assert_eq!(launched["value"]["status"], "running");
+    assert_eq!(launched["value"]["mail_root"], json!(worktree));
 
     let close = json!({"op": "record-surface-lane", "step": "close", "item": "KEN-4500"});
     let closing = store.fleet_op_ok(&close);
@@ -3989,10 +3991,20 @@ fn native_preparation_and_close_hold_checked_paths_until_observation() {
         merge(closing, "confirmed", "native session absent")["value"]["status"],
         "done"
     );
+    let prepared = store.fleet_op_ok(&contender);
+    assert_eq!(prepared["value"]["status"], "preparing");
+    let park = json!({"op":"record-surface-lane", "step":"close", "item":"KEN-4501", "park":{
+        "item":"KEN-4501", "repo":"o/r", "hold":true, "head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }});
+    assert_eq!(store.fleet_op_refused(&park).0, "surface-park");
+    merge(&prepared["intent"], "confirmed", "native session running");
+    let parked = store.fleet_op_ok(&park);
     assert_eq!(
-        store.fleet_op_ok(&contender)["value"]["status"],
-        "preparing"
+        merge(&parked["intent"], "confirmed", "native session parked")["value"]["status"],
+        "parked"
     );
+    let next = create("KEN-4503");
+    assert_eq!(store.fleet_op_ok(&next)["value"]["status"], "preparing");
 
     let tmux = json!({"item": "KEN-4502", "surface": "tmux", "status": "running"});
     store.ok(&["state", "append", "--fleet", "/lanes", &tmux.to_string()]);

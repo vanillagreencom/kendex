@@ -386,7 +386,7 @@ The members' rules, in the table's order:
 - `reservation`: `reserve-lane` or `park-lane` writes it; a relaunch, `release-lane` and a confirmed close drop it.
 - `touched`, `in_scope`, `carried`: [lane-launch.md § Shared files](../references/lane-launch.md#shared-files) states the judgement. A recorded empty set stands in its own right. A tracked legacy lane without a set uses its Location.
 - `file_hold`: `exclusive` or `shared` for the current attempt, `retained` for recovery, or `released`. An absent field is a legacy record; admission reads its execution and journal evidence.
-- `file_repo`: the repository of the checked set. `file_launch` names its provisional launch while preparation or close handoff is unsettled. The launch intent's `previous_files` keeps the prior binding and any retained claim. A close intent's `close_files` keeps its checked set.
+- `file_repo`: the repository of the checked set. `file_launch` names its provisional launch while preparation or close handoff is unsettled. The launch intent's `previous_files` keeps the prior binding and any retained claim. A close intent's `close_files` keeps its checked set, its unreadable claim or an explicit yielded reading. A checked park carries the same snapshot until confirmation. `hosted_close` binds the provider and selected harness when that effect owes remote writer proof.
 - `unbounded`: a join or `admit-paths` writes it over a record that renders no `Admitted paths:` line, and while it stands the record renders none. A relaunch keeps it; a launch over a `done` record, judged afresh, removes it.
 - `obligation`: the parent pair is named together or null together.
 - `obligation`: a launch binds it on a record that carries none.

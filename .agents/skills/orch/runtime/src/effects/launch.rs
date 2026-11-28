@@ -903,6 +903,7 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
 /// reconcile can resume from.
 #[allow(clippy::too_many_arguments)]
 fn open_and_confirm(
+    run: &Run,
     mut operation: Operation,
     r: &LaunchLane,
     server: &Server,
@@ -1012,6 +1013,23 @@ fn open_and_confirm(
     {
         operation.record_identity(&mut opened, identity)?;
     }
+    if matches!(polled, Polled::Gone)
+        && let Surface::Hosted(provider) = surface_of(r.host())
+        && !super::lane_operation::hosted_writer_absent(
+            run.settings,
+            provider,
+            &r.item,
+            harness.name(),
+        )
+    {
+        return Ok(launch_pane_unconfirmed(
+            operation,
+            &opened,
+            json!({
+                "observed": "gone", "cause": "host-writer-unsettled", "host_writer_pending": true,
+            }),
+        ));
+    }
     launch_outcome(
         operation, harness, sessions, session, &r.item, &opened, polled,
     )
@@ -1082,6 +1100,7 @@ fn local_launch(
     }
     let target = prep.target.clone();
     let mut outcome = open_and_confirm(
+        run,
         operation,
         r,
         &prep.server,
@@ -1381,6 +1400,7 @@ fn hosted_launch(
         Client::Window => {
             let target = Target::new(&run.settings.engine.harness_binaries, harness)?;
             open_and_confirm(
+                run,
                 operation,
                 r,
                 &server,
@@ -1732,14 +1752,22 @@ fn detached_launch(
 ) -> Result<EffectOutcome> {
     operation.record_phase(Phase::Preparing {
         step: HOST_EXEC.to_owned(),
-        at: provider.to_owned(),
+        at: created.path.clone(),
     })?;
     let confirmed = match hosted::run_prefix(Path::new(&command.program), &command.args) {
         Ok(()) => detached_confirm(run, &operation, scripts, provider, item, harness)?,
         Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) => Err(cause),
     };
     let failed = |operation: Operation, cause: &str| {
-        detached_failed(operation, scripts, provider, item, harness, cause)
+        detached_failed(
+            operation,
+            scripts,
+            provider,
+            item,
+            harness,
+            &created.path,
+            cause,
+        )
     };
     if let Err(cause) = confirmed {
         return Ok(failed(operation, &cause));
@@ -1859,12 +1887,13 @@ fn detached_failed(
     provider: &str,
     item: &str,
     harness: Harness,
+    mail_root: &str,
     cause: &str,
 ) -> EffectOutcome {
     match hosted::stop(scripts, provider, item, harness.name()) {
         Ok(()) => operation.settle(Word::Failed, json!({"cause": cause})),
         Err(hosted::Asked::Failed(stop) | hosted::Asked::Unknown(stop)) => {
-            preparing_held(operation, HOST_EXEC, provider, &format!("{cause} {stop}"))
+            preparing_held(operation, HOST_EXEC, mail_root, &format!("{cause} {stop}"))
         }
     }
 }
@@ -2205,7 +2234,7 @@ const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
 /// `<step>-unknown` where its answer is lost.
 const HOST_START: &str = "host-start";
 const HOST_CREATE: &str = "host-create";
-const HOST_EXEC: &str = "host-exec";
+use crate::state::HOST_EXEC;
 const WORKTREE_CREATE: &str = "worktree-create";
 const WORKTREE_PUSH: &str = "worktree-push";
 
@@ -2565,6 +2594,9 @@ fn reconcile_window(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
                 return Ok(outcome);
             }
             Recovered::Failed { note, cause } => {
+                if !remote_launch_absent(run, intent, &lane)? {
+                    return Ok(operation.hold(json!({"observed": "gone", "cause":"host-writer-unsettled", "host_writer_pending":true})));
+                }
                 let mut outcome =
                     operation.settle(Word::Failed, opening_observation("launch", note, cause));
                 if local && let Some(marker) = marker_reading(&lane) {
@@ -2585,6 +2617,22 @@ fn reconcile_window(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     Ok(outcome)
 }
 
+fn remote_launch_absent(run: &Run, intent: &Intent, lane: &Lane) -> Result<bool> {
+    let Surface::Hosted(host) = surface_of(lane.host.as_deref()) else {
+        return Ok(true);
+    };
+    Ok(
+        pane_harness(run.engine.path, lane, Some(intent))?.is_some_and(|harness| {
+            super::lane_operation::hosted_writer_absent(
+                run.settings,
+                host,
+                &lane.item,
+                harness.name(),
+            )
+        }),
+    )
+}
+
 /// Judge the pane a launch intent names past `opening`: gone, or its server
 /// replaced or gone, is `failed`; one an unanswering server still holds, or
 /// one the host did not answer for, is `unconfirmed` with the cause; one
@@ -2600,6 +2648,24 @@ fn judge_opened(
     item: &str,
     opened: &OpenedPane,
 ) -> Result<EffectOutcome> {
+    let gone = |operation, cause| {
+        if !remote_launch_absent(run, intent, lane)? {
+            return Ok(launch_pane_unconfirmed(
+                operation,
+                opened,
+                json!({
+                    "reconcile": "launch", "observed": "gone",
+                    "cause": "host-writer-unsettled", "host_writer_pending": true,
+                }),
+            ));
+        }
+        launch_pane_gone(
+            operation,
+            opened,
+            cause,
+            json!({"reconcile": "launch", "observed": "gone"}),
+        )
+    };
     let pane = match operation.observe_pane(opened)? {
         Observed::Unobservable { cause } => {
             return Ok(launch_pane_unconfirmed(
@@ -2609,12 +2675,7 @@ fn judge_opened(
             ));
         }
         Observed::Gone { cause } => {
-            return launch_pane_gone(
-                operation,
-                opened,
-                cause,
-                json!({"reconcile": "launch", "observed": "gone"}),
-            );
+            return gone(operation, cause);
         }
         Observed::Present(pane) => pane,
     };
@@ -2632,12 +2693,7 @@ fn judge_opened(
         match operation.read_pane(&pane, harness, &owns, opened.identity.as_ref())? {
             Reading::Live(read) => read,
             Reading::Gone => {
-                return launch_pane_gone(
-                    operation,
-                    opened,
-                    "pane-gone",
-                    json!({"reconcile": "launch", "observed": "gone"}),
-                );
+                return gone(operation, "pane-gone");
             }
             Reading::Unreadable { cause } => {
                 return Ok(launch_pane_unconfirmed(

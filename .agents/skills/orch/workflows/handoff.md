@@ -72,10 +72,11 @@ When an item must change harnesses, its new brief includes this sentence: `Conti
    .agents/skills/orch/scripts/resolve-base-branch .
    ```
 
-2. For each item, create exactly one thread with `codex_app.create_thread`. Target the current saved project, with a separate worktree environment for that issue. Never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread.
-3. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}`. Use `working-tree` only when the user asks for a dirty local snapshot.
-4. The prompt is `$orch start [ISSUE_ID]`, or `$orch start github [OWNER/REPO]#[N]`. Where the runtime creates the thread before it accepts a prompt, call `codex_app.send_message_to_thread` once with that prompt.
-5. Title the thread with the item identifier where `codex_app.set_thread_title` is exposed, and record the returned thread ID.
+2. For each item, admit its writable paths and commit its [native preparation](../references/lane-launch.md#lane-record) from the saved repository checkout. Use the preparation's intent for this thread.
+3. Create exactly one thread with `codex_app.create_thread`. Target the current saved project, with a separate worktree environment for that issue. Never run all issues in the controller thread, never launch several in one child thread, and never pass several issue IDs to one thread.
+4. Set the worktree `startingState` to `{type: "branch", branchName: "[BASE_BRANCH]"}`. Use `working-tree` only when the user asks for a dirty local snapshot.
+5. The prompt is `$orch start [ISSUE_ID]`, or `$orch start github [OWNER/REPO]#[N]`. Where the runtime creates the thread before it accepts a prompt, call `codex_app.send_message_to_thread` once with that prompt.
+6. Title the thread with the item identifier where `codex_app.set_thread_title` is exposed. Merge its launch observation against the preparation intent with the returned thread ID and the observed worktree path once known.
 
 The full contract: [codex-runtime.md § Codex Desktop app handoff](../references/codex-runtime.md#codex-desktop-app-handoff).
 

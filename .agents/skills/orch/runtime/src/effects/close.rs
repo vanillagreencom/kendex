@@ -693,7 +693,9 @@ impl Close<'_> {
             if !matches!(judged, LaneState::Exited) || wait.hold {
                 self.refuse_ask()?;
             }
-            let closed = self.close_on(Ground::Keep(Some(park.owed_mark())))?;
+            let ground = Ground::Keep(Some(park.owed_mark()));
+            let landing = self.landing(&ground, None)?;
+            let closed = self.persist(ground, landing, matches!(judged, LaneState::Exited))?;
             if closed.word != Word::Stopped {
                 return Ok(closed);
             }
@@ -757,7 +759,11 @@ impl Close<'_> {
         } else {
             ground
         };
-        let mut closed = self.persist(ground, landing)?;
+        let mut closed = self.persist(
+            ground,
+            landing,
+            matches!(judged, LaneState::Exited) || host_absent,
+        )?;
         closed.notes.splice(0..0, notes);
         Ok(closed)
     }
@@ -765,7 +771,7 @@ impl Close<'_> {
     /// The close on `ground` with the landing its delivery names recorded.
     fn close_on(&self, ground: Ground) -> Result<Closed> {
         let landing = self.landing(&ground, None)?;
-        self.persist(ground, landing)
+        self.persist(ground, landing, false)
     }
 
     /// The landing the close records, read before it acts: the merge cycle
@@ -1136,7 +1142,7 @@ impl Close<'_> {
     /// The one close transition on `ground` and its effect, read by the
     /// outcome it recorded; the landing's comment is posted once the record
     /// reads done.
-    fn persist(&self, ground: Ground, landing: Landing) -> Result<Closed> {
+    fn persist(&self, ground: Ground, landing: Landing, provider_exited: bool) -> Result<Closed> {
         let (terminal, no_landing, ended) = match ground {
             Ground::Terminal(t) => (Some(t), None, None),
             Ground::Exited => (None, None, None),
@@ -1169,7 +1175,10 @@ impl Close<'_> {
             terminal,
             no_landing,
             ended,
-            identity: Some(self.r.identity.clone()),
+            identity: Some(CloseIdentity {
+                provider_exited,
+                ..self.r.identity.clone()
+            }),
             cycle,
             disposed,
         });

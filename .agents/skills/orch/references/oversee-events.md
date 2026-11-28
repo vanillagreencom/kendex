@@ -644,9 +644,8 @@ A marker beside a lane whose record still reads open is a close the watch cannot
 1. Read the banner and the screen around it. Confirm the banner is the harness's own, not a limit phrase the lane printed. Leave a lane that is still working alone.
 2. Before any stop by hand, apply [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
 3. With `pick lane=[DIR]` under `ask`, for a lane that section admits:
-   1. On a hosted lane, run `.agents/skills/orch/scripts/orch-runtime host --host [HOST] stop --item [ITEM] --harness [HARNESS]`, with `[HOST]` from the lane record. Require its `stopped item=[ITEM] processes=[N]` line.
-   2. Keep the window; the relaunch's runtime close closes it.
-   3. Then relaunch with `[DIR]` as the request's `account`, on the lane record's own host, and on the line's `harness=` and `model=` where it names them. A relaunch on another harness closes its brief with the one-sentence continuation from [handoff.md § 2](../workflows/handoff.md#2-launch), naming the matching path from the prior harness's transcript store.
+   1. Submit the journaled `close-owned-resources` request under [Recovery relaunch](lane-directive.md#recovery-relaunch). The close effect owns the provider stop and closes the window. Wait for confirmed close before launching the replacement.
+   2. Then relaunch with `[DIR]` as the request's `account`, on the lane record's own host, and on the line's `harness=` and `model=` where it names them. A relaunch on another harness closes its brief with the one-sentence continuation from [handoff.md § 2](../workflows/handoff.md#2-launch), naming the matching path from the prior harness's transcript store.
 4. When none qualifies and the line carries `resets=`, keep the window and wait for the reset; § `usage-limit-passed` follows.
    - A `resets=` read from a clock time or weekday is an upper bound.
    - Never launch onto the spent account before its reset.

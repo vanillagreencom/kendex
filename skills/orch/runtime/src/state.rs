@@ -653,6 +653,47 @@ pub struct FileClaim {
     pub hold: FileHold,
 }
 
+/// A recorded close distinguishes a checked claim, an unreadable
+/// existing claim, and a lane that yielded when the close was admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CloseFiles {
+    Claim(FileClaim),
+    Read(ClaimRead),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum ClaimRead {
+    Yielded,
+    Unreadable {
+        repo: Option<String>,
+        read: String,
+        cause: String,
+    },
+}
+
+/// The hosted writer a close observed or inherited from an unsettled launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedClose {
+    pub host: String,
+    pub harness: String,
+    pub disposition: HostedCloseDisposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostedCloseDisposition {
+    Exited,
+    Stop,
+    Unsettled,
+}
+
+pub const HOST_EXEC: &str = "host-exec";
+pub(crate) const PARK_FILES: &str = "park_files";
+
 /// A launch replacing a lane keeps its original route and any retained claim
 /// until the new writer is confirmed or proven absent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1159,7 +1200,8 @@ pub struct LaneMembers {
     /// intent.
     pub observed_status: Option<LaneStatus>,
     pub previous_files: Option<PreviousFiles>,
-    pub close_files: Option<FileClaim>,
+    pub close_files: Option<CloseFiles>,
+    pub hosted_close: Option<HostedClose>,
 }
 
 impl LaneMembers {
@@ -1177,6 +1219,7 @@ impl LaneMembers {
             observed_status: field(path, row, "observed_status")?,
             previous_files: field(path, row, "previous_files")?,
             close_files: field(path, row, "close_files")?,
+            hosted_close: field(path, row, "hosted_close")?,
         })
     }
 
@@ -1193,7 +1236,8 @@ impl LaneMembers {
         put(row, "disposed", self.disposed.as_ref())?;
         put(row, "observed_status", self.observed_status.as_ref())?;
         put(row, "previous_files", self.previous_files.as_ref())?;
-        put(row, "close_files", self.close_files.as_ref())
+        put(row, "close_files", self.close_files.as_ref())?;
+        put(row, "hosted_close", self.hosted_close.as_ref())
     }
 }
 

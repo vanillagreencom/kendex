@@ -33,7 +33,7 @@ A line with `tracker=unread` comes first, even when the watch also prints `parke
 
 - `nothing`: nothing holds the lane.
   1. Relaunch it in this pass under [lane-directive.md § Recovery relaunch](lane-directive.md#recovery-relaunch).
-  2. Where the relaunch refuses `launch-overlap`, a lane its `holder=` names holds a path the lane records, and the lane stands as it was. Relaunch it once that holder's lane ends.
+  2. Where the relaunch refuses `launch-overlap`, a lane its `holder=` names holds a path the lane records, and the lane stands as it was. Relaunch after the holder releases the claim through confirmed park or terminal close. For an open pull request named as `holder=#N`, wait for the pull request to release the path.
   3. Where it refuses `holder-unreadable` or `touched-unreadable`, a read the holder judgement needs failed, and the lane stands as it was. Resolve the failed read its `read=` names, then relaunch it again.
   4. Where it refuses otherwise, close it in this pass through § Lane close, and tell the owner the relaunch's refusal.
 - `merge` on `lane=parked`: follow its [`parked-merged`](oversee-events.md#parked-merged) line, which the watch repeats on every pass until the lane closes or relaunches.
@@ -156,7 +156,7 @@ Before it acts on the merged ground, or on an item its tracker completed, the cl
 
 ### Hosted harness
 
-The close commits its intent before it signals the harness or asks the provider to stop. An exited lane needs no stop. While the outcome is unresolved, the intent protects the paths it carried or acquired and the lane accepts neither joins nor path additions.
+The close commits its intent before it signals the harness or asks the provider to stop. On `cloud-writer-unsettled`, verify the remote session is absent or unable to publish, then use [the manual cloud close](lane-directive.md#cloud-launch). An exited lane needs no stop. While the outcome is unresolved, the intent protects the paths it carried or acquired and the lane accepts neither joins nor path additions.
 
 - On `host-busy step=stop`, ask again.
 - On `harness-unsupported harness=unknown`, pass `harness` (§ Records with no identity).
@@ -203,12 +203,12 @@ The watch closes a merged hosted lane, and a parked or stopped record whose trac
 
 On the surfaces of [oversee.md § 1](../workflows/oversee.md#1-resolve-the-launch-surface):
 
-- Surface 2 submits `{"op":"record-surface-lane","step":"close","item":"[ITEM_KEY]"}` through `orch-runtime op --fleet` before calling its native close. Use `"keep":true` for recovery, or supply the judged `park-lane` request's data in `park` for a native park. Report the reply's intent through [lane-launch.md § Lane record](lane-launch.md#lane-record) after observing absence or a completed park. An uncertain outcome stays open. The runtime's stop acts on its managed lanes.
+- Surface 2 submits `{"op":"record-surface-lane","step":"close","item":"[ITEM_KEY]"}` through `orch-runtime op --fleet` before calling its native close. Use `"keep":true` for recovery, or supply the judged `park-lane` request's data in `park` for a native park of a running or stopped lane, including a local lane whose launcher can park it. For a stopped native lane whose tracker item ends, use this same native close and confirm absence. Report the reply's intent through [lane-launch.md § Lane record](lane-launch.md#lane-record) after observing absence or a completed park. An uncertain outcome stays open. The runtime's stop acts on its managed lanes.
 - Surface 3 continues in the overseer session and has no separate session or lane record to close.
 
 ## Per harness
 
-Launching, resuming and the harness's own dialogs stay per harness. Every lane launches through the runtime's `launch-lane` into a tmux window ([oversee.md § 3](../workflows/oversee.md#3-launch)), and [oversee-reads.md § Bounded lane reads](oversee-reads.md#bounded-lane-reads) reads its state. The keys the launch and dialog answers below name reach a dialog one key per call:
+Launching, resuming and the harness's own dialogs stay per harness. A managed lane launches through the runtime's `launch-lane` into a tmux window ([oversee.md § 3](../workflows/oversee.md#3-launch)), and [oversee-reads.md § Bounded lane reads](oversee-reads.md#bounded-lane-reads) reads its state. The keys the launch and dialog answers below name reach a dialog one key per call:
 
 - A hosted lane whose host declares `pane=verb` takes each key through its provider:
 
