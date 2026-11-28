@@ -682,7 +682,7 @@ LINEAR_READ_PATTERN='^[[:space:]]*query[^_[:alnum:]]'
 # under HTTP 200), and 1 on every other failure, so a caller can tell "no
 # such thing" from "the read failed". graphql_query passes that status
 # through; only graphql_pages returns 1 for both.
-# Usage: graphql_request "query string" '{"var": "value"}'
+# Usage: graphql_request "query string" '{"var": "value"}' [EXPECTED_MISSING_ENTITY]
 graphql_request() {
     local query="$1"
     local variables="$2"
@@ -744,6 +744,10 @@ graphql_request() {
                     ;;
                 "Entity not found: "*)
                     jq -cn --arg msg "$error_msg" '{error: $msg}' >&2
+                    if [[ -n "${3:-}" ]]; then
+                        [[ "$error_msg" == "Entity not found: $3" ]] &&
+                            jq -e '.errors | length == 1 and (.[0].path // [] | length <= 1)' <<<"$response" >/dev/null || return 1
+                    fi
                     return 2
                     ;;
                 *"relation"*"exist"* | *"already exist"* | *"duplicate"*"relation"*)

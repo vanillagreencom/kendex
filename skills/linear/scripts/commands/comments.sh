@@ -529,8 +529,18 @@ create_comment() {
         result=$(graphql_query "$mutation" "{\"input\": $input_json}")
     elif ! result=$(graphql_query "$mutation" "{\"input\": $input_json}") ||
         ! jq -e --arg id "$comment_id" '.commentCreate | .success == true and .comment.id == $id' <<<"$result" >/dev/null; then
-        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id identifier } } }'
-        result=$(graphql_query "$query" "$(jq -cn --arg id "$comment_id" '{id: $id}')") || return 1
+        local query='query OwnerRuling($id: String!) { comment(id: $id) { id body parent { id } issue { id identifier } } }' read_status=0
+        result=$(graphql_query "$query" "$(jq -cn --arg id "$comment_id" '{id: $id}')" ${owner_question:+Comment}) || read_status=$?
+        # An unread question can already exist even when the create had field errors.
+        # The failed receipt carries the ID for the mailbox to reconcile against the item.
+        if [[ -n "$owner_question" && "$read_status" != 2 ]] && { [[ "$read_status" != 0 ]] ||
+            ! jq -e '.comment | type == "object" and has("parent") and has("issue") and ([.id,.body] | all(type == "string"))
+                and (.parent | . == null or (.id | type) == "string")
+                and (.issue | . == null or ([.id,.identifier] | all(type == "string")))' <<<"$result" >/dev/null; }; then
+            jq -cn --arg id "$comment_id" '{success: false, data: {comment: {id: $id}}}'
+            return 1
+        fi
+        [[ "$read_status" == 0 ]] || return 1
         jq -e --arg id "$comment_id" --arg item "$comment_issue_id" --arg parent "$parent_id" --argjson body "$escaped_body" "$COMMENT_ATTRIBUTION_JQ$OWNER_RULING_JQ"'
           def clean: gsub("\r\n"; "\n") | sub("\n+\\z"; "");
           .comment | if .id == $id and (if $parent == "" then .parent == null and

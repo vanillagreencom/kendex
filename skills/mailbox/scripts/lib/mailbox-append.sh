@@ -518,10 +518,9 @@ owner_tracker_post() { # TRACKER WORK ISSUE COMMENT_ISSUE ASK_ID DESCRIPTION OWN
       comment_id=""
       comment_error="$work/tracker.out"
     fi
-  elif grep -q '^linear-http: write=unconfirmed ' "$comment_error"; then
-    # Linear's create may have landed without a readable receipt. A later
-    # item read must find this question before the gate attempts deletion.
-    OWNER_TRACKER_COMMENT="$8"
+  else
+    OWNER_TRACKER_COMMENT="$(jq -er --arg id "$8" 'select(.success == false) | .data.comment.id | select(. == $id)' \
+      "$work/tracker.out" 2>/dev/null)" || OWNER_TRACKER_COMMENT=""
   fi
   owner_tracker_unwritten "$issue" "$OWNER_TRACKER_CAUSE" ${comment_error:+"$comment_error"}
   if [[ -n "$comment_id" ]] && ! owner_tracker_delete_comment "$tracker" "$work" "$comment_id"; then

@@ -177,10 +177,11 @@ question = payload["variables"]["input"]
 body = question["body"]
 row = os.environ["TRACKER_ROW"]
 lost = row.startswith("create-lost") and not (root / "closing").exists()
+partial = row == "create-partial" and not (root / "closing").exists()
 if not lost or row != "create-lost-absent":
     (root / "question-id").write_text(question["id"])
     comments_path.write_text(json.dumps(json.loads(comments_path.read_text()) + [body]))
-    if lost:
+    if lost or partial:
         (root / "surviving-id").write_text(question["id"])
 if lost:
     print("___HTTP_CODE___500", end="")
@@ -188,7 +189,11 @@ if lost:
 comment = {"id": question["id"], "body": body, "createdAt": "2026-11-22T00:00:00Z",
            "updatedAt": "2026-11-22T00:00:00Z", "user": {"name": "App", "email": "app@example.test"},
            "issue": {"identifier": "KEN-7", "updatedAt": "2026-11-22T00:00:00Z"}}
-print(json.dumps({"data": {"commentCreate": {"success": True, "comment": comment}}}) + "___HTTP_CODE___200", end="")
+reply = {"data": {"commentCreate": {"success": True, "comment": comment}}}
+if partial:
+    comment["user"] = None
+    reply["errors"] = [{"message": "AUTHOR_READ_FAILED", "path": ["commentCreate", "comment", "user"]}]
+print(json.dumps(reply) + "___HTTP_CODE___200", end="")
 '''
 
 
@@ -197,6 +202,7 @@ RECOVERY = {
     "delete-compacted": (True, "mention", 2),
     "create-lost": (True, "comment", 1),
     "create-lost-absent": (True, "comment", 0),
+    "create-partial": (True, "comment", 1),
 }
 
 
@@ -206,7 +212,7 @@ def run(source, scratch, bash):
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
              "rollback_labels": True, "comment_form": True, "mention": True,
              "comment_delete": True, "rollback_pair": True, "survivor_removed": False,
-             "delete-compacted": False, "create-lost": False, "create-lost-absent": False}
+             "delete-compacted": False, "create-lost": False, "create-lost-absent": False, "create-partial": False}
     # One copy of the real linear scripts, with no orch beside it, so its
     # attribution line reads unknown rather than this checkout's session.
     linear = Path(tempfile.mkdtemp(dir=scratch)) / "linear"
@@ -282,7 +288,7 @@ def run(source, scratch, bash):
                     and any(line.startswith("Reply to this comment") for line in lines)
                     and lines[-1] == "Requested by the " + root.name + " overseer"
                     and ask_id not in after_comments[-1] and "ask=" not in after_comments[-1])
-            elif row in ("delete-refused", "delete-compacted", "create-lost"):
+            elif row in RECOVERY and row != "create-lost-absent":
                 facts["comments"] &= after_comments[:1] == previous_comments and len(after_comments) == 2
             else:
                 facts["comments"] &= after_comments == previous_comments
@@ -372,10 +378,11 @@ def run(source, scratch, bash):
                 overseer = Overseer(root, env, mail)
                 outcome = next(record for record in overseer.rows("to-overseer.jsonl")
                     if record.get("re") == ask_id and record["kind"] == "tracker-failed")
-                if row.startswith("create-lost"):
+                if row.startswith("create-"):
                     error_file = Path(ask.stderr.partition("error-file=")[2].strip())
                     failure = error_file.read_text()
-                    facts["notice"] &= ("linear-http: write=unconfirmed code=500" in failure
+                    cause_marker = "AUTHOR_READ_FAILED" if row == "create-partial" else "linear-http: write=unconfirmed code=500"
+                    facts["notice"] &= (cause_marker in failure
                                         and json.loads(failure.splitlines()[-1])["error"] == "HTTP error: 403")
                 if expire:
                     # A chat close and cursor acknowledgment make this exchange

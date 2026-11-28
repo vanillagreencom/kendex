@@ -67,6 +67,7 @@ close_rows() {
   assert_eq "$(jq '."delete-compacted"' <<<"$CLOSE_FACTS")" true 'compaction retains a closed failed ask until its surviving question is gone'
   assert_eq "$(jq '."create-lost"' <<<"$CLOSE_FACTS")" true 'a lost create receipt retains the reserved ID for later deletion'
   assert_eq "$(jq '."create-lost-absent"' <<<"$CLOSE_FACTS")" true 'the gate retires an unconfirmed ID that the item read proves absent'
+  assert_eq "$(jq '."create-partial"' <<<"$CLOSE_FACTS")" true 'a partial create with an unread confirmation leaves the gate a question to recover'
 }
 
 # A new ask that replaces an open one, each row judged on its own tracker.
