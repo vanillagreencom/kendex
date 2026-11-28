@@ -12,7 +12,8 @@ control_replace scripts/lib/issue-validation.sh 1 \
 	'	[[ $verdict != "{"* ]]' \
 	'	[[ -z $verdict ]]'
 
-# The kept refusal. Without it an invalid post-merge Deadline files.
+# The verdict must stop invalid post-merge triggers and deadlines before a
+# write. The suite runs these four refusal rows first to expose a bypass early.
 control_expect "update refuses merge with set at merge"
 control_expect "create refuses that row exists with 2026-11-17T08:00:00Z"
 control_expect "update refuses that row exists with 2026-11-17T08:00:00Z"
