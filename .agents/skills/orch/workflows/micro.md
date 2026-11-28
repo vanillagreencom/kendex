@@ -270,7 +270,7 @@ A Copilot finding that only a review body carries takes the body-finding route o
 **Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]` and `[STATE_KEY]` as `[ISSUE_ID]`.
 
 - Bind `[MICRO_ENTRY]` to `true` and `[MICRO_HEAD]` to `[HEAD_SHA]`. merge-pr's § 5 step 1 refuses a prepared head that is not this one.
-- In a lane, merge-pr skips its § 5 steps 3 and 4, and the lane leaves its worktree standing.
+- In a lane, merge-pr skips its § 5 steps 3 and 4. After a confirmed merge, run [merge-pr.md § 5 step 6](merge-pr.md#5-execute-the-merge) on the regular route before going to § 5, including in a hosted lane.
 - For a quick change, keep `[WORKTREE_PATH]` bound to `[WT_PATH]` in merge-pr.md § 4 instead of looking up a managed worktree. In § 5 step 1, take the directive escape before entering [merge-contracts.md § Recovery cycle](../references/merge-contracts.md#recovery-cycle) or [§ Restack cycle](../references/merge-contracts.md#restack-cycle). Keep merge-pr.md § 3.3's live thread read. If it routes to PR-comment triage, take the directive escape before that triage starts. Handle a `dequeued` verdict by the path rules below.
 - For a quick change, skip merge-pr.md § 5 steps 3, 4 and 6. Leave project-required post-merge work to its normal owner and close the directive out in § 5 below.
 
@@ -296,13 +296,17 @@ A `dequeued` verdict routes to [merge-contracts.md § Late-findings triage](../r
 
 ## 5. Return
 
+For a confirmed PR merge on the regular route, use the close-out outcome of [merge-pr.md § 5 step 6](merge-pr.md#5-execute-the-merge). An unfinished close-out takes [merge-pr.md § 7](merge-pr.md#7-return)'s unfinished route.
+
+**Quick change.**
+
 After a quick change's confirmed merge or direct delivery, close out from `[WT_PATH]`. Read the directive's record path with `orch-runtime state path --item [ISSUE_ID]`. Keep a readable copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-[ISSUE_ID].json` before running the item record close-out:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state remove --item [ISSUE_ID] --archive [WT_PATH]/tmp
 ```
 
-If `result.kept` names an archive inside `[WT_PATH]`, keep a copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/` too. Keep the scratch checkout and report a missing record, close-out refusal or failed copy. Once close-out succeeds and the copies stand, remove only the scratch checkout and local directive branch. For a handback, the directive escape disposes of them.
+If `result.kept` names an archive inside `[WT_PATH]`, keep a copy under `[MAIN_REPO_ROOT]/tmp/cycle-state/` too. A missing record, close-out refusal or failed copy leaves this step owed. Keep the scratch checkout and report the failure and the unfinished part of § 5 to resume. Once close-out succeeds and the copies stand, remove only the scratch checkout and local directive branch. For a handback, the directive escape disposes of them.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 control-host refusal is the one return outside this table. It returns its own two lines.
 
@@ -319,6 +323,8 @@ Output: [Lane Output](../references/skill-rules.md#lane-output). The § 1 contro
 | Escaped | no, or the § Escape condition and the handback it names |
 
 </output_format>
+
+After a confirmed merge with successful close-out, a lane follows [§ Lane finish](../references/skill-rules.md#lane-finish) before returning.
 
 ## Escape
 

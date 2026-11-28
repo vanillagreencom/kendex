@@ -49,7 +49,7 @@ This verb answers whether a lane's handoff record ([oversee-events.md § Hand of
 
      - A non-zero exit, or output with no numeric `unresolved_count`, stops and reports, naming the item and the read.
      - A nonzero `unresolved_count` takes `⤵ workflows/review-pr-comments.md [OPEN_PR] § 1-8` with managed context before step 4.
-  4. Continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names.
+  4. If the handoff records a merge and resumes at close-out, merge results or merge return, take [merge-pr.md § Resume Close-out](merge-pr.md#resume-close-out) with the handoff and `[ISSUE_ID]`. Otherwise continue from the first entry of its `remaining` list instead of § 1-5, or, on the start-worktree.md § 1 step 3 route, from the continuation that step names.
 
 ## 1. Route
 
@@ -128,7 +128,7 @@ Exit 75 means a branch or an open pull request already owns the item: inspect it
 
 Run `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context. Ask no question.
 
-An `orch start` run is complete when its merge work is complete and the tracker issue is Done, or is handed to the overseer in Verifying under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge). The issue reaches Done only after every post-merge box has proof. An opened or armed pull request is not complete.
+An `orch start` run is complete when it has followed [start-worktree.md § 5](start-worktree.md#5-finalize) through the delivery's finish steps and the tracker issue is Done or handed to the overseer in Verifying. For a PR merge, [merge-pr.md § 7](merge-pr.md#7-return) owns the close-out outcome. The issue reaches Done only after every post-merge box has proof. An opened or armed pull request is not complete.
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 

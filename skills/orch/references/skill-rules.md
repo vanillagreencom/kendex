@@ -385,8 +385,7 @@ The rest of this section is the `mailbox` channel. On every surface, a lane reac
 
 Mail reaches an idle lane this way:
 
-- A Claude Code lane arms its mailbox monitor as its launch brief's first step says: `lane-mail watch --item [ISSUE_ID]` through its harness's background wake. It re-arms the monitor at each expiry, and runs the `lane-mail inbox` command each announcement prints ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)).
-- A Copilot CLI lane arms `lane-mail watch --once --item [ISSUE_ID]` as a background command, which exits at its first announcement. It re-arms the command after each inbox read.
+- Claude Code and Copilot CLI lanes arm and re-arm through [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor).
 - A Pi lane arms no monitor: the `pi-hooks` mail wake starts its turn when mail lands ([pi-runtime.md § Lane mailbox wake (Pi)](pi-runtime.md#lane-mailbox-wake-pi)).
 - A Codex lane arms no monitor ([codex-runtime.md § Lane mailbox](codex-runtime.md#lane-mailbox)).
 - For every harness, the watch's wake duty delivers one line to a lane it reads idle with unread mail. Mail it cannot deliver takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
@@ -404,6 +403,10 @@ The overseer's side:
 - The overseer answers with `lane-mail send --re [MSGID]`, directs with `lane-mail send --directive` and halts with `lane-mail send --halt`.
 - A `session` lane's directive is `orch-runtime send --item [ISSUE_ID] --file [PATH]`.
 - [oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane) owns the overseer's side.
+
+### Lane finish
+
+After the workflow confirms successful item close-out and sends any final notice, the lane follows [watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor) before its final return. A turn ending to wait for more item work still follows [§ Lane mail](#lane-mail).
 
 ### Question tools
 

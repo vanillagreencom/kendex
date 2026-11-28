@@ -24,7 +24,8 @@ Set `[TIER]` to `standard` unless the caller supplied it.
 3. **Resume from a handoff.** Run [start.md](start.md) § 0 for `[ISSUE_ID]`: its `handoff-standing` read, its stop-and-report rule and its `handoff-resume` stamp.
 
    - `none` → step 4.
-   - A stamped record replaces the rest of this file. Take step 6's existing-state branch and its tier write, then continue from the first entry of the record's `remaining` list.
+   - A stamped record on [start.md § 0](start.md#0-resume-from-a-handoff)'s merge close-out route takes that continuation directly.
+   - Any other stamped record replaces the rest of this file. Take step 6's existing-state branch and its tier write, then continue from the first entry of the record's `remaining` list.
    - A workflow that runs this § 1, such as [small.md](small.md) § 1, names its own continuation.
 
 4. **Refuse what is not one PR's work.** **Linear only**, before any state exists. Apply the [Ancestor gate](../references/skill-rules.md#ancestor-gate) to:
@@ -214,6 +215,8 @@ Then report once that the early open failed, with the line submit-pr or the read
 
 6. Leave branch-provable boxes unticked. Their proof stands in the pull request body's `## Done-when evidence` section before arming.
 
+For this managed submit, return the confirmed merge and its `[PR_NUMBER]` directly to § 5.5 before applying the submit stops. Take this route on arm exit `0` under [publication.md § Arm auto-merge](../references/publication.md#arm-auto-merge), a submit merge check that reads `MERGED`, or a `pr-not-open` refusal whose PR state is `MERGED`. Keep the submit stops for other results.
+
 **Run Workflow**: `⤵ workflows/submit-pr.md § 1-7 → § 5` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 
 ## 5. Finalize
@@ -299,7 +302,11 @@ End every agent still active in `child_sessions`, then close their records:
 
 ### 5.5 Merge
 
-**Skip if** no pull request was created. When CI is not passing, or submit-pr's § 6.1 reported `MERGE_READY = false`, return the stop § 5.1 recorded and stop.
+On the confirmed merge returned directly from § 4, run § 5.4 to retire the agents. Then enter [merge-pr.md](merge-pr.md) with `[PR_NUMBER]` by [publication.md § Arm auto-merge](../references/publication.md#arm-auto-merge)'s already-merged route and end through [merge-pr.md § 7](merge-pr.md#7-return).
+
+For other returns from § 4, skip the merge if no pull request was created. When CI is not passing, or submit-pr's § 6.1 reported `MERGE_READY = false`, return the stop § 5.1 recorded and stop.
+
+On either merge route below, run [merge-pr.md § 5 step 6](merge-pr.md#5-execute-the-merge) after a confirmed merge, including from a hosted lane. Follow [merge-pr.md § 7](merge-pr.md#7-return) to return.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_MERGE_AUTONOMY auto

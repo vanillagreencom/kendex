@@ -599,11 +599,13 @@ Use `-C` and absolute paths, never `cd &&` chains.
 
 6. **Verify the project and close the item out.**
 
+   If verification, a required record read or copy, or close-out fails, keep the worktree and present the diagnostic in § 6. Then take § 7's unfinished close-out route.
+
    Choose one close-out route and run it once. A hosted lane is unconfined and takes **The close-out elsewhere**, which copies the record before the archived close-out. For other runs, take **The close-out in a confined lane** if the environment has `AGENT_RUNTIME_CONFINED=1`. Otherwise take **The close-out elsewhere**.
 
    - Run the build, install and verification work the project's own instructions require after a merge. This workflow defines no generic command and infers none.
    - The route the project's own instructions name records its install record (`.kendex-lock.json`). The lane never records it after a merge or a restack.
-   - On failure, report the command and its diagnostic in § 6, and keep the worktree.
+   - Report the command and its diagnostic on a verification failure.
 
    **The close-out in a confined lane.** Skip the copy and the archived close-out below. Where the verification passed, run the close-out with no `--archive` pair:
 
@@ -611,7 +613,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
    .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY]
    ```
 
-   - It stamps the item's record and answers `state-remove: left cause=confined owner=overseer`.
+   - A successful call stamps the item's record and answers `state-remove: left cause=confined owner=overseer`. The stamp completes close-out.
    - The overseer's close reads the stamp as this step's end. It ends the lane on its merge, and keeps the item's files with the open item ([schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)).
    - § 6's `tmp/ close-out` line reads `left to the overseer's close`.
    - A refusal keeps the worktree, and its key goes on that line.
@@ -621,7 +623,7 @@ Use `-C` and absolute paths, never `cd &&` chains.
    - Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`.
    - Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed.
    - Copy the record once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is.
-   - If an earlier close-out removed the record and the saved copy reads as a JSON object, keep the saved copy and go to **The worktree**.
+   - If an earlier close-out removed the record and the saved copy reads as a JSON object, keep the saved copy. The close-out is complete. Go to **The worktree**.
    - Where neither reads as a JSON object, report the failure and keep the worktree.
 
    Close the item out before any worktree removal, whatever the item's tracker state: Done, Verifying, or In Review with a box still open.
@@ -635,10 +637,12 @@ Use `-C` and absolute paths, never `cd &&` chains.
    .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY] --archive [WORKTREE_PATH]/tmp
    ```
 
-   - [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out) states what it takes, archives and keeps, and the reply's `result.kept`. That value goes on § 6's `tmp/ close-out` line.
+   - A successful call completes close-out. Use its `result.kept` on § 6's `tmp/ close-out` line. [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out) owns the archive and reply.
    - A refusal keeps the worktree, since the worktree's records may be in no archive. The refusal's key goes on that line, and the worktree line reads `standing — close-out refused`.
 
    **The worktree.**
+
+   Reach this step on a successful close-out.
 
    - A lane leaves its worktree: the overseer's close stops the session, then releases the worktree (step 4). § 6's worktree line reads `standing — left to the overseer's close`.
    - A run outside a lane removes the worktree once the project verification passed and the close-out is done.
@@ -657,6 +661,14 @@ Use `-C` and absolute paths, never `cd &&` chains.
    ```
 
    `No such file or directory` is the removal. A listed path is a worktree still standing. Write § 6 after this step, never before.
+
+### Resume Close-out
+
+For a start handoff at close-out, results or return, select the merged pull request for the handoff's `branch` from its `merged` entries. Read each recorded PR number through the github skill's `pr-view [N] --json number,state,headRefName,title` in the current repository. Bind `[PR_NUMBER]`, `[PR_BRANCH]` and `[TITLE]` from the one reply with state `MERGED` and the handoff's branch. If a read fails or the match is missing or ambiguous, report the cause and take § 7's unfinished close-out route.
+
+Bind `[ISSUE]` and `[STATE_KEY]` from the caller's `[ISSUE_ID]`. Use § 1's common-root read for `[MAIN_REPO_ROOT]` and § 4's worktree lookup for `[WORKTREE_PATH]`. Use § 3's state-path read for `[ITEM_DIR]` when presenting results. A failed context read takes § 7's unfinished close-out route.
+
+When resuming at results or return, establish close-out success from the confined stamp accepted by [lane-reach.md § How a running lane is judged](../references/lane-reach.md#how-a-running-lane-is-judged) or step 6's saved-record recovery. Run any remaining work of step 6 before presenting results. Use the handoff's existing facts for completed steps and report unread results as unread. Present § 6 only if it is still owed or the resumed close-out changes its result. Then run § 7 with the close-out outcome.
 
 ## 6. Present Results
 
@@ -710,6 +722,8 @@ Legend: ✅ merged  ⏭️ skipped (user)  ❌ skipped (error)
 
 ## 7. Return
 
-- The merge is complete once § 5 steps 1-6 have run.
+- A confirmed merge takes § 5 through step 6 with the skips its route names. A quick change takes [micro.md § 5](micro.md#5-return) for close-out.
+- **Unfinished close-out.** Report the cause and the step left to resume. In a lane, follow [§ Lane mail](../references/skill-rules.md#lane-mail) to end the turn with close-out still owed.
+- When step 6 has confirmed close-out and this is the lane's final return, follow [§ Lane finish](../references/skill-rules.md#lane-finish).
 - A run outside a lane whose issue worktree still stands, with no cause on § 6's worktree line, has not finished.
 - A run that handed back at a verdict other than a merge reports that verdict and ends. It does not resume.
