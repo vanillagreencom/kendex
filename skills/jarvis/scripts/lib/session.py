@@ -879,20 +879,30 @@ class Session:
         for line in home.settings_lines(report):
             print(line, file=sys.stderr)
 
+    def auth_recovery_status(self, auth_wall):
+        """The status of the controller observed at the auth wall."""
+        status = self.status()
+        current = auth_controller(status)
+        if current is None:
+            raise Refusal("record-unreadable", "auth-controller-unreadable")
+        if current != auth_wall:
+            raise Refusal("record-unreadable", "auth-controller-changed")
+        return status
+
     def succeed(self, account_walled=False, usage_wall=None, reset_passed=False, resume_cursor=None, exited=False,
                 provider_stop=None, episode=None, *, auth_wall=None):
         with self.locked():
             record = self.read()
             if not record or record.get("app_off"):
                 raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
-            status = self.status()
-            if auth_wall is not None:
-                current = auth_controller(status)
-                if current is None:
-                    raise Refusal("record-unreadable", "auth-controller-unreadable")
-                if current != auth_wall:
-                    raise Refusal("record-unreadable", "auth-controller-changed")
+            status = self.status() if auth_wall is None else self.auth_recovery_status(auth_wall)
             answer = self.answer(record, status)
+            if (auth_wall is not None and status["live"]
+                    and (answer["state"], answer["reason"]) == ("stopped", "ended")):
+                # Tmux may observe the exit after the runtime reads a live
+                # predecessor. Confirm the same instance before moving it.
+                status = self.auth_recovery_status(auth_wall)
+                answer = self.answer(record, status)
             if answer["state"] == "handing-over":
                 return answer, 0
             auth_ended = auth_wall is not None and (answer["state"], answer["reason"]) == ("stopped", "ended")

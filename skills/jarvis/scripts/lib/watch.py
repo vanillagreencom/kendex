@@ -1528,17 +1528,8 @@ class Watch:
         if not answer.get("harness"):
             # Every recorded controller names its harness: this read names none.
             return None
-        if auth_exit:
-            # The wall owns this recovery and notice. Only a success still
-            # held from the prior restart needs its failure written below.
-            if memory is None or not memory.get("ran"):
-                return None
-            if not any(entry["id"] == memory.get("notice_id") for entry in self.state.get("held_notices", [])):
-                del self.state["exited"]
-                self.save()
-                return None
         if memory is None:
-            if reading not in DOWN_READINGS:
+            if auth_exit or reading not in DOWN_READINGS:
                 return None
             # A stored Start failure is one more way down, recovered by the same route.
             stored = None if reading == ("stopped", "ended") else (reading[1] + " (" + (answer.get("detail") or "")[:200] + ")")
@@ -1550,6 +1541,9 @@ class Watch:
         if memory.get("ran") and reading in DOWN_READINGS:
             # The owner's one notice names this outcome, never a success
             # still owed from before it.
+            if auth_exit and memory["noticed"] and not any(
+                    entry["id"] == memory.get("notice_id") for entry in self.state.get("held_notices", [])):
+                return None
             memory.update(ran=False, noticed=False, outcome=(
                 "It started again on " + (answer.get("account") or "its default account")
                 + ", then exited again (read at " + wall_time(now) + "), so it is not started again."))
@@ -1563,6 +1557,8 @@ class Watch:
             return None
         if memory["outcome"] is not None:
             self.tell_exited(memory, now)
+            return None
+        if auth_exit:
             return None
         return self.accept_restart(answer, now)
 
