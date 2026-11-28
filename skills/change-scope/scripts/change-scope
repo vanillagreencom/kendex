@@ -651,7 +651,8 @@ path_class_matches() { # PHASE CLASS
 # the standard paths and the legacy overrides: a caller's environment is
 # its own checkout's settings, which github.sh's router exports from the
 # working tree, so those are dropped and the base's alone decide.
-unset HARNESS_CI_STANDARD_PATHS HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_TRIVIAL_MAX_LINES
+unset HARNESS_CI_STANDARD_PATHS
+unset HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_TRIVIAL_MAX_LINES
 
 # The changed paths harness-only read, ahead of every refusal below.
 [ ! -s "$paths_file" ] || changed="$(cat -- "$paths_file")"

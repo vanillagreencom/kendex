@@ -111,10 +111,14 @@ for mutation in 'del(.path)' '.template = null' '.templateHash = "bad"' '.extra 
 done
 git -C "$repo" checkout -q -B valid "$valid_head"
 original="$HARNESS_ONLY"
-cp -R "$(dirname "$original")/lib" "$SANDBOX/lib"
-[ "$(grep -Fc 'else .path end)' "$original")" -eq 1 ]
-sed 's/else .path end)/else .template end)/' "$original" >"$SANDBOX/harness-only"
-cmp -s "$original" "$SANDBOX/harness-only" && { echo "control changed no bytes" >&2; exit 1; }
+lib_dir="$(dirname "$original")/lib"
+validator="$lib_dir/change-scope.sh"
+cp -R "$lib_dir" "$SANDBOX/lib"
+[ "$(grep -Fc 'else .path end)' "$validator")" -eq 1 ]
+sed 's/else .path end)/else .template end)/' "$validator" >"$SANDBOX/changed-validator"
+cmp -s "$validator" "$SANDBOX/changed-validator" && { echo "control changed no bytes" >&2; exit 1; }
+mv -- "$SANDBOX/changed-validator" "$SANDBOX/lib/change-scope.sh"
+cp -- "$original" "$SANDBOX/harness-only"
 chmod +x "$SANDBOX/harness-only"
 HARNESS_ONLY="$SANDBOX/harness-only"
 assert_verdict 'control: template membership loses the adopted workflow' false \
