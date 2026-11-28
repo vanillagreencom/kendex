@@ -2362,6 +2362,7 @@ fn close_one(
         ended: None,
         identity: None,
         cycle,
+        delivery: None,
         disposed: None,
     });
     // The close's bounds are judged before its intent persists, as the

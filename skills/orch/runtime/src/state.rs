@@ -1109,8 +1109,10 @@ pub struct LaneMembers {
     pub close: Option<CloseGround>,
     /// The merge cycle a close writes on its lane when it confirms.
     pub cycle: Option<CycleRow>,
-    /// The landing a close gave up, written as its fleet-log row when it
-    /// confirms.
+    /// The close's requested PR, independent of the cycle recorder.
+    pub delivery: Option<crate::ops::Delivery>,
+    /// Which landing parts a close is authorized to give up. Confirmation
+    /// logs the parts it actually gave up.
     pub disposed: Option<LandingDisposal>,
     /// The lane status an outcome read when the lane had moved under its
     /// intent.
@@ -1128,6 +1130,7 @@ impl LaneMembers {
             exclude_account: field(path, row, "exclude_account")?,
             close: field(path, row, "close")?,
             cycle: field(path, row, "cycle")?,
+            delivery: field(path, row, "delivery")?,
             disposed: field(path, row, "disposed")?,
             observed_status: field(path, row, "observed_status")?,
         })
@@ -1143,6 +1146,7 @@ impl LaneMembers {
         put(row, "exclude_account", self.exclude_account.as_ref())?;
         put(row, "close", self.close.as_ref())?;
         put(row, "cycle", self.cycle.as_ref())?;
+        put(row, "delivery", self.delivery.as_ref())?;
         put(row, "disposed", self.disposed.as_ref())?;
         put(row, "observed_status", self.observed_status.as_ref())
     }

@@ -265,6 +265,7 @@ pub(super) fn close(item: &str) -> Request {
         ended: None,
         identity: None,
         cycle: None,
+        delivery: None,
         disposed: None,
     })
 }

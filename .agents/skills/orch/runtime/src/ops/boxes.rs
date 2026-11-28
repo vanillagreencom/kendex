@@ -49,6 +49,7 @@ impl Cause {
 pub struct Merged<'a> {
     pub repo: &'a str,
     pub pr: u64,
+    pub known_merged: bool,
 }
 
 /// The item read the completion judges: its description and state.
@@ -236,6 +237,16 @@ fn settle(
     cause: Cause,
 ) -> Option<Outcome> {
     let unsettled = |note: &str| Some(Outcome::Unsettled(note.to_owned()));
+    let path = format!("repos/{}/pulls/{}", merged.repo, merged.pr);
+    let read_pull = || crate::watch::github::handle(gh).object::<Pull>(TAG, &path);
+    let pending = if merged.known_merged {
+        None
+    } else {
+        match read_pull() {
+            Ok(Some(pull)) if matches!(pull.merged_at, Nullable::Present(_)) => Some(pull),
+            Ok(Some(_)) | Ok(None) | Err(_) => return None,
+        }
+    };
     let variables = serde_json::json!({ "id": item }).to_string();
     let read = [
         "graphql",
@@ -251,6 +262,9 @@ fn settle(
     let Some(Got { issue }) = got else {
         return unsettled("boxes-unticked cause=item-unread");
     };
+    if crate::watch::tracker::dropped(&issue.state.kind) {
+        return None;
+    }
     let description = issue.description.unwrap_or_default();
     let open = match crate::watch::verifying::open_branch_boxes(settings, &description) {
         Ok(open) => open,
@@ -260,8 +274,7 @@ fn settle(
     if open.is_empty() && completed {
         return None;
     }
-    let path = format!("repos/{}/pulls/{}", merged.repo, merged.pr);
-    let pull = match crate::watch::github::handle(gh).object::<Pull>(TAG, &path) {
+    let pull = match pending.map_or_else(read_pull, |pull| Ok(Some(pull))) {
         Ok(Some(pull)) => pull,
         Ok(None) => return unsettled("boxes-unticked cause=pr-missing"),
         Err(_) => return unsettled("boxes-unticked cause=pr-unread"),
