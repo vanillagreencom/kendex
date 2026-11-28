@@ -442,13 +442,10 @@ while IFS='|' read -r variant old new; do
   git -C "$repo" checkout -qb "fixture-$variant" "$literal_job_base"
   edit_workflow "$old" "$new"
   case "$variant" in
-    *-computed|literal-job-path|literal-runner-os|literal-runner-arch|literal-runner-shell|literal-runner-label)
+    *-computed|literal-job-path|literal-runner-os|literal-runner-arch|literal-runner-shell|literal-runner-label|literal-runner-fixed-after-pnpm)
       printf '%s\n' 'web tools/ci.config # reason: the web check reads its protected setting' \
         >"$repo/.github/ci-lanes.conf" ;;
-    literal-runner-fixed-after-pnpm)
-      printf '%s\n' 'web tools/ci.config # reason: the web check reads its protected setting' \
-        >"$repo/.github/ci-lanes.conf" ;;
-    literal-runner-script|literal-runner-bash-env|literal-runner-late-script)
+    literal-runner-script-args)
       printf '%s\n' '#!/usr/bin/env bash' 'echo "Checking the runner config"' \
         'cat "./tools/${RUNNER_ARCH}.config"' >"$repo/tools/check-runner.sh"
       printf '%s\n' 'web tools/X64.config # reason: the check uses the X64 runner config' \
@@ -466,9 +463,7 @@ literal-runner-fallback-no-matrix|    runs-on: ubuntu-latest\n    steps:\n      
 literal-runner-os|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - if: runner.os == 'Linux'\n        run: cat ./tools/input.sh\n
 literal-runner-arch|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - env:\n          ARCH: ${{ runner['arch'] }}\n        run: cat ./tools/input.sh\n
 literal-runner-shell|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat "./tools/${RUNNER_OS}.config"\n
-literal-runner-script|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - run: bash ./tools/check-runner.sh\n
-literal-runner-bash-env|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - env:\n          BASH_ENV: ./tools/check-runner.sh\n        run: cat ./tools/input.sh\n
-literal-runner-late-script|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - run: pnpm install --frozen-lockfile\n      - run: bash ./tools/check-runner.sh\n
+literal-runner-script-args|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - run: bash ./tools/check-runner.sh --check\n
 literal-runner-fixed-after-pnpm|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - run: pnpm install --frozen-lockfile\n      - run: bash ./tools/check-fixed.sh\n
 literal-runner-label|    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n      - run: cat ./tools/input.sh\n|    runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}\n    steps:\n      - uses: actions/checkout@v7\n      - if: ${{ vars.CI_RUNNER_2V == 'ubuntu-latest' }}\n        run: cat ./tools/input.sh\n
 literal-runner-computed|    runs-on: ubuntu-latest\n|    runs-on: ${{ vars.CI_RUNNER_2V }}\n
@@ -1200,15 +1195,6 @@ write_dispatch_workflow classify >"$repo/.github/workflows/ci.yml"
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'a runner dispatches named lanes through a derived workflow gate'
 dispatch_base="$(git -C "$repo" rev-parse HEAD)"
-git -C "$repo" checkout -qb fixture-literal-runner-dispatch fixture-literal-runner-script
-mkdir -p "$repo/bin"
-git -C "$repo" show "$dispatch_base:bin/check" >"$repo/bin/check"
-chmod +x "$repo/bin/check"
-edit_file "$repo/bin/check" '  bash ./bin/check-other.sh\n' \
-  '  echo "Checking the runner config"\n  cat "./tools/${RUNNER_ARCH}.config"\n'
-edit_workflow 'run: bash ./tools/check-runner.sh' 'run: bin/check --lane check-other'
-git -C "$repo" add -A
-git -C "$repo" commit -qm 'a named lane function reads the runner config'
 git -C "$repo" checkout -qb fixture-unmapped "$dispatch_base"
 write_dispatch_workflow absent >"$repo/.github/workflows/ci.yml"
 git -C "$repo" commit -qam 'the workflow gate has no output publisher'
@@ -1822,8 +1808,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     literal-matrix-computed) refused_jobs='job=web cause=opaque-matrix' ;;
     literal-runner-os|literal-runner-arch|literal-runner-shell|literal-runner-label|literal-runner-computed)
       refused_jobs='job=web cause=opaque-runner' ;;
-    literal-runner-script|literal-runner-bash-env|literal-runner-dispatch|literal-runner-late-script)
-      refused_jobs='job=web cause=opaque-runner' ;;
+    literal-runner-script-args) refused_jobs='job=web cause=opaque-shell-command' ;;
     literal-runner-fixed-after-pnpm) refused_jobs='job=web cause=pnpm-config-unread' ;;
     literal-step-if-computed) refused_jobs='job=web cause=opaque-step-condition' ;;
     literal-step-env-computed) refused_jobs='job=web cause=opaque-step-env' ;;
@@ -2055,11 +2040,8 @@ literal-runner-fallback-no-matrix|tools/unrelated.txt|||false|
 literal-runner-os|tools/unrelated.txt|||true|
 literal-runner-arch|tools/unrelated.txt|||true|
 literal-runner-shell|tools/unrelated.txt|||true|
-literal-runner-script|tools/ARM64.config|||true|
-literal-runner-bash-env|tools/ARM64.config|||true|
-literal-runner-dispatch|tools/ARM64.config|||true|
-literal-runner-late-script|tools/ARM64.config|||true|
-literal-runner-fixed-after-pnpm|tools/unrelated.txt|||false|
+literal-runner-script-args|tools/ARM64.config|||true|
+literal-runner-fixed-after-pnpm|tools/unrelated.txt|||true|
 literal-runner-label|tools/unrelated.txt|||true|
 literal-runner-computed|tools/unrelated.txt|||true|
 literal-step|tools/unrelated.txt|||false|

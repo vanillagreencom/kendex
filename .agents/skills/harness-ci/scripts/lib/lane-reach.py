@@ -28,11 +28,6 @@ class ComputedCommand(ShapeUnreadable):
     pass
 
 
-class OpaqueRunner(Unreadable):
-    def __init__(self):
-        super().__init__("opaque-runner")
-
-
 class NamedUnreadable(Unreadable):
     # The cause names the input it failed on, so the job's dispatches add nothing.
     def __init__(self, cause, shape):
@@ -86,35 +81,12 @@ def words(line):
     return tokens
 
 
-# GitHub exports runner properties to shell steps and their child processes.
-# https://docs.github.com/en/actions/reference/workflows-and-actions/variables
-RUNNER_PROPERTY = re.compile(r"\bRUNNER_[A-Z0-9_]+\b")
-
-
-def check_runner_properties(source, variable_runner):
-    if variable_runner and RUNNER_PROPERTY.search(source):
-        raise OpaqueRunner()
-
-
 def reject_vercel(args):
     require(args[:1] != ["vercel"], "opaque-vercel-command")
 
 
 def lane_invocation(args):
     return len(args) == 3 and args[1] == "--lane" and "/" in args[0]
-
-
-def shell_invocation(args):
-    if not args:
-        return None
-    name, *operands = args
-    if name in {"source", ".", "bash"} and len(operands) == 1:
-        return "source"
-    if lane_invocation(args):
-        return "lane"
-    if name.startswith("./") and not operands:
-        return "executable"
-    return None
 
 
 ACTIONS = r"vanillagreencom/kendex/\.github/actions/change-class@[^\s]+"
@@ -520,22 +492,18 @@ class Evidence:
             for parent in Path(path).parents for name in SKILL_MARKERS
         )
 
-    def shell_reads(self, script, directory, reads, visited, variable_runner):
+    def shell_reads(self, script, directory, reads, visited):
         invocation = (script, directory)
         if invocation in visited:
             return
         visited.add(invocation)
         reads.add(script)
-        source = self.blob(script)
-        # Read properties from the reached text before a shape refusal on an
-        # earlier line can let an incomplete claim authorize a skip.
-        check_runner_properties(source, variable_runner)
-        for line in source.splitlines():
+        for line in self.blob(script).splitlines():
             args = words(line)
             if args:
-                self.shell_command(args, directory, reads, visited, variable_runner)
+                self.shell_command(args, directory, reads, visited)
 
-    def lane_dispatch(self, args, directory, reads, visited, variable_runner):
+    def lane_dispatch(self, args, directory, reads, visited):
         name, _, lane = args
         try:
             script, passed = self.resolve(directory, name)
@@ -544,41 +512,29 @@ class Evidence:
             if invocation in visited:
                 return
             visited.add(invocation)
-            source = self.blob(script)
-            lines = source.split("\n")
-            require_shape(self.files[script] == "100755" and lines[:1] in BASH_SHEBANGS,
+            body = self.blob(script).split("\n")
+            require_shape(self.files[script] == "100755" and body[:1] in BASH_SHEBANGS,
                           "unsupported-runner-interpreter")
-            lines = [line.strip(" \t") for line in lines[1:] if line.strip(" \t")]
+            lines = [line.strip(" \t") for line in body[1:] if line.strip(" \t")]
             if lines[:1] in STRICT_MODE:
                 lines = lines[1:]
-            try:
-                members, functions, fixtures = lane_table(lines, lane)
-            except ShapeUnreadable:
-                # Without the function boundaries, the reader cannot rule
-                # out a runner property in the reached dispatcher.
-                check_runner_properties(source, variable_runner)
-                raise
-            steps = ["step_" + member.replace("-", "_") for member in members]
-            if variable_runner:
-                for step in steps:
-                    check_runner_properties("\n".join(functions.get(step, ())), variable_runner)
-            for step in steps:
+            members, functions, fixtures = lane_table(lines, lane)
+            for member in members:
+                step = "step_" + member.replace("-", "_")
                 require_shape(step in functions, f"runner-step-unresolved step={step}")
                 body = [args for line in functions[step] if (args := words(line))]
                 require_shape(body and all(args[0] not in SHELL_KEYWORDS for args in body),
                               f"unsupported-runner-body step={step}")
                 for command in body:
-                    self.shell_command(command, directory, reads, visited, variable_runner)
+                    self.shell_command(command, directory, reads, visited)
             if fixtures:
-                self.lane_fixtures(lane, directory, reads, visited, variable_runner)
-        except OpaqueRunner:
-            raise
+                self.lane_fixtures(lane, directory, reads, visited)
         except UNAVAILABLE as error:
             raise NamedUnreadable(
                 f"unresolved-lane-dispatch command={shlex.join(args)} reason={error}", is_shape(error),
             ) from error
 
-    def lane_fixtures(self, lane, directory, reads, visited, variable_runner):
+    def lane_fixtures(self, lane, directory, reads, visited):
         folder, passed = self.checkout_path(directory, f"bin/fixtures/{lane}")
         reads.update(passed)
         # The runner lists the directory when the lane runs, so a path added,
@@ -594,24 +550,23 @@ class Evidence:
             # a name that holds a newline as a path of its own.
             require_shape("\n" not in path, f"runner-fixture-name-newline folder={folder}")
             require_shape(not path.endswith(".py"), f"runner-fixture-opaque fixture={path}")
-            self.shell_reads(path, directory, reads, visited, variable_runner)
+            self.shell_reads(path, directory, reads, visited)
 
-    def shell_command(self, args, directory, reads, visited, variable_runner):
+    def shell_command(self, args, directory, reads, visited):
         name, *operands = args
         reject_vercel(args)
-        invocation = shell_invocation(args)
-        if invocation == "source":
+        if name in {"source", ".", "bash"} and len(operands) == 1:
             require_shape(name == "bash" or "/" in operands[0], "shell-source-uses-path")
             script, passed = self.resolve(directory, operands[0])
             reads.update(passed)
-            self.shell_reads(script, directory, reads, visited, variable_runner)
-        elif invocation == "lane":
+            self.shell_reads(script, directory, reads, visited)
+        elif lane_invocation(args):
             require_shape(re.fullmatch(LANE_ID, operands[1]), "invalid-runner-lane")
-            self.lane_dispatch(args, directory, reads, visited, variable_runner)
-        elif invocation == "executable":
+            self.lane_dispatch(args, directory, reads, visited)
+        elif name.startswith("./") and not operands:
             script, passed = self.resolve(directory, name)
             reads.update({script} | passed)
-            self.loaded_reads(script, directory, reads, visited, variable_runner)
+            self.loaded_reads(script, directory, reads, visited)
         elif name == "cat" and operands and all(literal(path) for path in operands):
             for path in operands:
                 path, passed = self.resolve(directory, path)
@@ -627,13 +582,13 @@ class Evidence:
         else:
             require_shape(name in {":", "true", "false"} and not operands, "opaque-shell-command")
 
-    def loaded_reads(self, script, directory, reads, visited, variable_runner):
+    def loaded_reads(self, script, directory, reads, visited):
         # A file a tool executes or loads can read any other file. Only a bash
         # or sh script has a reader that follows those reads.
         require_shape(self.files.get(script) == "100755" and self.blob(script).splitlines()[:1]
                       in [*BASH_SHEBANGS, ["#!/bin/sh"]],
                       "unsupported-script-interpreter")
-        self.shell_reads(script, directory, reads, visited, variable_runner)
+        self.shell_reads(script, directory, reads, visited)
 
     def resolve(self, directory, path):
         require_shape(literal(path) and not path.startswith("-"), "computed-path")
@@ -1278,7 +1233,7 @@ def env_words(env, scope):
     return found + ([(scope, "BASH_ENV", script, False)] if script else [])
 
 
-def input_reads(evidence, inputs, directory, reads, visited, variable_runner):
+def input_reads(evidence, inputs, directory, reads, visited):
     for scope, key, word, preload in inputs:
         try:
             path, passed = evidence.checkout_path(directory, word)
@@ -1286,13 +1241,11 @@ def input_reads(evidence, inputs, directory, reads, visited, variable_runner):
             reads.update(name for name in evidence.changed if under(name, path))
             if preload:
                 require(path in evidence.files, "node-preload-unresolved")
-                evidence.loaded_reads(path, directory, reads, visited, variable_runner)
+                evidence.loaded_reads(path, directory, reads, visited)
             elif path in evidence.files and key == "BASH_ENV":
-                evidence.shell_reads(path, directory, reads, visited, variable_runner)
+                evidence.shell_reads(path, directory, reads, visited)
             elif path in evidence.files and (evidence.files[path] == "100755" or MODULE.search(path)):
-                evidence.loaded_reads(path, directory, reads, visited, variable_runner)
-        except OpaqueRunner:
-            raise
+                evidence.loaded_reads(path, directory, reads, visited)
         except UNAVAILABLE as error:
             named = os.path.normpath(Path(directory) / word)
             cause = "opaque-matrix" if scope == "matrix" else f"opaque-{scope}-env"
@@ -1332,14 +1285,27 @@ def reads_runner_inputs(job, variable):
         if isinstance(condition, str) and reads_runner(condition):
             return True
         run = step.get("run", "")
-        if isinstance(run, str) and RUNNER_PROPERTY.search(run):
+        # GitHub exports runner properties to shell steps as RUNNER_*.
+        # https://docs.github.com/en/actions/reference/workflows-and-actions/variables
+        if isinstance(run, str) and re.search(r"\bRUNNER_[A-Z0-9_]+\b", run):
             return True
         if interpolated({key: value for key, value in step.items() if key not in {"if", "name", "id"}}):
             return True
     return interpolated(job.get("env", {}))
 
 
-def matrix_words(job):
+def runner_fallback(job):
+    runner = job.get("runs-on")
+    if isinstance(runner, str):
+        match = re.fullmatch(
+            r"\$\{\{\s*vars\.([A-Za-z_][A-Za-z0-9_]*)\s*\|\|\s*'([^']+)'\s*\}\}", runner,
+        )
+        if match and literal(match[2]):
+            return match[1]
+    return None
+
+
+def matrix_words(job, fallback_variable):
     strategy = job.get("strategy", {})
     require(isinstance(strategy, dict) and set(strategy) <= {"matrix", "fail-fast", "max-parallel"}
             and strategy.get("fail-fast", "true") in ("true", "false")
@@ -1359,11 +1325,7 @@ def matrix_words(job):
     require(all(isinstance(value, str) and literal(value) for axis in values.values() for value in axis),
             "opaque-matrix")
     runners = job.get("runs-on", "")
-    fallback = None
     if isinstance(runners, str):
-        fallback = re.fullmatch(
-            r"\$\{\{\s*vars\.([A-Za-z_][A-Za-z0-9_]*)\s*\|\|\s*'([^']+)'\s*\}\}", runners,
-        )
         runners = [runners]
     require(isinstance(runners, list), "opaque-runner")
     for runner in runners:
@@ -1372,13 +1334,12 @@ def matrix_words(job):
             continue
         # The template's fallback only proves the expression's shape. A
         # configured value can choose a runner with different properties.
-        if fallback and literal(fallback[2]):
-            require(not reads_runner_inputs(job, fallback[1]), "opaque-runner")
+        if fallback_variable is not None:
+            require(not reads_runner_inputs(job, fallback_variable), "opaque-runner")
             continue
         reference = re.fullmatch(r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)", expression(runner))
         require(reference and values.get(reference[1]), "opaque-runner")
-    words = [("matrix", f"matrix.{key}", value, False) for key, axis in values.items() for value in axis]
-    return words, fallback is not None
+    return [("matrix", f"matrix.{key}", value, False) for key, axis in values.items() for value in axis]
 
 
 def declared_lanes(work):
@@ -1407,17 +1368,16 @@ def claimed_paths(work):
     return claimed
 
 
-def job_reads(evidence, job, workflow_words, ordinary, readers):
+def job_reads(evidence, job, workflow_words, ordinary, readers, fallback_variable):
     """Fill ordinary with the job's shell reads and readers with one read set
     per graph reader, so a shape refusal keeps what was proved before it.
     Return each graph reader's covered paths."""
     covered = []
-    matrix, variable_runner = matrix_words(job)
+    matrix = matrix_words(job, fallback_variable)
     job_words = env_words(job.get("env", {}), "job")
     inherited = workflow_words + job_words
     default = job.get("defaults", {}).get("run", {})
     step_inputs = []
-    checked_shell = {}
     for step in job["steps"]:
         condition = step.get("if", "true")
         require(isinstance(condition, str) and LITERAL_CONDITION.fullmatch(expression(condition.strip())),
@@ -1438,7 +1398,7 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
                     raise Unreadable(str(error)) from error
                 directory_error = error
         if directory_error is None:
-            input_reads(evidence, inputs, directory, step_reads, step_visited, variable_runner)
+            input_reads(evidence, inputs, directory, step_reads, step_visited)
         # Keep known reads at their original step, but check for unreadable
         # code inputs before any earlier refusal can let a claim stand in.
         step_inputs.append((step_words, directory, step_reads, step_visited, directory_error))
@@ -1448,22 +1408,6 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
                 args = shell_tokens(line)
             except ComputedCommand:
                 continue
-            if (variable_runner and not uses_action and shell_invocation(args)
-                    and all(literal(word) or word == ":" for word in args)):
-                if directory_error is not None:
-                    raise OpaqueRunner() from directory_error
-                if step.get("shell", default.get("shell", "bash")) != "bash":
-                    raise OpaqueRunner()
-                invocation = directory, tuple(args)
-                if invocation not in checked_shell:
-                    reads = set()
-                    try:
-                        evidence.shell_command(args, directory, reads, set(), variable_runner)
-                    except Unreadable as error:
-                        if not is_shape(error):
-                            raise
-                        raise OpaqueRunner() from error
-                    checked_shell[invocation] = reads
             if args[:1] == ["vercel"] and all(literal(word) or word == ":" for word in args):
                 reject_vercel(args)
             if len(args) > 1 and args[0] == "npm":
@@ -1480,8 +1424,7 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
     opaque_action = None
     npm_shape = None
     require_shape(set(default) <= {"shell", "working-directory"}, "unsupported-job-default")
-    for step, inputs in zip(job["steps"], step_inputs):
-        step_words, directory, step_reads, step_visited, directory_error = inputs
+    for step, (step_words, directory, step_reads, step_visited, directory_error) in zip(job["steps"], step_inputs):
         require_shape(set(step) <= {"id", "name", "uses", "run", "working-directory",
                                    "shell", "with", "timeout-minutes", "if", "env"}, "opaque-step")
         if "uses" in step:
@@ -1529,10 +1472,8 @@ def job_reads(evidence, job, workflow_words, ordinary, readers):
                         raise
                     # A later install can expose unproved lock inputs.
                     npm_shape = npm_shape or error
-            elif variable_runner and shell_invocation(args):
-                ordinary.update(checked_shell[directory, tuple(args)])
             else:
-                evidence.shell_command(args, directory, ordinary, visited, variable_runner)
+                evidence.shell_command(args, directory, ordinary, visited)
     if npm_shape:
         raise npm_shape
     require_shape(opaque_action is None, f"opaque-action action={opaque_action}")
@@ -1765,8 +1706,10 @@ def derived(evidence, claimed, settings, declared, nightly, render_refusal):
 
     def job_reach(name, lane):
         ordinary, readers = set(), []
+        job = jobs[name]
+        fallback_variable = runner_fallback(job)
         try:
-            covered = job_reads(evidence, jobs[name], workflow_words, ordinary, readers)
+            covered = job_reads(evidence, job, workflow_words, ordinary, readers, fallback_variable)
             unresolved = set().union(*(evidence.changed - paths for paths in covered))
         except UNAVAILABLE as error:
             cause = str(error).splitlines()
@@ -1774,7 +1717,9 @@ def derived(evidence, claimed, settings, declared, nightly, render_refusal):
             if not isinstance(error, NamedUnreadable):
                 diagnostic += "".join(f" command={command}" for command in literal_job_dispatches(jobs[name]))
             print(diagnostic, file=sys.stderr)
-            if not is_shape(error):
+            # A repository variable can select another runner. An incomplete
+            # read cannot rule out inputs from that runner.
+            if fallback_variable is not None or not is_shape(error):
                 return set(), evidence.changed
             # The lane's reasoned claims name what the reader misses in this
             # shape, and the reads proved before the refusal still reach the
