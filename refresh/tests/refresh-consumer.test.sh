@@ -397,6 +397,9 @@ case "$1" in
       done <.fixture-render-removes
     fi
     if [ -f .fixture-render-lock ]; then cp .fixture-render-lock .kendex-lock.json; fi
+    if [ -f .fixture-render-retired-settings ]; then
+      cp .fixture-render-retired-settings .agents/skills/review-gate/retired-settings.json
+    fi
     if [ -f "$TEST_STATE/classifier-proof" ]; then
       mkdir -p .agents/skills/probe
       printf 'a gained render\n' >.agents/skills/probe/SKILL.md
@@ -1703,6 +1706,86 @@ cp "$SKILL_DIR/retired-settings.json" "$repo/.agents/skills/review-gate/retired-
 cp "$TMP/models-settings" "$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
+
+# The engine leaves the old source in the committed lock and its selected
+# catalog in the rendered lock. The release tree stays older than both.
+mkdir -p "$TMP/report-release" "$CATALOG/skills/harness-ci" "$CATALOG/skills/orch"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/report-release/"
+file_edit "$TMP/report-release" refresh/refresh-report.py 1 'https://github.com/vanillagreencom/kendex.git' \
+  "s|https://github.com/vanillagreencom/kendex.git|$CATALOG|"
+classifier_entry='KEN-5872: Markdown takes the cheapest change class'
+field_entry='KEN-5807: The lane-host protocol names the 5-hour window per account'
+changelog_entry='- The lane host reports each account window.'
+printf '%s\n' 'old classifier' >"$CATALOG/skills/harness-ci/classifier"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm 'Older catalog entry outside the recorded range'
+catalog_before="$(git -C "$CATALOG" rev-parse HEAD)"
+printf '%s\n' 'new classifier' >"$CATALOG/skills/harness-ci/classifier"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm "$classifier_entry"
+printf '%s\n' 'window_5h' >"$CATALOG/skills/orch/account-field"
+printf '# Changelog\n\n%s\n' "$changelog_entry" >"$CATALOG/CHANGELOG.md"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm "$field_entry"
+catalog_after="$(git -C "$CATALOG" rev-parse HEAD)"
+printf '%s\n' 'later classifier' >"$CATALOG/skills/harness-ci/classifier"
+git -C "$CATALOG" add -A
+git -C "$CATALOG" commit -qm 'Newer catalog entry outside the recorded range'
+
+saved_runner="$runner"
+for route in pull landed; do
+  reset_default
+  printf 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n' >"$repo/kendex.toml"
+  printf '[env]\nRENDER_ONLY_RETIRED_KEY = "on"\n' >"$repo/kendex.settings.toml"
+  jq '.keys += ["RENDER_ONLY_RETIRED_KEY"]' "$SKILL_DIR/retired-settings.json" >"$repo/.fixture-render-retired-settings"
+  for record in ".kendex-lock.json:$catalog_before" ".fixture-render-lock:$catalog_after"; do
+    jq -cn --arg commit "${record#*:}" \
+      '{version:12,installations:{},entries:{},sources:{kendex:{repo:"vanillagreencom/kendex",commit:$commit}}}' \
+      >"$repo/${record%%:*}"
+  done
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+  land_rolling="$(git --git-dir="$TMP/remote" rev-parse --verify --quiet refs/heads/kendex/refresh)" || land_rolling=""
+  : >"$TMP/state/calls"
+  rm -f -- "$TMP/state/body"
+  runner="$TMP/report-release/refresh/refresh-consumer.sh"
+  if [ "$route" = landed ]; then
+    : >"$TMP/state/pr"
+    LAND_TOKEN=land-token LAND_CONFIGURED=true
+  fi
+  run_refresh "catalog-report-$route" pass render
+  unset LAND_TOKEN LAND_CONFIGURED
+  report="$TMP/state/body"
+  if [ "$route" = landed ]; then
+    report="$TMP/state/landed-report"
+    git --git-dir="$TMP/remote" log -1 --format=%B refs/heads/main >"$report"
+  fi
+  if ! land_matches "$route" render '' ''; then
+    bad "$route publishes by its existing route" "$OUT"
+  elif grep -qxF '## Consumer settings' "$report" &&
+      grep -qF -- '- <code>RENDER_ONLY_RETIRED_KEY</code>:' "$report"; then
+    ok "$route reports the rendered retired key"
+  else bad "$route retired key from rendered catalog" "$OUT"; fi
+  if [ -f "$report" ] &&
+      grep -qxF '## Kendex changelog' "$report" &&
+      grep -qF -- "$classifier_entry" "$report" &&
+      grep -qF -- "$field_entry" "$report" &&
+      grep -qF -- "$changelog_entry" "$report" &&
+      ! grep -qF 'catalog entry outside the recorded range' "$report"; then
+    ok "$route reports the exact catalog interval"
+  else bad "$route changelog from recorded commits" "$OUT"; fi
+  git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+done
+runner="$saved_runner"
+reset_default
+rm -f -- "$repo/.fixture-render-retired-settings" "$repo/.fixture-render-lock" "$repo/.kendex-lock.json" "$repo/kendex.toml"
+cp "$SKILL_DIR/retired-settings.json" "$repo/.agents/skills/review-gate/retired-settings.json"
+cp "$TMP/models-settings" "$repo/kendex.settings.toml"
+commit "$repo"
+git -C "$repo" push -q origin main
+printf '1\n' >"$TMP/state/pr"
+
 # A consumer without committed settings keeps the clean body. A run with no
 # render change opens no pull request, so its run summary carries the warning.
 cp "$runner" "$TMP/summary-runner"

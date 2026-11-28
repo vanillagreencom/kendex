@@ -527,7 +527,7 @@ fi
 # stops publication and auto-merge.
 report_settings() {
   if ! settings_report="$(jq -c --args '. + {notes: $ARGS.positional}' -- ${setting_notes[@]+"${setting_notes[@]}"} <"$TMP/settings.json" |
-    python3 "$SCRIPT_DIR/refresh-report.py" --settings)"; then
+    python3 "$SCRIPT_DIR/refresh-report.py" --settings "$ROOT")"; then
     printf 'refresh-error=settings-report value=%s\n' "$SCRIPT_DIR/refresh-report.py" >&2
     exit 1
   fi
@@ -630,6 +630,11 @@ if ! tree="$(git write-tree)"; then
   printf 'refresh-error=read value=tree\n' >&2
   exit 1
 fi
+report_settings
+if ! changelog_report="$(python3 "$SCRIPT_DIR/refresh-report.py" --catalog "$base" "$TMP/catalog-history" "${projects[@]}")"; then
+  printf 'refresh-warning=catalog-report\n' >&2
+  changelog_report=$'## Kendex changelog\n\nCould not read the recorded kendex catalog changes.'
+fi
 if [ -n "$old" ] && [ "$tree" = "$(git rev-parse "$old^{tree}")" ]; then
   # A new scheduled run must not replace an identical commit and reset CI.
   head="$old"
@@ -640,7 +645,14 @@ else
   git config user.email "$user_id+${REFRESH_APP_SLUG}[bot]@users.noreply.github.com"
   # No consumer hook executes under the app token. Verification checks the
   # installed files; the repository's checks run on its pull request.
-  git -c core.hooksPath=/dev/null commit -m 'chore: refresh kendex renders'
+  # The default-branch push has no PR body. Its commit message makes these
+  # notices available in push history without another credential or write.
+  {
+    printf 'chore: refresh kendex renders\n'
+    [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report"
+    [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+  } >"$TMP/commit-message"
+  git -c core.hooksPath=/dev/null commit --cleanup=verbatim -F "$TMP/commit-message"
   head="$(git rev-parse HEAD)"
   state=pushed
 fi
@@ -667,7 +679,7 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] ||
   printf 'refresh-error=read value=class\n' >&2
   exit 1
 fi
-report_settings
+[ -z "${setting_notes[0]:-}" ] || report_settings
 # An identical tree publishes no new head. Only a new publication belongs to
 # this automatic admission route; absence of an open PR proves no first arm.
 # A held run still names its findings on the retained head and keeps it a
@@ -677,6 +689,7 @@ if [ "$state" = unchanged ] && [ -z "$verify_report" ]; then
   printf 'Refresh retained head `%s`; no new head was published. Automatic admission was deferred.\n\n%s\n\n%s\n' "$head" "$version_report" "$class_line" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
+  [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
 fi
 # Writes the emitted paths of the root .kendex-lock.json to FILE, one per
@@ -780,6 +793,7 @@ if [ "$land_check" = try ]; then
         "$head" "$default" "$version_report" "$class" "$class_line"
       [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report"
       [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+      [ -z "$changelog_report" ] || printf '\n%s\n' "$changelog_report"
       [ -z "$retired_items" ] || printf '\nRetired items:\n```text\n%s```\n' "$retired_items"
     } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
     exit 0
@@ -800,6 +814,9 @@ if [ -n "$catalog_report" ]; then
 fi
 if [ -n "$settings_report" ]; then
   printf -v body '%s\n%s\n' "$body" "$settings_report"
+fi
+if [ -n "$changelog_report" ]; then
+  printf -v body '%s\n%s\n' "$body" "$changelog_report"
 fi
 if [ -n "$retired_items" ]; then
   printf -v body '%s\nRetired items:\n```text\n%s```\n' "$body" "$retired_items"

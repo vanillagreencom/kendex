@@ -36,8 +36,9 @@ no issue and no evidence comment. The note
 upstream-unfiled record, including paths outside the inventory.
 Log lines go to stderr.
 
---settings matches refresh-consumer's committed object, every committed [env]
-`KEY = "value"` setting, against the package's retired-settings.json: a key
+--settings [CONSUMER_ROOT] matches refresh-consumer's committed object, every
+committed [env] `KEY = "value"` setting, against the rendered review-gate
+retired-settings.json where installed: a key
 listed under keys, named with the key that replaces it where successors maps
 it, or a value listed under values for its key, a shipped default since
 replaced. Those rows and the notes array, the change-class lines
@@ -60,7 +61,8 @@ from tempfile import TemporaryDirectory
 from urllib.parse import urlencode
 
 UPSTREAM = "vanillagreencom/kendex"
-RETIRED = Path(__file__).parent.parent / "skills/review-gate/retired-settings.json"
+CATALOG_URL = "https://github.com/vanillagreencom/kendex.git"
+RETIRED_LIST = "review-gate/retired-settings.json"
 # GitHub search caps a query at 256 characters besides its operators and
 # qualifiers; three 64-character fingerprints fit, four would not with spaces.
 SEARCH_TERMS = 3
@@ -72,7 +74,7 @@ RATE_LIMIT = re.compile(r"HTTP 429\b|rate limit", re.IGNORECASE)
 INDEX_LAG = timedelta(hours=1)
 
 
-def settings_report():
+def settings_report(root=None):
     entries = json.load(sys.stdin)
 
     def code(entry):
@@ -81,7 +83,15 @@ def settings_report():
         return f"<code>{text}</code>"
 
     sections = []
-    retired = json.loads(RETIRED.read_text())
+    retired_path = Path(__file__).parent.parent / "skills" / RETIRED_LIST
+    if root is not None:
+        # The repository's shared skill tree carries the catalog this run
+        # rendered. The release copy still covers callers using only the
+        # shared workflow, with no installed review-gate skill.
+        rendered = Path(root) / ".agents/skills" / RETIRED_LIST
+        if rendered.parent.is_dir():
+            retired_path = rendered
+    retired = json.loads(retired_path.read_text(encoding="utf-8"))
     committed = entries.get("committed", {})
     successors = retired.get("successors", {})
     stale = [f"- {code(key)}: retired; no package reads it."
@@ -95,6 +105,82 @@ def settings_report():
                         "Report only: the refresh changes no committed `kendex.settings.toml` setting.")
     if sections:
         print("\n\n".join(sections))
+
+
+def source_records(tree, lock):
+    """Lock.sources is the engine's per-source resolution for this project."""
+    if tree:
+        present = subprocess.check_output(["git", "ls-tree", "--name-only", tree, "--", f":(literal){lock}"])
+    else:
+        present = subprocess.check_output(["git", "ls-files", "--", f":(literal){lock}"])
+    if not present:
+        return {}
+    data = json.loads(subprocess.check_output(["git", "show", f"{tree}:{lock}"]))
+    records = {name: row["commit"] for name, row in data.get("sources", {}).items()
+               if row["repo"] == UPSTREAM}
+    if any(not re.fullmatch(r"[0-9a-f]{40}", commit) for commit in records.values()):
+        raise ValueError(f"{lock} has an invalid kendex source commit")
+    return records
+
+
+def catalog_report(base, history, projects):
+    ranges = {}
+    warnings = []
+    for project in projects:
+        relative = Path(project).relative_to(Path.cwd())
+        lock = (relative / ".kendex-lock.json").as_posix()
+        try:
+            before = source_records(base, lock)
+            after = source_records("", lock)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError):
+            warnings.append(f"Could not read kendex source records in {lock}.")
+            continue
+        for name in before.keys() & after.keys():
+            if before[name] != after[name]:
+                ranges.setdefault((before[name], after[name]), set()).add(relative.as_posix())
+
+    # The consumer's Git configuration and app credential belong to the
+    # consumer remote. Fetch public catalog data in a separate repository.
+    env = {"PATH": os.environ["PATH"], "GIT_CONFIG_GLOBAL": os.devnull,
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"}
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", history, *args], env=env, timeout=60,
+                                       text=True, encoding="utf-8", errors="replace")
+
+    blocks = []
+    if ranges:
+        try:
+            Path(history).mkdir()
+            git("init", "--bare", "--quiet")
+            commits = sorted({commit for interval in ranges for commit in interval})
+            git("fetch", "--quiet", "--no-tags", CATALOG_URL, *commits)
+        except (OSError, subprocess.SubprocessError):
+            warnings.append("Could not fetch the recorded kendex catalog commits.")
+        else:
+            for (old, new), paths in sorted(ranges.items()):
+                try:
+                    subjects = git("log", "--reverse", "--format=%h %s", f"{old}..{new}", "--",
+                                   "agents", "commands", "hooks", "pi-extensions", "skills")
+                    patch = git("diff", "--no-ext-diff", "--no-textconv", "--unified=0", old, new,
+                                "--", "CHANGELOG.md", ":(glob)changelog.d/*/*.md")
+                except (OSError, subprocess.SubprocessError):
+                    warnings.append(f"Could not read kendex changes for {old}..{new}.")
+                    continue
+                # Include added release text and pending fragments. Catalog-only
+                # changes use their commit subjects because they ship no fragment.
+                entries = "\n".join(line[1:] for line in patch.splitlines()
+                                    if line.startswith("+") and not line.startswith("+++ "))
+                label = ", ".join(sorted(paths))
+                compare = f"https://github.com/{UPSTREAM}/compare/{old}...{new}"
+                block = f"[{old[:12]} → {new[:12]}]({compare})"
+                blocks.append(block + "\n\n<pre>" + html.escape(label + "\n\n" + subjects + entries).rstrip()
+                              + "</pre>")
+    if warnings:
+        print("refresh-warning=catalog-report", file=sys.stderr)
+        blocks.extend("<p>" + html.escape(warning) + "</p>" for warning in warnings)
+    if blocks:
+        print("## Kendex changelog\n\n" + "\n\n".join(blocks))
 
 
 def main():
@@ -325,7 +411,9 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--settings"]:
-        settings_report()
+    if sys.argv[1:2] == ["--settings"]:
+        settings_report(*sys.argv[2:])
+    elif sys.argv[1:2] == ["--catalog"]:
+        catalog_report(sys.argv[2], sys.argv[3], sys.argv[4:])
     else:
         main()
