@@ -1575,7 +1575,8 @@ cat > /dev/null
 
     /// The JSON is pinned as the hook's reader parses it, keys sorted, the
     /// caller's own `-c` spellings included, under the variable the opener
-    /// names; an opener naming none gets nothing written.
+    /// names. Without that variable, the fixture exports its home, model
+    /// and effort declarations alone.
     #[test]
     fn a_codex_launch_hands_its_compaction_overrides_to_the_hook_s_reader() {
         const NAMED: &str = "OPENER_COMPACTION";
@@ -1614,8 +1615,8 @@ cat > /dev/null
         unnamed.compaction = Compaction::Off;
         assert_eq!(
             build(&unnamed).unwrap().env.keys().collect::<Vec<_>>(),
-            [LAUNCH_MODEL_VAR, "CODEX_HOME"],
-            "the home and the declared model alone"
+            [LAUNCH_EFFORT_VAR, LAUNCH_MODEL_VAR, "CODEX_HOME"],
+            "the home and the declared model and effort alone"
         );
         for h in [Harness::Claude, Harness::Copilot, Harness::Pi] {
             let mut i = named(h);
