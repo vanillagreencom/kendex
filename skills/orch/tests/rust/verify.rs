@@ -4602,6 +4602,46 @@ impl Github {
         self.state()["pr_review"].clone()
     }
 
+    fn quick_range(&mut self, login: &str, merge: &str, base: &str, parent: &str) {
+        let mut pull = rest_pull(false, "feat", login, "Bot");
+        pull["merge_commit_sha"] = json!(merge);
+        self.answer(&pull_path(), pull).answer(
+            &format!("repos/{REPO}/git/commits/{merge}"),
+            json!({"sha": merge, "parents": [{"sha": base}, {"sha": parent}]}),
+        );
+    }
+
+    fn quick_tools(&self, base: &str, quick: bool, class: &str) -> String {
+        let scripts = self.dir.path().join(".agents/skills/change-scope/scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        support::write_executable(
+            &scripts.join("change-scope"),
+            format!(
+                r#"#!/bin/sh
+[ "$#" -eq 8 ] &&
+  [ "$1 $2 $3 $4 $5 $6 $7" = '--event pull_request --base {base} --head {HEAD} --repo' ] &&
+  [ "$0" = "$8/.agents/skills/change-scope/scripts/change-scope" ] || exit 2
+printf '%s\n' 'quick-proof: proved={quick}' '{class}' >&2
+"#
+            ),
+        );
+        let bin = self.dir.path().join("tools");
+        fs::create_dir_all(&bin).unwrap();
+        support::write_executable(
+            &bin.join("git"),
+            format!(
+                r#"#!/bin/sh
+if [ "$1" != rev-list ]; then
+  printf '%s\n' 'fatal: not a git repository' >&2
+  exit 128
+fi
+[ "$*" = 'rev-list --no-walk --quiet {base} {HEAD} --' ]
+"#
+            ),
+        );
+        support::tool_path(&[bin.as_path(), fixtures().as_path()])
+    }
+
     fn head_record(&self) -> Value {
         self.review_record()["heads"][HEAD].clone()
     }
@@ -7024,35 +7064,61 @@ fn a_retargeted_head_reads_the_new_bases_mode() {
 /// keeps Copilot as the separate approver on the app's own pull requests.
 #[test]
 fn copilot_requests_follow_the_quick_proof_and_overseer_exception() {
-    for (name, login, quick, requests) in [
-        ("lane quick", "lane-app[bot]", true, 0),
-        ("lane non-quick", "lane-app[bot]", false, 1),
-        ("overseer quick", "vanillagreen-overseer[bot]", true, 1),
+    let measured = "class: class=trivial measured=true cause=quick-files";
+    for (name, login, quick, parent, class, requests, unavailable) in [
+        ("lane quick", "lane-app[bot]", true, HEAD, measured, 0, None),
+        (
+            "lane non-quick",
+            "lane-app[bot]",
+            false,
+            HEAD,
+            measured,
+            1,
+            None,
+        ),
+        (
+            "overseer quick",
+            "vanillagreen-overseer[bot]",
+            true,
+            HEAD,
+            measured,
+            1,
+            None,
+        ),
+        (
+            "test merge for an older head",
+            "lane-app[bot]",
+            true,
+            MOVED,
+            measured,
+            1,
+            Some("test-merge-range"),
+        ),
+        (
+            "unresolved classifier endpoint",
+            "lane-app[bot]",
+            false,
+            HEAD,
+            "class: class=standard measured=false cause=unresolved-endpoint",
+            1,
+            Some("unresolved-endpoint"),
+        ),
     ] {
         let mut gh = Github::review_world();
-        let mut pull = rest_pull(false, "feat", login, "Bot");
-        pull["base"]["sha"] = json!(WORKFLOW_SHA);
-        gh.answer(&pull_path(), pull);
-        let scripts = gh.base().join(".agents/skills/harness-ci/scripts");
-        fs::create_dir_all(&scripts).unwrap();
-        support::write_executable(
-            &scripts.join("change-class"),
-            format!(
-                r#"#!/bin/sh
-[ "$#" -eq 10 ] &&
-  [ "$1 $2 $3 $4 $5 $6 $7" = '--event pull_request --base {WORKFLOW_SHA} --head {HEAD} --repo' ] &&
-  [ "$0" = "$8/.agents/skills/harness-ci/scripts/change-class" ] &&
-  [ "$9 ${{10}}" = '--output /dev/null' ] || exit 2
-printf '%s\n' 'change_class=trivial'
-printf '%s\n' 'quick-proof: proved={quick}' >&2
-"#
-            ),
-        );
+        gh.quick_range(login, OTHER_SHA, MOVED, parent);
+        let path = gh.quick_tools(MOVED, quick, class);
+        let env = [BLOCK[0], ("PATH", path.as_str())];
 
-        let result = ok_result(&gh.review(false, BLOCK));
+        let result = ok_result(&gh.review(false, &env));
         assert_eq!(gh.requests(), requests, "{name}: {:?}", gh.log());
         assert_eq!(result["mode"], "approval", "{name}: {result}");
         assert_eq!(result["status"], "pending", "{name}: {result}");
+        let detail = unavailable.map(|cause| format!("quick-proof=unavailable cause={cause}"));
+        assert_eq!(
+            result["detail"].as_str(),
+            detail.as_deref(),
+            "{name}: {result}"
+        );
         if requests == 0 {
             assert_eq!(result["request"]["outcome"], "fallback", "{name}: {result}");
             assert_eq!(result["request"]["cause"], "quick", "{name}: {result}");
@@ -7060,7 +7126,7 @@ printf '%s\n' 'quick-proof: proved={quick}' >&2
                 &format!("pr view {PR}"),
                 review_view("APPROVED", &[], false),
             );
-            let approved = ok_result(&gh.review(false, BLOCK));
+            let approved = ok_result(&gh.review(false, &env));
             assert_eq!(approved["verdict"], "approved", "{name}: {approved}");
             assert_eq!(gh.requests(), 0, "{name}: {:?}", gh.log());
         } else {
@@ -7070,6 +7136,83 @@ printf '%s\n' 'quick-proof: proved={quick}' >&2
             );
         }
     }
+}
+
+#[test]
+fn vanished_copilot_work_on_a_proved_quick_head_records_the_fallback() {
+    let measured = "class: class=trivial measured=true cause=quick-files";
+    for work_started in [false, true] {
+        let mut gh = Github::review_world();
+        gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
+        if work_started {
+            gh.answer(
+                &check_runs(HEAD, 1),
+                check_runs_page(1, vec![copilot_check(31, "queued")]),
+            );
+        }
+        let path = gh.quick_tools(MOVED, false, measured);
+        let first = ok_result(&gh.review(false, &[("PATH", &path)]));
+        let outcome = if work_started {
+            "existing"
+        } else {
+            "requested"
+        };
+        assert_eq!(first["request"]["outcome"], outcome, "{first}");
+
+        let ended = if work_started {
+            check_runs_page(0, vec![])
+        } else {
+            // The fake records the POST as a timeline event. A cancelled
+            // check after that event ends the request's work on this head.
+            let acts: Value =
+                serde_json::from_slice(&fs::read(gh.dir.path().join("replies.acts.json")).unwrap())
+                    .unwrap();
+            let mut cancelled = copilot_check(32, "completed");
+            cancelled["conclusion"] = json!("cancelled");
+            cancelled["started_at"] = acts["events"][PR.to_string()][0]["created_at"].clone();
+            check_runs_page(1, vec![cancelled])
+        };
+        gh.answer(&check_runs(HEAD, 1), ended);
+        let path = gh.quick_tools(MOVED, true, measured);
+        let count = gh.requests();
+        let fallback = ok_result(&gh.review(false, &[("PATH", &path)]));
+        assert_eq!(fallback["request"]["outcome"], "fallback", "{fallback}");
+        assert_eq!(fallback["request"]["cause"], "quick", "{fallback}");
+        assert_eq!(gh.requests(), count, "{:?}", gh.log());
+    }
+}
+
+#[test]
+fn the_same_head_after_a_base_advance_rechecks_the_quick_fallback() {
+    let mut gh = Github::review_world();
+    gh.quick_range("lane-app[bot]", OTHER_SHA, MOVED, HEAD);
+    let measured = "class: class=trivial measured=true cause=quick-files";
+    let path = gh.quick_tools(MOVED, true, measured);
+    let first = ok_result(&gh.review(false, &[("PATH", &path)]));
+    assert_eq!(first["request"]["cause"], "quick", "{first}");
+    assert_eq!(
+        first["request"]["reason"],
+        format!("base={MOVED}"),
+        "{first}"
+    );
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    gh.set_head(
+        "notices",
+        json!([{
+            "key": "copilot-fallback",
+            "text": format!("copilot-fallback PR #{PR} head {HEAD} cause=quick"),
+            "to": "KEN-4687",
+            "owner": "owed"
+        }]),
+    );
+    gh.quick_range("lane-app[bot]", WORKFLOW_SHA, OTHER_SHA, HEAD);
+    let path = gh.quick_tools(OTHER_SHA, false, measured);
+    let second = ok_result(&gh.review(false, &[("PATH", &path)]));
+    assert_eq!(second["request"]["outcome"], "requested", "{second}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    assert_eq!(second["notices"][0]["owner"], "owed", "{second}");
+    assert_eq!(second["notices"][0]["sent_now"], false, "{second}");
 }
 
 /// A request that sends nothing records why under the head, once: the

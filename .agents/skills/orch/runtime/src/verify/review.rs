@@ -6,10 +6,12 @@
 //! Every read answers a closed wire type or a refusal with its cause; a
 //! failed read is never a verdict, a count or an empty requirement.
 
+use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
 use agent_runtime::host;
+use serde::Deserialize;
 use serde_json::Value;
 
 pub(crate) use super::Acted;
@@ -196,50 +198,171 @@ pub(crate) fn pull(gh: &Gh, repo: &str, pr: u64) -> Read<Pull> {
     Ok(pull)
 }
 
-/// Read the proof `.github/actions/change-class` forwards as `quick`. The
-/// base checkout supplies the classifier so the judged head cannot replace it.
+/// GitHub's Git database returns the test-merge commit and its ordered
+/// parents. On an open PR, GitHub documents `merge_commit_sha` as the test
+/// merge; its second parent is the pull request head, as observed on #7278.
+#[derive(Deserialize)]
+struct TestMerge {
+    sha: String,
+    parents: Vec<CommitId>,
+}
+
+#[derive(Deserialize)]
+struct CommitId {
+    sha: String,
+}
+
+/// The base of a current, proved quick range. `None` is a negative proof
+/// and an error retains the cause without withholding the ordinary request.
+/// The installed producer in the main checkout reads both endpoints as Git
+/// data. The target checkout can be an unmerged lower branch in a stack.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the classifier reads only the pinned range in the base checkout, without inherited Git overrides"
+    reason = "the review gate reads the pinned range through the installed classifier and fetches missing commit objects through the GitHub helper"
 )]
-pub(crate) fn quick(checkout: &Path, pull: &Pull) -> bool {
-    if !head_form(&pull.base.sha) {
-        return false;
+pub(crate) fn quick(
+    gh: &Gh,
+    checkout: &Path,
+    repository: &str,
+    pull: &Pull,
+) -> Result<Option<String>, String> {
+    let Nullable::Present(merge) = &pull.merge_commit_sha else {
+        return Err("test-merge-missing".into());
+    };
+    if !head_form(merge) || pull.state != "open" {
+        return Err("test-merge-unusable".into());
     }
-    let script = checkout.join(".agents/skills/harness-ci/scripts/change-class");
+    let commit: TestMerge = Reader { gh }
+        .object(
+            Endpoint::TestMerge,
+            &format!("repos/{repository}/git/commits/{merge}"),
+        )
+        .map_err(|cause| cause.key())?;
+    let [base, head] = commit.parents.as_slice() else {
+        return Err("test-merge-parents".into());
+    };
+    if commit.sha != *merge
+        || head.sha != pull.head.sha
+        || base.sha == head.sha
+        || !head_form(&base.sha)
+    {
+        return Err("test-merge-range".into());
+    }
+    let script = checkout.join(".agents/skills/change-scope/scripts/change-scope");
+    let git_auth = checkout.join(".agents/skills/github/scripts/git-https-auth");
     let repo = checkout.to_string_lossy();
     let path = std::env::var_os("PATH").unwrap_or_default();
+    let place = host::Place {
+        cwd: Some(checkout),
+        env: &[("PATH", &path), ("GIT_NO_REPLACE_OBJECTS", OsStr::new("1"))],
+    };
+    let bound = Duration::from_secs(120);
+    let have_range = || {
+        host::run_tagged_alone(
+            "verify-review",
+            "git",
+            Path::new("git"),
+            "rev-list",
+            &[
+                "rev-list",
+                "--no-walk",
+                "--quiet",
+                &base.sha,
+                &head.sha,
+                "--",
+            ],
+            place,
+            bound,
+        )
+        .is_ok_and(|out| out.status.success())
+    };
+    if !have_range() {
+        // Fetch by object id so a moving pull ref cannot change the range.
+        // Keep the checkout, refs and FETCH_HEAD as they stood.
+        let auth = git_auth.to_str().ok_or("test-merge-fetch-launch")?;
+        let fetched = host::run_tagged_in(
+            "verify-review",
+            "git-https-auth",
+            Path::new("env"),
+            "fetch",
+            &[
+                "-u",
+                "GIT_DIR",
+                "-u",
+                "GIT_COMMON_DIR",
+                "-u",
+                "GIT_WORK_TREE",
+                "-u",
+                "GIT_INDEX_FILE",
+                auth,
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--no-write-fetch-head",
+                "--no-recurse-submodules",
+                "--no-auto-maintenance",
+                "--no-write-commit-graph",
+                "origin",
+                merge,
+            ],
+            host::Place {
+                cwd: Some(checkout),
+                env: &[("GIT_TERMINAL_PROMPT", OsStr::new("0"))],
+            },
+            bound,
+        )
+        .map_err(|e| format!("test-merge-fetch-{}", e.key()))?;
+        if !fetched.status.success() {
+            return Err("test-merge-fetch-failed".into());
+        }
+        if !have_range() {
+            return Err("test-merge-objects-missing".into());
+        }
+    }
     let answer = host::run_tagged_alone(
         "verify-review",
-        "change-class",
+        "change-scope",
         &script,
         "class",
         &[
             "--event",
             "pull_request",
             "--base",
-            &pull.base.sha,
+            &base.sha,
             "--head",
-            &pull.head.sha,
+            &head.sha,
             "--repo",
             &repo,
-            "--output",
-            "/dev/null",
         ],
-        host::Place {
-            cwd: None,
-            env: &[("PATH", &path)],
+        place,
+        bound,
+    )
+    .map_err(|e| format!("classifier-{}", e.key()))?;
+    let log = String::from_utf8_lossy(&answer.stderr);
+    let class_cause = |prefix: &str| {
+        log.split('\n').find_map(|line| {
+            line.split_once(prefix)
+                .filter(|(kind, _)| kind.starts_with("class: class="))
+                .and_then(|(_, cause)| cause.split_whitespace().next())
+        })
+    };
+    if !answer.status.success() {
+        return Err(format!(
+            "classifier-exit-{}",
+            answer.status.code().unwrap_or(1)
+        ));
+    }
+    let mut proofs = log
+        .split('\n')
+        .filter_map(|line| line.strip_prefix("quick-proof: proved="));
+    match (proofs.next(), proofs.next()) {
+        (Some("true"), None) => Ok(Some(base.sha.clone())),
+        (Some("false"), None) => match class_cause(" measured=false cause=") {
+            Some(cause) => Err(cause.to_owned()),
+            None => Ok(None),
         },
-        Duration::from_secs(120),
-    );
-    answer.is_ok_and(|out| {
-        out.status.success()
-            && out
-                .stderr
-                .split(|byte| *byte == b'\n')
-                .filter_map(|line| line.strip_prefix(b"quick-proof: proved="))
-                .eq([b"true".as_slice()])
-    })
+        _ => Err("quick-proof-unreadable".into()),
+    }
 }
 
 /// Copilot's reviews bound to the head: the arrival time the timeline

@@ -53,6 +53,7 @@ const REQUESTED: &str = "requested";
 const EXISTING: &str = "existing";
 const FALLBACK: &str = "fallback";
 const OFF: &str = "off";
+const QUICK: &str = "quick";
 /// The kind every Copilot fallback notice opens with, as the overseer's
 /// head rules read it.
 const NOTICE_KEY: &str = "copilot-fallback";
@@ -314,9 +315,15 @@ impl HeadRecord {
     /// Whether the head's request stands as the `draft` fallback: no
     /// request went out, and none will while the head reads draft.
     fn held_as_draft(&self) -> bool {
-        self.request.as_ref().is_some_and(|request| {
-            request.outcome == FALLBACK && request.cause.as_deref() == Some("draft")
-        })
+        self.request
+            .as_ref()
+            .is_some_and(|request| request.fell_back_as("draft"))
+    }
+
+    fn held_as_quick(&self) -> bool {
+        self.request
+            .as_ref()
+            .is_some_and(|request| request.fell_back_as(QUICK))
     }
 }
 
@@ -368,6 +375,10 @@ impl RequestRecord {
 
     fn fallback(cause: &str, exit: Option<i32>) -> RequestRecord {
         RequestRecord::new(FALLBACK, None, Some(cause), exit)
+    }
+
+    fn fell_back_as(&self, cause: &str) -> bool {
+        self.outcome == FALLBACK && self.cause.as_deref() == Some(cause)
     }
 
     /// Copilot's work in flight stood for this head's request.
@@ -526,6 +537,7 @@ pub fn run(
         note: None,
         item: state::item_of(path).map(str::to_owned),
         checkout: settings.roots.project.clone(),
+        classifier_checkout: &settings.roots.common,
         lane: None,
         mail: Mailbox::new(settings.lane_mail_cli.clone()),
         notice_dir: settings.roots.project.join("tmp").join("review"),
@@ -534,6 +546,7 @@ pub fn run(
         off: false,
         pull: None,
         eligibility: None,
+        quick_reason: None,
         private_env: settings.private_env,
     };
     let judged = gate.judge();
@@ -573,6 +586,7 @@ struct Gate<'a> {
     /// The checkout the call runs in, whose common git directory holds the
     /// lane's launch marker.
     checkout: PathBuf,
+    classifier_checkout: &'a Path,
     /// The lane's root its marker names, read once and only where a notice
     /// is at stake.
     lane: Option<Reading<PathBuf>>,
@@ -589,6 +603,8 @@ struct Gate<'a> {
     pull: Option<Pull>,
     /// The head's eligibility, judged once per call (`ineligible`).
     eligibility: Option<Option<&'static str>>,
+    /// The proved base SHA in the existing request record's reason field.
+    quick_reason: Option<String>,
     /// Whether the base checkout's policy takes its private env file.
     private_env: bool,
 }
@@ -619,7 +635,8 @@ impl Gate<'_> {
             self.off = true;
             let verdict = self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
             let owed = record.as_ref().is_some_and(|head| {
-                head.ready == Some(Ready::Done) && (head.request.is_none() || head.held_as_draft())
+                head.ready == Some(Ready::Done)
+                    && (head.request.is_none() || head.held_as_draft() || head.held_as_quick())
             });
             if owed && self.review.copilot_requests {
                 self.request(record, true)?;
@@ -788,13 +805,27 @@ impl Gate<'_> {
             ready = read.draft != Optional::Present(true);
             self.pull = Some(read);
         }
-        let stands = |head: &HeadRecord| head.request.is_some() && !(ready && head.held_as_draft());
+        let mut lapsed_quick = None;
+        if let Some(request) = record
+            .as_ref()
+            .and_then(|head| head.request.as_ref())
+            .filter(|request| request.fell_back_as(QUICK))
+            && (self.ineligible()? != Some(QUICK) || request.reason != self.quick_reason)
+        {
+            lapsed_quick = Some(request.clone());
+        }
+        let stands = |head: &HeadRecord| {
+            head.request.is_some()
+                && head.request != lapsed_quick
+                && !(ready && head.held_as_draft())
+        };
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
             if !self.review.copilot_requests
                 && !head.fell_back()
                 && self.ineligible()? == Some("off")
+                && let Some(request) = &head.request
             {
-                return self.fall_back_off();
+                return self.replace_with_fallback(request, "off");
             }
             self.reply.request = head.request.as_ref().map(|q| q.report(false));
             return self.confirm_request(head.clone());
@@ -804,7 +835,7 @@ impl Gate<'_> {
         // retry, claimed in the same write, so no second POST follows.
         let mut retry = None;
         let request = if let Some(cause) = ineligible {
-            RequestRecord::fallback(cause, None)
+            self.eligibility_fallback(cause)
         } else {
             let reviews = self.reviews()?.clone();
             let work = self.work()?.is_some();
@@ -840,7 +871,9 @@ impl Gate<'_> {
                 // A lapsing draft fallback starts the period and the hold
                 // with the request it releases: no review was asked for
                 // while the head stood as a draft.
-                let (at, period_started) = if base.held_as_draft() {
+                let (at, period_started) = if base.held_as_draft()
+                    || (base.held_as_quick() && ineligible != Some(QUICK))
+                {
                     (stamp.clone(), stamp.clone())
                 } else {
                     (base.at.clone(), base.period_started.clone())
@@ -866,21 +899,23 @@ impl Gate<'_> {
         Ok(claimed)
     }
 
-    /// `PR_COPILOT_REQUESTS=off` is the consumer's choice for the pull
-    /// request, not a passing state: a head whose request record stands
-    /// unspent (`requested`, its resend, an `existing` answer) falls back
-    /// `cause=off` on the call that reads it, its notice owed in the same
-    /// write, as a fresh head under `off` does. A head that already fell
-    /// back keeps that fallback and owes no second notice.
-    fn fall_back_off(&mut self) -> Step<HeadRecord> {
-        let owed = self.notice_for("off", None);
+    fn eligibility_fallback(&self, cause: &str) -> RequestRecord {
+        let reason = self.quick_reason.as_deref().filter(|_| cause == QUICK);
+        RequestRecord::new(FALLBACK, reason, Some(cause), None)
+    }
+
+    /// An eligibility fallback replaces the request this call reconciled.
+    /// The same write owes its notice, including after vanished work.
+    fn replace_with_fallback(&mut self, request: &RequestRecord, cause: &str) -> Step<HeadRecord> {
+        let owed = self.notice_for(cause, None);
+        let fallback = self.eligibility_fallback(cause);
         let path = self.path;
         let (head, now) = self.update_head(|standing| {
             let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
-            if head.fell_back() {
+            if head.request.as_ref() != Some(request) {
                 return Ok((head.clone(), (head, false)));
             }
-            head.request = Some(RequestRecord::fallback("off", None));
+            head.request = Some(fallback.clone());
             head.owe(owed.as_ref());
             Ok((head.clone(), (head, true)))
         })?;
@@ -899,8 +934,8 @@ impl Gate<'_> {
     /// sent at most twice per head; Copilot's error answer takes its own
     /// retry, sent at most twice (`retry`). A claim and a resend are
     /// requests, so each waits on the head's eligibility (`eligible`): a
-    /// call that may not ask sends nothing and leaves the record as it
-    /// stands, spending neither.
+    /// call that may not ask spends neither. A quick proof records its
+    /// fallback once GitHub shows the standing request has no work.
     fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
         let Some(request) = head.request.clone() else {
             return Ok(head);
@@ -913,13 +948,11 @@ impl Gate<'_> {
         if landed {
             return Ok(head);
         }
-        let eligible = if request.resent {
-            None
-        } else {
-            match self.eligible()? {
-                Ok(eligible) => Some(eligible),
-                Err(_) => return Ok(head),
-            }
+        let eligible = match self.eligible()? {
+            Err(QUICK) => return self.replace_with_fallback(&request, QUICK),
+            _ if request.resent => None,
+            Ok(eligible) => Some(eligible),
+            Err(_) => return Ok(head),
         };
         let owed = self.notice_for("unconfirmed", None);
         let path = self.path;
@@ -1024,13 +1057,26 @@ impl Gate<'_> {
             Some("off")
         } else if self.draft || pull.draft == Optional::Present(true) {
             Some("draft")
-        } else if pull.base.branch == self.view.base
-            && !matches!(&pull.user, Nullable::Present(user) if user.login == OVERSEER_APP_LOGIN && user.kind == "Bot")
-            && review::quick(&self.r.base_checkout, &pull)
+        } else if matches!(&pull.user, Nullable::Present(user) if user.login == OVERSEER_APP_LOGIN && user.kind == "Bot")
         {
-            Some("quick")
-        } else {
             None
+        } else {
+            let quick = if pull.base.branch == self.view.base {
+                review::quick(&self.gh, self.classifier_checkout, &self.r.repo, &pull)
+            } else {
+                Err("test-merge-base-moved".into())
+            };
+            match quick {
+                Ok(Some(base)) => {
+                    self.quick_reason = Some(format!("base={base}"));
+                    Some(QUICK)
+                }
+                Ok(None) => None,
+                Err(cause) => {
+                    self.reply.detail = Some(format!("quick-proof=unavailable cause={cause}"));
+                    None
+                }
+            }
         };
         self.eligibility = Some(judged);
         Ok(judged)
@@ -1101,11 +1147,7 @@ impl Gate<'_> {
         error_id: u64,
         error_at: &str,
     ) -> Step<Option<Verdict>> {
-        if record.held_as_draft()
-            || record.request.as_ref().is_some_and(|request| {
-                request.outcome == FALLBACK && request.cause.as_deref() == Some("quick")
-            })
-        {
+        if record.held_as_draft() || record.held_as_quick() {
             return Ok(None);
         }
         let Some(retry) = record.retry.clone() else {
@@ -1459,6 +1501,11 @@ impl Gate<'_> {
         let Some(head) = head_record(self.path, &snapshot.doc, &self.view.head)? else {
             return Ok(());
         };
+        let current_quick = self.quick_reason.as_ref().is_some_and(|reason| {
+            head.request.as_ref().is_some_and(|request| {
+                request.fell_back_as(QUICK) && request.reason.as_ref() == Some(reason)
+            })
+        });
         let mut reports = Vec::with_capacity(head.notices.len());
         for (index, notice) in head.notices.into_iter().enumerate() {
             let standing = |sent_now, unmarked| NoticeReport {
@@ -1467,7 +1514,9 @@ impl Gate<'_> {
                 sent_now,
                 unmarked,
             };
-            if !notice.owed() && !notice.unanswered() {
+            if (!notice.owed() && !notice.unanswered())
+                || (!current_quick && notice.text.ends_with(" cause=quick"))
+            {
                 reports.push(standing(false, None));
                 continue;
             }
