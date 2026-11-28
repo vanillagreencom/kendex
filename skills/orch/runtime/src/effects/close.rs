@@ -24,7 +24,7 @@ use crate::ops::{
     ParkLane, ParkWait, Report, Request, Terminal, boxes,
 };
 use crate::settings::Settings;
-use crate::state::{self, CloseGround, CloseKind, FleetState, Lane, LaneMembers, LaneStatus};
+use crate::state::{self, CloseKind, FleetState, Lane, LaneMembers, LaneStatus};
 use crate::verify::Answer;
 use crate::verify::wire::{Nullable, ParkPull, ParkPullAnswer};
 use crate::watch::hosted::{
@@ -40,8 +40,8 @@ use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
 use agent_runtime::stop::reset;
 
-use super::Effected;
 use super::lane_operation::{self, Unread};
+use super::{Effected, stop::host_close_receipt};
 
 /// How the close ended, by the record it left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -333,6 +333,13 @@ pub fn close_lane(
     // Before any provider read or stop: the close transition refuses the
     // same, but only after the running lane's provider stop.
     crate::ops::lane::refuse_other_close(path, &intents, &r.item, asked)?;
+    let host_closed = asked == CloseKind::Full
+        && intents.iter().any(|intent| {
+            intent.op == agent_runtime::intent::EffectOp::CloseResources
+                && intent.target == r.item
+                && intent.open()
+                && host_close_receipt(intent.observation.as_ref()).is_some()
+        });
     let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
     let host = hosted::host_of(&lane).to_owned();
     let caps = if host == "local" {
@@ -359,6 +366,9 @@ pub fn close_lane(
         lane,
         socket,
     };
+    if host_closed {
+        return close.close_on(Ground::Exited);
+    }
     match caps.stop {
         Some(StopKind::None) => close.cloud(),
         Some(StopKind::Window | StopKind::Verb) => match close.lane.status {
@@ -488,76 +498,15 @@ pub(super) fn landing(
     lane: &Lane,
     members: &LaneMembers,
 ) -> Option<boxes::Completion> {
-    if !lane.tracker.as_deref().map_or_else(
-        || !lane.item.starts_with("issue-"),
-        |tracker| tracker == "linear",
-    ) {
-        return None;
-    }
-    let (cause, done) = match &members.close {
-        Some(CloseGround::NoLanding { reason, park, .. })
-            if reason != "keep-sandbox" || park.is_some() =>
-        {
-            return None;
-        }
-        Some(CloseGround::Terminal {
-            verdict: state::TerminalVerdict::Canceled,
-            ..
-        }) => return None,
-        Some(CloseGround::Terminal { .. }) => (boxes::Cause::LaneEnded, true),
-        Some(ground) if ground.host_absent() => (boxes::Cause::SandboxGone, true),
-        Some(CloseGround::Ended { source }) if source == "merged" => {
-            (boxes::Cause::SandboxGone, false)
-        }
-        _ => (boxes::Cause::LaneEnded, false),
-    };
-    let merged = if let Some(row) = &members.cycle {
-        landing_pr(&row.cycle, lane, true)
-    } else if let Some(delivery) = &members.delivery {
-        match delivery {
-            ops::Delivery::Pr { pr, repo } => Some(boxes::Merged {
-                pr: *pr,
-                repo: delivery_repo(repo.as_deref(), lane)?,
-                known_merged: false,
-            }),
-            ops::Delivery::Commit { .. } => None,
-        }
-    } else if let Some(wait) = lane
-        .extra
-        .get("pending_pr")
-        .or_else(|| lane.extra.get("parked"))
-    {
-        landing_pr(wait, lane, false)
-    } else if lane.launched_at.is_some()
-        && lane.session_since == lane.launched_at
-        && lane.tracker.is_some()
-        && !members.disposed.as_ref().is_some_and(|d| d.of.record())
-    {
-        landing_pr(lane.extra.get("cycle")?, lane, true)
-    } else {
-        None
-    };
+    let (merged, cause, done) = boxes::landing(lane, members)?;
     Some(boxes::complete(
         settings,
         Path::new("gh"),
         &lane.item,
-        &merged?,
+        &merged,
         cause,
         done,
     ))
-}
-
-fn landing_pr<'a>(row: &'a Value, lane: &'a Lane, known_merged: bool) -> Option<boxes::Merged<'a>> {
-    Some(boxes::Merged {
-        pr: row.get("pr")?.as_u64()?,
-        repo: delivery_repo(row.get("repo").and_then(Value::as_str), lane)?,
-        known_merged,
-    })
-}
-
-fn delivery_repo<'a>(repo: Option<&'a str>, lane: &'a Lane) -> Option<&'a str> {
-    repo.or(lane.repo.as_deref())
-        .filter(|repo| !repo.is_empty())
 }
 
 impl Close<'_> {
@@ -817,10 +766,14 @@ impl Close<'_> {
                 self.host_stop(&mut notes)?;
             }
             ground
-        } else if matches!(ground, Ground::Terminal(_)) {
-            Ground::Ended(state::HOST_ABSENT)
         } else {
-            ground
+            match ground {
+                Ground::Terminal(mut terminal) => {
+                    terminal.source = state::HOST_ABSENT.to_owned();
+                    Ground::Terminal(terminal)
+                }
+                other @ (Ground::Exited | Ground::Ended(_) | Ground::Keep(_)) => other,
+            }
         };
         let mut closed = self.persist(ground, landing)?;
         closed.notes.splice(0..0, notes);

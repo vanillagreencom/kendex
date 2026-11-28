@@ -15,8 +15,12 @@ use std::time::Duration;
 
 use agent_runtime::host;
 use serde::Deserialize;
+use serde_json::Value;
+
+use crate::ops::Delivery;
 
 use crate::settings::Settings;
+use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
 use crate::verify::wire::{Nullable, Pull};
 use crate::watch::tracker::Quota;
 
@@ -50,6 +54,77 @@ pub struct Merged<'a> {
     pub repo: &'a str,
     pub pr: u64,
     pub known_merged: bool,
+}
+
+/// The current PR both confirmation routes judge, with its close context.
+pub(crate) fn landing<'a>(
+    lane: &'a Lane,
+    members: &'a LaneMembers,
+) -> Option<(Merged<'a>, Cause, bool)> {
+    if !lane.tracker.as_deref().map_or_else(
+        || !lane.item.starts_with("issue-"),
+        |tracker| tracker == "linear",
+    ) {
+        return None;
+    }
+    let (cause, done) = match &members.close {
+        Some(CloseGround::NoLanding { reason, park, .. })
+            if reason != "keep-sandbox" || park.is_some() =>
+        {
+            return None;
+        }
+        Some(CloseGround::Terminal {
+            verdict: TerminalVerdict::Canceled,
+            ..
+        }) => return None,
+        Some(ground @ CloseGround::Terminal { .. }) if ground.host_absent() => {
+            (Cause::SandboxGone, true)
+        }
+        Some(CloseGround::Terminal { .. }) => (Cause::LaneEnded, true),
+        Some(ground) if ground.host_absent() => (Cause::SandboxGone, false),
+        Some(CloseGround::Ended { source }) if source == "merged" => (Cause::SandboxGone, false),
+        _ => (Cause::LaneEnded, false),
+    };
+    let merged = if let Some(row) = &members.cycle {
+        landing_pr(&row.cycle, lane, true)
+    } else if let Some(delivery) = &members.delivery {
+        match delivery {
+            Delivery::Pr { pr, repo } => Some(Merged {
+                pr: *pr,
+                repo: delivery_repo(repo.as_deref(), lane)?,
+                known_merged: false,
+            }),
+            Delivery::Commit { .. } => None,
+        }
+    } else if let Some(wait) = lane
+        .extra
+        .get("pending_pr")
+        .or_else(|| lane.extra.get("parked"))
+    {
+        landing_pr(wait, lane, false)
+    } else if lane.launched_at.is_some()
+        && lane.session_since == lane.launched_at
+        && lane.tracker.is_some()
+        && !members.disposed.as_ref().is_some_and(|d| d.of.record())
+    {
+        landing_pr(lane.extra.get("cycle")?, lane, true)
+    } else {
+        None
+    };
+    Some((merged?, cause, done))
+}
+
+fn landing_pr<'a>(row: &'a Value, lane: &'a Lane, known_merged: bool) -> Option<Merged<'a>> {
+    Some(Merged {
+        pr: row.get("pr")?.as_u64()?,
+        repo: delivery_repo(row.get("repo").and_then(Value::as_str), lane)?,
+        known_merged,
+    })
+}
+
+fn delivery_repo<'a>(repo: Option<&'a str>, lane: &'a Lane) -> Option<&'a str> {
+    repo.or(lane.repo.as_deref())
+        .filter(|repo| !repo.is_empty())
 }
 
 /// The item read the completion judges: its description and state.
@@ -243,8 +318,20 @@ fn settle(
         None
     } else {
         match read_pull() {
-            Ok(Some(pull)) if matches!(pull.merged_at, Nullable::Present(_)) => Some(pull),
-            Ok(Some(_)) | Ok(None) | Err(_) => return None,
+            Ok(Some(pull)) => match pull.merged_at {
+                Nullable::Present(_) => Some(pull),
+                Nullable::Null => return None,
+                Nullable::Absent => {
+                    return unsettled("boxes-unticked cause=pr-unread github=merged-at-absent");
+                }
+            },
+            Ok(None) => return unsettled("boxes-unticked cause=pr-missing"),
+            Err(error) => {
+                return unsettled(&format!(
+                    "boxes-unticked cause=pr-unread github={}",
+                    error.key()
+                ));
+            }
         }
     };
     let variables = serde_json::json!({ "id": item }).to_string();
@@ -277,10 +364,19 @@ fn settle(
     let pull = match pending.map_or_else(read_pull, |pull| Ok(Some(pull))) {
         Ok(Some(pull)) => pull,
         Ok(None) => return unsettled("boxes-unticked cause=pr-missing"),
-        Err(_) => return unsettled("boxes-unticked cause=pr-unread"),
+        Err(error) => {
+            return unsettled(&format!(
+                "boxes-unticked cause=pr-unread github={}",
+                error.key()
+            ));
+        }
     };
-    let Nullable::Present(merged_at) = &pull.merged_at else {
-        return unsettled("boxes-unticked cause=pr-unmerged");
+    let merged_at = match &pull.merged_at {
+        Nullable::Present(merged_at) => merged_at,
+        Nullable::Null => return unsettled("boxes-unticked cause=pr-unmerged"),
+        Nullable::Absent => {
+            return unsettled("boxes-unticked cause=pr-unread github=merged-at-absent");
+        }
     };
     let body = match &pull.body {
         Nullable::Present(body) => body.as_str(),

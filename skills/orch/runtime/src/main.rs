@@ -1862,6 +1862,25 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 );
             }
             let mut request: Request = serde_json::from_value(value).map_err(decoded)?;
+            if let Request::RecordOutcome(outcome) = &mut request {
+                // Only the close effect can attest settlement or a provider receipt.
+                outcome.members.remove("boxes_disposed");
+                if let Some(serde_json::Value::Object(observation)) = &mut outcome.observation {
+                    observation.remove("host_close");
+                    observation.remove("mail");
+                    if outcome.outcome == agent_runtime::protocol::Outcome::Confirmed
+                        && matches!(
+                            observation.get("note").and_then(serde_json::Value::as_str),
+                            Some(
+                                agent_runtime::intent::OWNER_LIVE
+                                    | agent_runtime::intent::OWNER_UNREAD
+                            )
+                        )
+                    {
+                        observation.remove("note");
+                    }
+                }
+            }
             // The target's kind is the precondition of every operation,
             // checked before anything is read: a verification must not
             // reach GitHub for a target it could never record on.

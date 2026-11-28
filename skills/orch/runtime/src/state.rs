@@ -969,7 +969,7 @@ impl CloseGround {
     /// Whether the ground is a terminal close of a sandbox its provider no
     /// longer holds.
     pub fn host_absent(&self) -> bool {
-        matches!(self, CloseGround::Ended { source } if source == HOST_ABSENT)
+        matches!(self, CloseGround::Ended { source } | CloseGround::Terminal { source, .. } if source == HOST_ABSENT)
     }
 
     /// Whether the close ends the item: the tracker's terminal verdict, or
@@ -1114,12 +1114,20 @@ pub struct LaneMembers {
     /// Which landing parts a close is authorized to give up. Confirmation
     /// logs the parts it actually gave up.
     pub disposed: Option<LandingDisposal>,
+    /// Added box authority on a retry that already held record authority.
+    pub boxes_disposal: Option<LandingDisposal>,
     /// The lane status an outcome read when the lane had moved under its
     /// intent.
     pub observed_status: Option<LaneStatus>,
 }
 
 impl LaneMembers {
+    pub fn box_disposal(&self) -> Option<&LandingDisposal> {
+        self.boxes_disposal
+            .as_ref()
+            .or_else(|| self.disposed.as_ref().filter(|d| d.of.boxes()))
+    }
+
     /// The lane members `intent` records. A member that is not its type
     /// refuses `record-shape` naming it.
     pub fn of(path: &Path, intent: &Intent) -> Result<LaneMembers> {
@@ -1132,6 +1140,7 @@ impl LaneMembers {
             cycle: field(path, row, "cycle")?,
             delivery: field(path, row, "delivery")?,
             disposed: field(path, row, "disposed")?,
+            boxes_disposal: field(path, row, "boxes_disposal")?,
             observed_status: field(path, row, "observed_status")?,
         })
     }
@@ -1148,6 +1157,7 @@ impl LaneMembers {
         put(row, "cycle", self.cycle.as_ref())?;
         put(row, "delivery", self.delivery.as_ref())?;
         put(row, "disposed", self.disposed.as_ref())?;
+        put(row, "boxes_disposal", self.boxes_disposal.as_ref())?;
         put(row, "observed_status", self.observed_status.as_ref())
     }
 }

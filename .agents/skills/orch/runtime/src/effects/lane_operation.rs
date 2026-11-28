@@ -28,7 +28,7 @@ use agent_runtime::harness::Harness;
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
-use super::{Run, close, lane_for_intent, read_intent, refused};
+use super::{Run, close, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
 use crate::mailbox::Mailbox;
 use crate::ops::{
@@ -880,7 +880,6 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
     } else {
         None
     };
-    let mut unsettled = None;
     let mut comment = None;
     let mut written = agent_runtime::effects::apply_outcome_with(&run.engine, outcome, |wire| {
         wire.principal_keys = Some(keys);
@@ -896,43 +895,30 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
             {
                 let mut boxes_disposed = false;
                 match close::landing(run.settings, lane, &members) {
-                    Some(boxes::Completion::Settled(note)) => {
-                        if let Some(note) = note {
-                            observation["boxes_note"] = json!(note);
-                        }
+                    Some(boxes::Completion::Settled(Some(note))) => {
+                        observation["boxes_note"] = json!(note);
                     }
                     Some(boxes::Completion::Unsettled {
                         note,
                         comment: text,
                     }) => {
                         observation["boxes_note"] = json!(note);
-                        if members.disposed.as_ref().is_some_and(|d| d.of.boxes()) {
+                        if members.box_disposal().is_some() {
                             boxes_disposed = true;
                             comment = text;
                         } else {
-                            let mut words = note.split_whitespace();
-                            let state = words.next().unwrap_or("").trim_start_matches("boxes-");
-                            let cause = words
-                                .find_map(|w| w.strip_prefix("cause="))
-                                .unwrap_or("unread");
-                            unsettled = Some(refused(
-                                "boxes-unsettled",
-                                &[("item", &lane.item), ("state", state), ("cause", cause)],
-                            ));
+                            observation["cause"] = json!("boxes-unsettled");
                             wire.outcome = Outcome::Unconfirmed;
                             observation["remaining"] = json!([]);
                         }
                     }
-                    None => {}
+                    None | Some(boxes::Completion::Settled(None)) => {}
                 }
                 wire.members
                     .insert("boxes_disposed".to_owned(), json!(boxes_disposed));
             }
         }
     })?;
-    if let Some(error) = unsettled {
-        return Err(error);
-    }
     if let Some(text) = comment
         && written.recorded_now
         && written.target["lane"]["status"] == LaneStatus::Done.word()
@@ -941,7 +927,52 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
         let posted = boxes::post(run.settings, &intent.target, &text);
         observation["boxes_comment"] = json!(format!("boxes-comment={posted}"));
     }
+    if intent
+        .observation
+        .as_ref()
+        .and_then(|observation| observation.get("mail"))
+        .is_some_and(Value::is_object)
+    {
+        unread_close_mail(
+            run.engine.path,
+            &intent.target,
+            &mut written.intent.observation,
+        );
+    }
     Ok(written)
+}
+
+/// A kept receipt may now be older than the watch's cursor. Filter the
+/// reply while retaining the complete receipt in the journal.
+fn unread_close_mail(fleet: &Path, item: &str, observation: &mut Option<Value>) {
+    use crate::ops::mail::MailCursor;
+    use crate::watch::{baseline::Baseline, claim::BASELINE_FILE, mail::ClosingMail};
+
+    let Some(Value::Object(observed)) = observation else {
+        return;
+    };
+    let Some(receipt) = observed.get("mail") else {
+        return;
+    };
+    let Ok(mut mail) = serde_json::from_value::<ClosingMail>(receipt.clone()) else {
+        return;
+    };
+    let Ok(baseline) = Baseline::load(&fleet.with_file_name(BASELINE_FILE)) else {
+        return;
+    };
+    let cursor = MailCursor::parse(baseline.get("lane-mail", item));
+    if cursor.first != mail.first || (cursor.first.is_empty() && mail.count < cursor.announced) {
+        return;
+    }
+    let unread = usize::try_from(mail.count.saturating_sub(cursor.announced)).unwrap_or(usize::MAX);
+    if unread == 0 {
+        observed.remove("mail");
+    } else if let Some(announced) = mail.envelopes.len().checked_sub(unread)
+        && announced > 0
+    {
+        mail.envelopes.drain(..announced);
+        observed.insert("mail".to_owned(), json!(mail));
+    }
 }
 
 /// One standing lane obligation as a reconcile's `remaining` carries it.
