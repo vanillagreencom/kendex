@@ -799,9 +799,9 @@ enum AccountsOp {
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
-    /// A batch someone else measured, in the provider `accounts` line form,
-    /// each line judged as `pick --account` judges an account now; one
-    /// reply entry per line, in order.
+    /// Judge current usage from the provider `accounts` line format, with
+    /// one reply entry per line in input order. For Claude, the 5-hour
+    /// figure counts when supplied alongside a plan window.
     Judge {
         /// The batch's file; `-` reads it from stdin.
         #[arg(long)]
