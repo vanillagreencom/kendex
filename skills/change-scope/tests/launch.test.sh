@@ -68,6 +68,22 @@ control() { # NAME ASSERTION...
   fi
 }
 
+# Location entries can name folders that are absent from the checkout.
+while IFS='|' read -r path want; do
+  for entry in "$path" "$path/"; do
+    assert_eq "folder Location: $entry" "$want rc=0" "$(run_arm --production 1 --path "$entry")"
+  done
+done <<'FOLDERS'
+skills/orch/runtime/src/ops|standard cause=excluded-path
+skills/orch/runtime/src|standard cause=excluded-path
+.agents/skills/orch/runtime/src/ops|standard cause=excluded-path
+.github/workflows|standard cause=excluded-path
+projects/one/.codex|standard cause=configuration-source
+.gemini|standard cause=configuration-source
+skills/orch/workflows|micro cause=estimate-within-micro
+hooks/tests/fixtures|micro cause=estimate-within-micro
+FOLDERS
+
 PR_MERGE=skills/github/scripts/commands/pr-merge.sh
 rows=0
 while IFS='|' read -r args want name; do
@@ -125,11 +141,17 @@ ARM_BIN="$(mutant floor-unchecked change-scope '    change_scope_floor "$floor" 
 # The repository's own standard paths come from the main checkout's
 # settings, the local file over the root one; an unreadable one is standard.
 assert_standard_setting() { # [REPO] [location|range]
-  local setting globs want root ceiling repo="${1:-$WORK}" input="${2:-location}" args
+  local setting globs want root ceiling repo="${1:-$WORK}" input="${2:-location}" location args
   args=(--path src/main.rs)
   [ "$input" != range ] || args=(--base "$BASE" --head HEAD)
-  while IFS='|' read -r setting globs want; do
+  while IFS='|' read -r setting globs want location; do
     [ -z "${SETTING_ONLY:-}" ] || [ "$SETTING_ONLY" = "$setting" ] || continue
+    if [ -n "$location" ]; then
+      [ "$input" != range ] || continue
+      args=(--path "$location")
+    elif [ "$input" = location ]; then
+      args=(--path src/main.rs)
+    fi
     root="$repo"
     ceiling="$SANDBOX"
     if [ "$setting" = resolver-failed ]; then
@@ -154,6 +176,7 @@ assert_standard_setting() { # [REPO] [location|range]
   done <<'SETTINGS'
 resolver-failed||change_class=standard class=standard measured=false delta=- cause=base-settings-unreadable
 match|src/*.rs|change_class=standard class=standard measured=true delta=- cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/main.rs glob=src/*.rs
+folder-match|src/*.rs|change_class=standard class=standard measured=true delta=- cause=repository-standard-path setting=HARNESS_CI_STANDARD_PATHS path=src/generated/ glob=src/*.rs|src/generated/
 unset||change_class=micro class=micro measured=true delta=- cause=estimate-within-micro production=1
 empty||change_class=micro class=micro measured=true delta=- cause=estimate-within-micro production=1
 local-empty|src/*.rs|change_class=micro class=micro measured=true delta=- cause=estimate-within-micro production=1
@@ -168,7 +191,7 @@ settings_control() { # NAME SETTING LINE REPLACEMENT
   rm -rf -- "$WORK/kendex.settings.toml" "$WORK/.kendex" "$SANDBOX/nonrepo"
 }
 settings_control standard-paths match \
-  '    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then' '    if false; then'
+  '    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}" root "$2"; then' '    if false; then'
 settings_control root-refusal root-malformed \
   '    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || exit 1' \
   '    kendex_load_settings_file "$root/kendex.settings.toml" -- HARNESS_CI_STANDARD_PATHS || :'

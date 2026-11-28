@@ -15,9 +15,10 @@
 # change_class_path_load CONF reads the narrow-phase lists once. Returns 1
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
 # narrow class. Call it before the narrow or launch phase.
-# change_class_path_match PATH GLOBS [any-depth] sets PATH_MATCH_HIT on the
+# change_class_path_match PATH GLOBS [SCOPE [PHASE]] sets PATH_MATCH_HIT on the
 # first match. GLOBS is newline-separated, with bash patterns matching the
 # whole path, or with any-depth the whole path or a suffix after a `/`.
+# The launch phase also considers matches below PATH.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
 # change_scope_location_load REPO loads the narrow-phase lists and
 # CHANGE_CLASS_STANDARD_PATHS from REPO's main checkout, returning 1 with
@@ -76,19 +77,44 @@ names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
   set +f
 }
 
-change_class_path_match() { # PATH GLOBS [any-depth]
-  local glob
+# Test directory boundaries of the glob and places where a plain '*' can
+# consume a slash. In the catalog list a leading '*' admits render and nested
+# project prefixes: the entry must reach the glob's named tree at a component
+# boundary. Any-depth registry globs likewise need a named component.
+change_class_descendant_match() { # DIRECTORY GLOB SCOPE
+  local dir="$1" rest="$2" scope="$3" prefix path
+  case "$scope:$rest" in
+    catalog:\*/*) rest="${rest#\*/}"; scope=any-depth ;;
+    catalog:\**/*) rest="${rest#\*}"; scope=any-depth ;;
+  esac
+  while [[ "$rest" = *[/*]* ]]; do
+    prefix="${rest%[/*]*}"
+    path="$dir"
+    case "${rest#"$prefix"}" in
+      \*\(*) rest="$prefix"; continue ;;
+      \**) path="$dir/"; rest="$prefix"; prefix="$prefix*" ;;
+      /*) rest="$prefix" ;;
+    esac
+    # shellcheck disable=SC2053
+    if [[ "$path" = $prefix || ( "$scope" = any-depth && "$path" = */$prefix ) ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+change_class_path_match() { # PATH GLOBS [SCOPE [PHASE]]
+  local glob path="$1" scope="${3:-}" phase="${4:-}"
+  [ "$phase" != launch ] || path="${path%/}"
   PATH_MATCH_HIT=""
   while IFS= read -r glob; do
     [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$1" in
-      $glob) ;;
-      */$glob) [ "${3:-}" = any-depth ] || continue ;;
-      *) continue ;;
-    esac
-    PATH_MATCH_HIT="path=$1 glob=$glob"
-    return 0
+    # shellcheck disable=SC2053
+    if [[ "$path" = $glob || ( "$scope" = any-depth && "$path" = */$glob ) ]] ||
+      { [ "$phase" = launch ] && change_class_descendant_match "$path" "$glob" "$scope"; }; then
+      PATH_MATCH_HIT="path=$1 glob=$glob"
+      return 0
+    fi
   done <<<"$2"
   return 1
 }
@@ -152,21 +178,21 @@ change_class_path() { # PATH PHASE
   CHANGE_CLASS_PATH=""
   CHANGE_CLASS_PATH_CAUSE=""
   if [ "$2" = launch ]; then
-    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}"; then
+    if change_class_path_match "$1" "${CHANGE_CLASS_STANDARD_PATHS:-}" root "$2"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="repository-standard-path setting=HARNESS_CI_STANDARD_PATHS $PATH_MATCH_HIT"
       return 0
     fi
   fi
   if [ "$2" = before-render ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" "$CHANGE_CLASS_GEMINI_GLOB" any-depth; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_GEMINI_GLOB" any-depth "$2"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
     fi
   fi
   if [ "$2" = registry ] || [ "$2" = launch ]; then
-    if change_class_path_match "$1" "$CHANGE_CLASS_REGISTRY_GLOBS" any-depth; then
+    if change_class_path_match "$1" "$CHANGE_CLASS_REGISTRY_GLOBS" any-depth "$2"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="configuration-source $PATH_MATCH_HIT"
       return 0
@@ -175,8 +201,8 @@ change_class_path() { # PATH PHASE
   if [ "$2" = narrow ] || [ "$2" = launch ]; then
     # Markdown at any path takes the cheapest class, so a `path` glob that
     # names a whole tree, such as tools/*, holds none of its Markdown.
-    case "$1" in *.md | *.markdown) return 0 ;; esac
-    if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED"; then
+    case "${1%/}" in *.md | *.markdown) return 0 ;; esac
+    if change_class_path_match "$1" "$CHANGE_CLASS_EXCLUDED" catalog "$2"; then
       CHANGE_CLASS_PATH=standard
       CHANGE_CLASS_PATH_CAUSE="excluded-path $PATH_MATCH_HIT"
     fi
