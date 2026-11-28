@@ -536,6 +536,54 @@ path.write_text(source.replace(old, new))
 PY
   git -C "$repo" commit -qam "$shape"
 done
+# The output mappings, output steps and gates come from vg main 478029ef,
+# .github/workflows/ci.yml. Literal commands isolate gate reach from job reads.
+git -C "$repo" checkout -qb fixture-vg-gates "$static_base"
+git -C "$repo" rm -q -- .github/ci-lanes.conf
+cat >"$repo/.github/workflows/ci.yml" <<'YAML'
+name: CI
+on: [pull_request, merge_group]
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      change_class: ${{ steps.classify.outputs.change_class }}
+      lanes: ${{ steps.classify.outputs.lanes }}
+      lane_guards: ${{ steps.lanes.outputs.lane_guards }}
+      lane_test: ${{ steps.lanes.outputs.lane_test }}
+      declaration_changed: ${{ steps.declaration.outputs.declaration_changed }}
+    steps:
+      - id: classify
+        uses: vanillagreencom/kendex/.github/actions/change-class@main
+      - id: lanes
+        env:
+          LANE_VERDICTS: ${{ steps.classify.outputs.lane_verdicts }}
+        run: printf '%s\n' "$LANE_VERDICTS" >>"$GITHUB_OUTPUT"
+      - id: declaration
+        env:
+          CHANGED_PATHS: ${{ steps.classify.outputs.changed_paths }}
+          LANES_CAUSE: ${{ steps.classify.outputs.lanes_cause }}
+        run: |
+          changed=false
+          if [ "$LANES_CAUSE" != queue-only ] && grep -qxF .github/ci-lanes.conf <<<"$CHANGED_PATHS"; then changed=true; fi
+          echo "declaration_changed=$changed" >>"$GITHUB_OUTPUT"
+  guards:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || (github.event_name == 'merge_group' && needs.changes.outputs.change_class != 'render') || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_guards != 'false')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cat ./tools/peer.sh
+  test:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.declaration_changed == 'true' || (needs.changes.outputs.lanes != 'false' && needs.changes.outputs.lane_test != 'false')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cat ./tools/check.sh
+YAML
+git -C "$repo" commit -qam 'vg guards and test allow workflow exceptions beside lane reach'
+vg_gates_base="$(git -C "$repo" rev-parse HEAD)"
 # A consumer whose Rust and Vitest jobs the reader refuses keeps a reasoned
 # claim for each, beside a shell lane it proves. The Vitest job reads a file
 # before the step the reader refuses.
@@ -590,13 +638,13 @@ git -C "$repo" add -A
 git -C "$repo" commit -qm 'a claimed Cargo job runs in a linked directory'
 linked_workdir_base="$(git -C "$repo" rev-parse HEAD)"
 # The Cargo and Vitest readers each read their job, then a shape refusal
-# follows: the toolchain action, and an imported module that reads the
-# environment. The shell job tests for a file a change can add to a package
+# follows: the toolchain action, and an imported module that can load a Node
+# builtin. The shell job tests for a file a change can add to a package
 # tree Cargo scans.
 git -C "$repo" checkout -qb fixture-refused-scope "$opted_base"
 edit_workflow '      - working-directory: cargo\n' \
   '      - uses: dtolnay/rust-toolchain@stable\n      - working-directory: cargo\n'
-printf '%s\n' 'export const shared = process.env.SHARED ? 0 : 42' >"$repo/shared.mjs"
+printf '%s\n' 'export const shared = process.getBuiltinModule("node:fs").existsSync("../tools/input.sh") ? 42 : 0' >"$repo/shared.mjs"
 printf '%s\n' 'test -e ./cargo/primary/notes.txt' >>"$repo/tools/check.sh"
 printf '{"lockfileVersion":3}\n' >"$repo/web/package-lock.json"
 printf '%s\n' 'cargo rust-toolchain.toml # reason: the toolchain action picks the compiler' \
@@ -659,9 +707,9 @@ vitest_root_config_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-vitest-refused-import "$static_base"
 # The Vitest reader refuses an import it has resolved, and no shell lane reads it.
 printf '%s\n' 'cat ./tools/outer.sh' 'source ./tools/outer.sh' >"$repo/tools/check.sh"
-printf '%s\n' 'export const shared = process.env.SHARED ? 0 : 42' >"$repo/shared.mjs"
+printf '%s\n' 'export const shared = process.getBuiltinModule("node:fs").existsSync("../tools/input.sh") ? 42 : 0' >"$repo/shared.mjs"
 printf '%s\n' 'web web/fixtures/* # reason: the suite reads its fixtures at runtime' >>"$repo/.github/ci-lanes.conf"
-git -C "$repo" commit -qam 'a claimed Vitest suite imports a module that reads the environment'
+git -C "$repo" commit -qam 'a claimed Vitest suite imports a module that can load a Node builtin'
 vitest_refused_import_base="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" checkout -qb fixture-claimed-cargo "$opted_base"
 printf '%s\n' 'cargo cargo/* # reason: the toolchain file picks the compiler' >>"$repo/.github/ci-lanes.conf"
@@ -804,6 +852,66 @@ JS
 git -C "$repo" add -A
 git -C "$repo" commit -qm 'one Vitest lane reads a computed module path'
 computed_base="$(git -C "$repo" rev-parse HEAD)"
+# vg main 478029ef uses extends: true inline projects, a root @ alias and
+# inherited setupFiles. Keep the inputs literal and the suites disjoint here.
+git -C "$repo" checkout -qb fixture-vitest-literal "$runtime_base"
+mkdir -p "$repo/web/app/nested" "$repo/web/src"
+git -C "$repo" rm -q -- web/check.test.mjs
+cat >"$repo/web/vitest.config.ts" <<'TS'
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  resolve: { alias: { '@': '/src' } },
+  test: {
+    environment: 'node',
+    setupFiles: ['./src/test-setup.ts'],
+    projects: [
+      { extends: true, test: { name: 'unit', include: ['app/**/*.test.ts'] } },
+      { extends: true, test: { name: 'build', include: ['src/**/*.build.test.ts'] } },
+    ],
+  },
+})
+TS
+printf '%s\n' '{"compilerOptions":{"paths":{"@/*":["./web/src/*"]}}}' >"$repo/tsconfig.json"
+printf 'export const value = 42\n' >"$repo/web/src/aliased.ts"
+printf 'export const value = 42\n' >"$repo/web/src/setup-helper.ts"
+cat >"$repo/web/src/test-setup.ts" <<'TS'
+import { value } from './setup-helper.ts'
+if (value !== 42) throw Error('unexpected setup value')
+TS
+cat >"$repo/web/app/nested/check.test.ts" <<'TS'
+import { expect, test } from 'vitest'
+import { value } from '@/aliased'
+test('aliased module', () => expect(value).toBe(42))
+TS
+cat >"$repo/web/src/check.build.test.ts" <<'TS'
+import { expect, test } from 'vitest'
+test('build project', () => expect(true).toBe(true))
+TS
+git -C "$repo" add -A
+git -C "$repo" commit -qm 'literal Vitest projects inherit the setup and alias'
+vitest_literal_base="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -qb fixture-vitest-ts-paths "$vitest_literal_base"
+edit_file "$repo/web/vitest.config.ts" "alias: { '@': '/src' }" 'tsconfigPaths: true'
+edit_file "$repo/tsconfig.json" './web/src/*' './lib/*'
+mkdir -p "$repo/lib"
+git -C "$repo" mv web/src/aliased.ts lib/aliased.ts
+git -C "$repo" commit -qam 'Vite resolves the same alias from TypeScript paths'
+git -C "$repo" checkout -qb fixture-vitest-computed-config "$vitest_literal_base"
+edit_file "$repo/web/vitest.config.ts" '    ],\n' '    ].slice(),\n'
+git -C "$repo" commit -qam 'Vitest computes its projects'
+
+while IFS='|' read -r label source; do
+  git -C "$repo" checkout -qb "fixture-$label" "$vitest_literal_base"
+  printf '%s\n' "$source" >>"$repo/web/app/nested/check.test.ts"
+  git -C "$repo" commit -qam "$label"
+done <<'ROWS'
+vitest-process|const platform = process.platform
+vitest-fetch|const fetchFixture = () => fetch('https://example.com/')
+vitest-import-meta|const moduleUrl = import.meta.url
+vitest-node-builtin|import { basename } from 'node:path'; const filename = basename('/src/input.ts')
+vitest-file-url|const fixture = new URL('../../../shared.mjs', import.meta.url)
+ROWS
 git -C "$repo" checkout -qb fixture-shell "$opted_base"
 printf '%s\n' 'input=./shared.mjs' 'cat "$input"' >"$repo/tools/check.sh"
 git -C "$repo" commit -qam 'shell command with a computed input'
@@ -1257,7 +1365,7 @@ verdict() { sed -n "/^lane_$1=/s/^lane_$1=//p" "$2"; }
 
 # Run the fixture's output steps and evaluate its actual job conditions with
 # the same GitHub expression reader as ci-template.test.sh.
-dispatch_workflow_jobs() { # REPO CLASSIFIER_OUTPUT BASE HEAD EVENT
+dispatch_workflow_jobs() { # REPO CLASSIFIER_OUTPUT BASE HEAD EVENT JOB...
   python3 - "$@" "$TEST_DIR/lib/gh-eval.py" "$SANDBOX" <<'PY'
 import json
 import os
@@ -1266,7 +1374,7 @@ import subprocess
 import sys
 import yaml
 
-repo, classified, base, head, event, evaluator, sandbox = sys.argv[1:]
+repo, classified, base, head, event, *selected_jobs, evaluator, sandbox = sys.argv[1:]
 jobs = yaml.load((Path(repo) / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)["jobs"]
 control = jobs["changes"]
 github = {"event_name": event, "event": {"merge_group": {"base_sha": base, "head_sha": head}}}
@@ -1295,9 +1403,9 @@ def evaluate(text, context):
     ))
 
 steps = {"classify": {"outputs": read_outputs(classified)}}
-job_env = {name: evaluate(value, {"github": github}) for name, value in control["env"].items()}
+job_env = {name: evaluate(value, {"github": github}) for name, value in control.get("env", {}).items()}
 for step in control["steps"]:
-    if step.get("id") not in {"markdown", "verdict"}:
+    if step.get("id") not in {"markdown", "verdict", "lanes", "declaration"}:
         continue
     step_env = {name: evaluate(value, {"steps": steps}) for name, value in step.get("env", {}).items()}
     output = Path(sandbox) / "dispatch-step-output"
@@ -1309,7 +1417,7 @@ for step in control["steps"]:
 outputs = {name: evaluate(value, {"steps": steps}) for name, value in control["outputs"].items()}
 results = {"changes": {"result": "success", "outputs": outputs}}
 eligible = []
-for name in ("check-other", "check-scans", "check-lane-host"):
+for name in selected_jobs:
     job = jobs[name]
     needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
     context = {"github": github, "needs": {need: results[need] for need in needs}}
@@ -1336,12 +1444,17 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     vitest-copilot-sibling) base="$vitest_copilot_base" ;;
     vitest-disabled-sibling) base="$vitest_disabled_base" ;;
     vitest-unowned-disabled) base="$vitest_unowned_base" ;;
+    vitest-alias-*|vitest-setup-import) base="$vitest_literal_base" ;;
+    vitest-ts-paths-shadow) base="$(git -C "$repo" rev-parse fixture-vitest-ts-paths)" ;;
+    vitest-ts-paths|vitest-computed-config|vitest-process|vitest-fetch|vitest-import-meta|vitest-node-builtin|vitest-file-url)
+      base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
     agent-pair) base="$agent_pair_base" ;;
     command-pair) base="$command_pair_base" ;;
     shell-parent-hop) base="$parent_hop_base" ;;
     workflow-env|workflow-env-sourced|workflow-env-config|workflow-env-claimed) base="$workflow_env_base" ;;
     workflow-env-step-claimed) base="$(git -C "$repo" rev-parse fixture-workflow-env-step)" ;;
     workflow-env-*|workflow-defaults|event-gate*) base="$(git -C "$repo" rev-parse "fixture-$label")" ;;
+    vg-gates) base="$vg_gates_base" ;;
     shared-runtime) base="$shared_runtime_base" ;;
     shell-symlink) base="$symlink_base" ;;
     refused-claim-shared|refused-claim-read) base="$refused_shared_base" ;;
@@ -1412,7 +1525,8 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
     checkout-attributes|nested-attributes) printf '*.sh eol=crlf\n' >"$repo/$path" ;;
     vitest-import) printf 'export const value = 43\n' >"$repo/$path" ;;
     vitest-external|shared-runtime) printf 'export const shared = 43\n' >"$repo/$path" ;;
-    runtime-only|computed-import) printf 'export const value = 43\n' >"$repo/$path" ;;
+    runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*)
+      printf 'export const value = 43\n' >"$repo/$path" ;;
     shell-symlink) printf 'physical\n' >"$repo/$path" ;;
     dispatch-helper) printf 'BEGIN { print 43 }\n' >"$repo/$path" ;;
     cargo-external-child) printf 'pub fn value() -> u8 { 43 }\n' >"$repo/$path" ;;
@@ -1435,7 +1549,7 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$label"
   case "$label" in
-  vitest-inherited|shared-runtime|runtime-only|computed-import)
+  vitest-inherited|shared-runtime|runtime-only|computed-import|vitest-alias-read|vitest-setup-import|vitest-ts-paths*)
     [ -x "$trusted/web/node_modules/.bin/vitest" ] && [ -x "$repo/web/node_modules/.bin/vitest" ]
     base_status=0 head_status=0
     (cd "$trusted/web" && ./node_modules/.bin/vitest run) >"$SANDBOX/base-vitest-log" 2>&1 || base_status=$?
@@ -1541,10 +1655,12 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
           dispatch-scan-readme)
             assert_eq "$label $implementation class" trivial "$(sed -n 's/^change_class=//p' "$output")"
             assert_eq "$label $implementation scan and prerequisite run" 'check-other,check-scans' \
-              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event")" ;;
+              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event" \
+                check-other check-scans check-lane-host)" ;;
           dispatch-scan-prerequisite)
             assert_eq "$label $implementation ordinary eligible jobs" 'check-other,check-scans,check-lane-host' \
-              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event")" ;;
+              "$(dispatch_workflow_jobs "$repo" "$output" "$base" "$head" "$event" \
+                check-other check-scans check-lane-host)" ;;
           dispatch-scan-gated)
             assert_eq "$label $implementation rejected prerequisite" 'unsupported-scan-prerequisite job=check-other' \
               "$(sed -n 's/^lane-reach: cause=//p' "$log")" ;;
@@ -1583,6 +1699,15 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
               "$(sed -n 's/^lane-reach: \(job=check-lane-host cause=computed-command.*\)/\1/p' "$log")" ;;
         esac
       done ;;
+    vg-gates)
+      for implementation in action local; do
+        output="$SANDBOX/$implementation"
+        for lane in guards test; do
+          assert_eq "$label $implementation no input reaches $lane" false "$(verdict "$lane" "$output")"
+        done
+      done
+      assert_eq "$label non-render merge group runs guards alone" guards \
+        "$(dispatch_workflow_jobs "$repo" "$SANDBOX/action" "$base" "$head" "$event" guards test)" ;;
   esac
   if [ -n "$ungated" ]; then
     for implementation in action local; do
@@ -1623,6 +1748,9 @@ while IFS='|' read -r label path shell cargo web installed event expected_gate s
       refused_jobs='job=cargo cause=working-directory-unproved,job=web cause=opaque-npm-lock' ;;
     linked-workdir-target|linked-workdir-miss) refused_jobs='job=cargo cause=indirect-path,job=web cause=opaque-npm-lock' ;;
     vitest-refused-import) refused_jobs='job=web cause=vitest-opaque-source' ;;
+    vitest-file-url) refused_jobs='job=web cause=vitest-opaque-source' ;;
+    vitest-computed-config) refused_jobs='job=web cause=vitest-opaque-config' ;;
+    computed-import) refused_jobs='job=web cause=vitest-runtime-import' ;;
     vitest-root-config) refused_jobs='job=web cause=vitest-loaded-config' ;;
     cargo-tool-failure) refused_jobs='job=cargo cause=cargo-exit-1' ;;
     vitest-owner-unresolved) refused_jobs='job=web cause=vitest-import-owner-unresolved' ;;
@@ -1709,6 +1837,7 @@ workflow-env-option|tools/input.sh||||
 workflow-defaults|tools/input.sh||||
 event-gate|tools/input.sh|true||false|false
 event-gate-unguarded|tools/input.sh||||
+vg-gates|tools/other/context.sh||||
 agent-pair|.codex/agents/auditor.toml|true||false|false
 command-pair|.claude/commands/audit.md.disabled|true||false|false
 shell-unresolved|shared.mjs|true|true|true|true
@@ -1754,6 +1883,17 @@ vitest-package-sibling|.codex/skills/math/sibling.mjs|||true||merge_group|true,d
 vitest-copilot-sibling|.github/skills/math/sibling.mjs|||true||merge_group|true,derived-reach
 vitest-disabled-sibling|.github/skills/math/sibling.mjs|||true|
 vitest-unowned-disabled|.github/skills/math/sibling.mjs|||true|
+vitest-alias-read|web/src/aliased.ts|||true|
+vitest-alias-unread|web/spare-é.mjs|||false|
+vitest-ts-paths|lib/aliased.ts|||true|
+vitest-ts-paths-shadow|lib/aliased.js|||true|
+vitest-setup-import|web/src/setup-helper.ts|||true|
+vitest-computed-config|web/spare-é.mjs|||true|
+vitest-process|web/spare-é.mjs|||false|
+vitest-fetch|web/spare-é.mjs|||false|
+vitest-import-meta|web/spare-é.mjs|||false|
+vitest-node-builtin|web/spare-é.mjs|||false|
+vitest-file-url|web/spare-é.mjs|||true|
 vitest-unread|web/spare-é.mjs|false||false|false
 vitest-ancestor-config|vite.config.mjs|false||true|false
 vitest-root-config|lib/new.test.mjs|false||true|false
