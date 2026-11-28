@@ -6,13 +6,25 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 ## [Unreleased]
 
-## [1.24.1] - 2026-11-28
+## [1.25.0] - 2026-11-28
+
+### Added
+
+- Consumer refresh now includes catalog history in refresh pull requests and direct landing commits so repository owners can see what changed in the catalogs they use.
+- Catalog hook authors can declare `reads-registration: true` to mark a Pi hook that needs to know which installation started it. If a legacy carrier cannot identify that installation, the hook refuses to run or reports the ambiguity and skips its work when declared advisory.
 
 ### Changed
 
 - A consumer refresh whose render rewrites the refresh caller `.github/workflows/kendex-refresh.yml` now lands through the landing app with no pull request, CI run or review, like any other proved render. The shared workflow requests Workflows write beside Contents write for the landing token, since GitHub refuses an app's push that changes a workflow file without it. A landing app or installation that lacks Workflows write fails the mint, and every update keeps the rolling pull request.
 
   You do: give the landing app Workflows read and write in its settings, and accept the new permission on each installation.
+
+- The shared refresh classifier can now mark eligible kendex manifest, JSON settings, or Markdown changes as `trivial` regardless of line count. Changes to catalog sources or the manifest that selects them, kendex locks, harness registries, and paths configured for standard review still take the standard route. An otherwise trivial range keeps the standard route when it cannot verify a changed inventoried render.
+
+  You do: remove `HARNESS_CI_TRIVIAL_MAX_LINES` and `HARNESS_CI_TRIVIAL_SETTINGS` from your kendex settings if present.
+
+- The shared refresh classifier counts Cargo lockfile lines separately when it can verify that the lock belongs to the changed workspace manifest. Its diagnostics distinguish a path outside the render inventory from an inventory it could not read.
+- The shared refresh classifier derives CI lane eligibility from workflow inputs and commands, including runner dependencies, and from declared path claims. A refusal to verify a generated file beside ordinary Markdown keeps CI lanes eligible.
 
 ### Removed
 
@@ -3199,8 +3211,8 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 
 Releases before 1.0.0 (the vstack-era numbering up to 5.0.1) are not listed here; their history is in git.
 
-[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.24.1..HEAD
-[1.24.1]: https://github.com/vanillagreencom/kendex/releases/tag/v1.24.1
+[Unreleased]: https://github.com/vanillagreencom/kendex/compare/v1.25.0..HEAD
+[1.25.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.25.0
 [1.24.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.24.0
 [1.23.0]: https://github.com/vanillagreencom/kendex/releases/tag/v1.23.0
 [1.22.2]: https://github.com/vanillagreencom/kendex/releases/tag/v1.22.2
