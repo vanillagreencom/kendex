@@ -59,12 +59,16 @@ class LaneMail:
         self.snapshots: Dict = {}
         self.jq_defs = ""
         self.box: Optional[Path] = None
+        self._retention = None
         if not os.access(self.script, os.X_OK):
             raise Refusal("orch-missing", str(root))
 
-    def _run(self, *args: str) -> Tuple[int, str, str]:
+    def _run(self, *args: str, presenter_bound: bool = False) -> Tuple[int, str, str]:
+        # The presentation verbs and their receipts travel with the relay.
+        # Destination-owned code still handles ordinary directives and replies.
+        script = MAILBOX_SCRIPTS / "lane-mail" if presenter_bound else self.script
         try:
-            result = run_bounded([str(self.script), *args], self.root, LANE_MAIL_TIMEOUT_SECONDS)
+            result = run_bounded([str(script), *args], self.root, LANE_MAIL_TIMEOUT_SECONDS)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired as err:
             raise Refusal("lane-mail-failed", f"timeout={LANE_MAIL_TIMEOUT_SECONDS} command={args[0]}") from err
@@ -266,7 +270,39 @@ class LaneMail:
         assert self.store is not None, "an envelope to judge comes from a mailbox read"
         return bool(self._position_rule("passed")(position, envelope, self.snapshots))
 
-    def answer(self, ask_id: str, text: str, delivery_id: str) -> Tuple[str, str]:
+    def retains_presentations(self) -> bool:
+        """Ask the bound mailbox's installed compactor, not the relay's copy."""
+        root = self.box.parents[2] if self.box is not None else self.root
+        compactor = (root / LANE_MAIL).parent / "lib/lane-mail-store.py"
+        try:
+            info = compactor.stat()
+        except OSError:
+            return False
+        stamp = (compactor, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+        if self._retention is None or self._retention[0] != stamp:
+            try:
+                result = run_bounded([sys.executable, "-IB", str(compactor), "presentation-retention"],
+                                     root, LANE_MAIL_TIMEOUT_SECONDS)
+                supported = result.returncode == 0 and result.stdout.strip() == "owner-presentation"
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+            self._retention = stamp, supported
+        return self._retention[1]
+
+    def present(self, ask_id: str, presenter: str, thread_url: str = "", thread_ts: str = "") -> Optional[Dict]:
+        args = ("--thread-url", thread_url, "--thread-ts", thread_ts) if thread_url else ()
+        code, out, err = self._run("present", "--item", "overseer", "--id", ask_id, "--presenter", presenter, *args,
+                                   presenter_bound=True)
+        if code == 0:
+            try:
+                return json.loads(out)
+            except ValueError as error:
+                raise Refusal("lane-mail-failed", "owner-presentation receipt=unread") from error
+        if _first(err).startswith(f"lane-mail: resolved-already={ask_id} id="):
+            return None
+        raise Refusal("lane-mail-failed", err.strip())
+
+    def answer(self, ask_id: str, text: str, delivery_id: str, presenter: str = "") -> Tuple[str, str]:
         """Deliver an answer without closing; the mailbox judges repeats
         before closure, so a replay never becomes a directive. The relay
         reads only messages from users the binding names as owner, so the
@@ -274,12 +310,14 @@ class LaneMail:
         path = self._text_file(text)
         send = ("send", "--item", "overseer", "--re", ask_id, "--file", path, "--delivery-id", delivery_id)
         try:
-            code, out, err = self._run(*send, "--sender", "owner")
+            binding = ("--presenter", presenter) if presenter else ()
+            code, out, err = (self._run(*send, "--sender", "owner", *binding, presenter_bound=True) if presenter
+                              else self._run(*send, "--sender", "owner"))
             # A bound root whose installed mailbox package predates --sender
             # refuses it before it appends anything. The same delivery then
             # lands with no sender and reads as unrecorded. Remove this retry
             # once no root a relay binds runs a lane-mail without --sender.
-            if code != 0 and _first(err) == "lane-mail: option-unknown=--sender":
+            if not presenter and code != 0 and _first(err) == "lane-mail: option-unknown=--sender":
                 code, out, err = self._run(*send)
         finally:
             os.unlink(path)

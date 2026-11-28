@@ -1836,16 +1836,16 @@ assert_eq "$(jq -r '.text' "$LANE/tmp/lane-mail/tmp/lane-mail/KEN-1/to-overseer.
   "control: the old root behavior writes the question where no overseer reads"
 
 # shellcheck disable=SC2016  # Mutations use literal production text.
-mutant checked-reads 'ask | notice | send | resolve | peer | peer-receive)' \
-  'ask | notice | send | resolve | peer | peer-receive | pending | drain | inbox | events | watch | wait)'
+mutant checked-reads 'ask | notice | send | resolve | present | peer | peer-receive)' \
+  'ask | notice | send | resolve | present | peer | peer-receive | pending | drain | inbox | events | watch | wait)'
 LANE="$TMP_ROOT/root-lane"
 ROOT_ASSERT_RC=0
 ( FAIL=0; root_reads; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/read-root-control.out" || ROOT_ASSERT_RC=$?
 assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to reads fails the same read-root assertions'
 
 # shellcheck disable=SC2016  # Mutations use literal production text.
-mutant checked-compact 'ask | notice | send | resolve | peer | peer-receive)' \
-  'ask | notice | send | resolve | compact | peer | peer-receive)'
+mutant checked-compact 'ask | notice | send | resolve | present | peer | peer-receive)' \
+  'ask | notice | send | resolve | present | compact | peer | peer-receive)'
 ROOT_ASSERT_RC=0
 ( FAIL=0; root_compact; [ "$FAIL" -eq 0 ] ) >"$TMP_ROOT/compact-root-control.out" || ROOT_ASSERT_RC=$?
 assert_eq "$ROOT_ASSERT_RC" 1 'control: applying checkout validation to compact fails the same outside-Git assertion'
@@ -1938,7 +1938,7 @@ mutant interval-overshoots '[ "$LEFT" -ge "$NAP" ] || NAP="$LEFT"' ':'
 clock_lm wait --item KEN-1 --id "$OVERSHOOT_ID" --timeout 1 --interval 5
 assert_eq "$RC=$SLEPT" "124=5" "control: without the cap the wait sleeps the whole interval past its deadline"
 
-mutant unowned-send 'if [ "$2" = own ] || [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] || [ "$VERB" = replace ]; then' 'if false; then'
+mutant unowned-send '    { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"' '    :'
 LANE="$PEER_A"
 lm send --item KEN-1 --root "$PEER_B" --directive --file "$(text d 'Not yours.')"
 assert_eq "$RC=$(jq -r '.text' < "$PEER_B/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0=Not yours." \

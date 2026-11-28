@@ -1576,14 +1576,18 @@ def main():
             command.add_argument("--last", type=int)
     command = verbs.add_parser("owner-asks")
     operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
-    for action in ("list", "reply", "done", "later"):
+    for action in ("list", "reply", "done", "later", "present", "deliver"):
         operation = operations.add_parser(action)
         operation.add_argument("--home", required=True)
         if action == "list":
             operation.add_argument("--view", choices=("active", "snoozed"), required=True)
             operation.add_argument("--cursor")
-        else:
+        elif action != "deliver":
             operation.add_argument("--id", required=True)
+            if action == "present":
+                operation.add_argument("--destination", required=True)
+                operation.add_argument("--root", required=True)
+                operation.add_argument("--reserved", action="store_true")
     args = parser.parse_args()
     if not clean(args.home) or (args.verb == "start" and args.account is not None and not clean(args.account)):
         parser.error("path")

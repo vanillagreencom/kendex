@@ -31,6 +31,10 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 
 - Repeat setup and owner changes retain `bound_at`. Only a journal reset starts a new time.
 - A relay whose `SLACK_OWNERS` differs from `owners` re-resolves the ids and rewrites the binding before it delivers anything more.
+- `listen --presentation-threads` gives Jarvis the current presentation stamps and Slack permalinks for the configured channel. A missing thread has no entry. Jarvis matches a stamp and presenter to the mailbox receipt before using the relay's link.
+- Direct asks use presentation receipts when the bound mailbox's installed compactor retains them. An older compactor keeps the pre-presentation direct Slack route until the mailbox package is upgraded.
+- Delegated presentation is on hold. Previously posted notices can still be confirmed and their replies delivered.
+- An established presentation keeps its original binding through a cleanup-check failure, including when Slack deletes its root and the overdue reminder replaces it. A bound reply advances its journal delivery and Slack read mark only after its mailbox accepts it.
 
 ## Queue delivery
 
@@ -129,6 +133,8 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 - `kind` is `ask`, `notice` or `answer`.
 - `state` is `open` for an ask not yet closed, and `resolved` for a completed post, not question closure.
 - `thread` is the stamp the post is under, the ask's own for an ask.
+- `presenter` identifies an ask or presentation notice whose first receipt binds its replies. A delegated presentation remains a notice in the journal and uses the notice id in the parent pointer.
+- A later `out` line with `permalink` records the link Slack returned for that presentation's channel and thread stamp.
 - A forwarded directive's root is a `notice` line under the directive's own `id`. Its `thread` is the root's stamp, which the directive's notices post under.
 
 **`out`, `state` = `file`**
@@ -154,6 +160,8 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 **`out`, `state` = `unknown`**
 
 - `--status` shows it. It is never repeated.
+- An ask or presentation notice carries its envelope id in Slack message metadata. A history read, bot event or targeted read of a reply's parent can confirm the root. Replay binds it as the original ask or notice. That readback supplies the thread link for the mailbox.
+- A replacement root for a deleted approval thread follows the same rule. The new binding replaces the confirmed permalink and keeps the original ask and presenter.
 
 **`out`, `state` = `retry`**
 
@@ -164,6 +172,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 **`out`, `state` = `refused`**
 
 - `reason` is the refusal key: `secret-value`, `file-unreadable`, `text-too-long`, `text-not-literal` or `continuation-changed`.
+- `overdue-history-unknown` suppresses a historical reminder when the mailbox confirms the ask's thread but the journal has lost its posting history. The relay omits this deliberate suppression from its failed-post status.
 
 **`resolved`**
 
@@ -234,7 +243,7 @@ Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decim
 
 A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` line carries it for an uploaded file's share. Other roots get one `parent` line from the API.
 
-- `compact` keeps each thread's root, cached parent and envelope mappings while the ask is open or its root, read position or last delivered or posted message is within `SLACK_THREAD_DAYS`.
+- `compact` keeps presented threads so a late live reply can reach the original asker. It keeps other thread mappings while the ask is open or its root, read position or last delivered or posted message is within `SLACK_THREAD_DAYS`.
 - Generation delivery knowledge and its receipt marks survive that horizon.
 - Live events have no thread-age gate; the horizon bounds reconnect thread reads and other journal history.
 - Catch-up reads every open ask and every thread whose parent or latest relay activity is within the horizon, including parents absent from the channel history read.

@@ -214,6 +214,7 @@ TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 # Slack, so a notice whose --ref names the directive posts, held or not.
 # The orch watch's report notice names no directive: an ordinary notice.
 COMMAND_KEY = "command:"
+OVERDUE_HISTORY_UNKNOWN = "overdue-history-unknown"
 # A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
 # sends the request under this delivery key, its text ending in one
 # provenance line of these fields in this order. The relay reads this shape,
@@ -531,6 +532,10 @@ class RootRelay:
         return self.binding.channel
 
     @property
+    def presenter(self) -> str:
+        return "slack:" + self.channel
+
+    @property
     def mail(self) -> LaneMail:
         if self._mail is None:
             self._mail = LaneMail(self.path)
@@ -630,7 +635,8 @@ class RootRelay:
         if presence_fresh(touched, self.presence, now):
             if not self.state.held:
                 self.journal.append(t="hold", at=format_at(touched))
-            self.post_events([routed for routed in self.routes(self.mail.events()) if routed[1] == "reply"])
+            self.post_events([routed for routed in self.routes(self.mail.events())
+                              if routed[1] in ("reply", "confirm")])
         else:
             events = self.mail.events()
             if self.state.held:
@@ -671,8 +677,9 @@ class RootRelay:
         return touched
 
     def live(self, thread: Thread) -> bool:
-        """Whether catch-up re-reads a known thread within its lookback."""
-        return not thread.missing and (thread.open or max(float(thread.ts), thread.active) >= self.settings.horizon(self.clock()))
+        """Whether catch-up re-reads a known thread or a retained presentation."""
+        return not thread.missing and (
+            bool(thread.presenter) or thread.open or max(float(thread.ts), thread.active) >= self.settings.horizon(self.clock()))
 
     def parent_context(self, thread_ts: str, message: Optional[Dict] = None, retries: int = RETRIES) -> Dict:
         """Read a parent's small context once, persisting it across restarts."""
@@ -739,12 +746,19 @@ class RootRelay:
         horizon = self.settings.horizon(self.clock())
         position = self.state.seen_ts
         oldest = position if self.discovered or float(position) <= horizon else f"{horizon:.6f}"
-        messages = list(self.api.paged("conversations.history", "messages", retries=0, channel=self.channel, oldest=oldest))
+        messages = list(self.api.paged("conversations.history", "messages", retries=0, channel=self.channel, oldest=oldest,
+                                       include_all_metadata="true" if self.state.unknown else None))
+        for message in messages:
+            self.recover_presentation(message, bot_user)
         messages.sort(key=lambda m: float(m["ts"]))
         new = [m for m in messages if float(m["ts"]) > float(position)]
         for message in new:
             self.bind_file_share(message)
             self.handle(message, bot_user)
+        if not self.discovered:
+            # A retained ask can fall outside the history window while its
+            # thread still owes an offline reply.
+            self.recover_confirmed_presentations()
         # A first reply can arrive after history advances past its parent.
         parents = {str(m["ts"]): m for m in messages if float(m["ts"]) >= horizon or m.get("latest_reply")}
         replied = {str(m["ts"]): float(m.get("latest_reply") or 0) for m in messages}
@@ -791,6 +805,7 @@ class RootRelay:
         thread_ts = str(message.get("thread_ts") or ts)
         if active and thread_ts == ts:
             self.bind_file_share(message)
+            self.recover_presentation(message, bot_user)
         self.handle(message, bot_user, path=path, active=active)
         if active:
             self.pending_live.pop(ts, None)
@@ -837,7 +852,7 @@ class RootRelay:
         # append and the mark, and answers it with the envelope that landed.
         if ts in self.state.delivered or ts in self.state.ignored:
             return
-        if message.get("bot_id") or message.get("user") == bot_user:
+        if message.get("bot_id") or message.get("app_id") or message.get("user") == bot_user:
             return
         if message.get("subtype") not in ROUTED_SUBTYPES:
             return
@@ -862,11 +877,19 @@ class RootRelay:
         text = "\n".join(lines)
         delivery = f"{self.channel}:{ts}"
         thread = self.state.threads.get(thread_ts) if thread_ts != ts else None
+        if thread_ts != ts and (thread is None or thread.kind == "parent"):
+            self.recover_reply_presentation(thread_ts, bot_user)
+            thread = self.state.threads.get(thread_ts)
         generation = reader_generation(self.path)
         # The mailbox judges whether an ask is still open; the journal's own
         # flag only decides how often the thread is read.
         if thread is not None and thread.kind == "ask":
-            outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
+            if thread.presenter:
+                outcome, answer_id = self.mail.answer(thread.envelope, text, delivery, thread.presenter)
+                if outcome != "answered":
+                    raise Refusal("lane-mail-failed", f"bound-answer-pending id={thread.envelope} delivery={delivery}")
+            else:
+                outcome, answer_id = self.mail.answer(thread.envelope, text, delivery)
             if outcome == "answered":
                 self.journal.append(t="in", channel=self.channel, ts=ts, kind="answer", id=answer_id, thread=thread_ts,
                                     generation=generation)
@@ -1086,9 +1109,9 @@ class RootRelay:
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
-        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume, never a reply,
-        `overdue` for a reserved ask with a posted thread or unresolved post
-        open past its deadline, or `skip`
+        `answer`, `resolution`, `seen` for an ask or notice the Jarvis session read on resume,
+        `confirm` for a recorded presentation thread,
+        `overdue` for a posted reserved ask open past its deadline, or `skip`
         for another that never posts; answers carry their ask's record, and a
         reply to a forwarded directive carries that directive with its `citation`."""
         closures = {str(e["id"]): e for e in events
@@ -1122,16 +1145,29 @@ class RootRelay:
         routed = []
         for envelope in events:
             env_id = str(envelope["id"])
+            presentation = envelope.get("presentation") or {}
+            presenting = envelope.get("kind") == "notice" and "route" in presentation
+            thread = state.threads.get(state.by_envelope.get(env_id, ""))
+            legacy_ask = (envelope.get("kind") == "ask" and env_id not in closed
+                          and not presentation and thread is not None and thread.kind == "ask")
+            if (thread is not None and not thread.missing
+                    and (presentation.get("thread_ts") != thread.ts or not thread.permalink)
+                    and (presenting or presentation.get("presenter") == self.presenter
+                         or legacy_ask and self.mail.retains_presentations())):
+                routed.append((envelope, "confirm", {}))
+            if presenting:
+                # Delegated notices can still acquire readback for posts that
+                # already landed. A pending notice sends nothing.
+                continue
             if env_id in closures:
                 thread_ts = state.by_envelope.get(str(envelope.get("re", "")))
                 if thread_ts in state.threads and env_id not in state.resolutions:
                     routed.append((envelope, "resolution", {}))
                 if envelope["kind"] == "resolution":
                     continue
-            # A resume carries skipped asks without a post. A reminder needs
-            # a posted thread or a post whose response remains unknown.
+            # The original post must be confirmed before a reminder can post.
             if (envelope.get("reserved") is True and env_id in state.carried and env_id not in closed
-                    and (env_id in state.by_envelope or env_id in state.unknown)
+                    and env_id in state.by_envelope
                     and env_id not in answered and overdue_id(env_id) not in state.carried
                     and at_epoch(str(envelope["deadline"])) <= self.clock()):
                 routed.append((envelope, "overdue", {}))
@@ -1169,7 +1205,8 @@ class RootRelay:
             elif at < horizon:
                 route = "skip"
             elif owner and kind == "ask":
-                route = "skip" if env_id in closed else "ask"
+                route = "skip" if (env_id in closed or presentation.get("thread")
+                                   or presentation.get("presenter", self.presenter) != self.presenter) else "ask"
             elif self.started_before(envelope):
                 route = "skip"
             elif reply:
@@ -1205,6 +1242,8 @@ class RootRelay:
                     landed.append(str(envelope["id"]))
             elif route == "overdue":
                 self.post_overdue(envelope)
+            elif route == "confirm":
+                self.confirm_presentation(envelope)
             elif route in ("notice", "reply"):
                 self.skipped.discard(str(envelope["id"]))
                 self.post_notice(envelope, record)
@@ -1229,7 +1268,11 @@ class RootRelay:
         journaled unknown and never repeated. A read cannot have posted the
         envelope, so its lost response can retry. A dead token stops the relay;
         anything else journals retry, fails this poll and leaves the envelope for the next."""
-        if not read and err.key == "slack-response-lost":
+        # Slack documents that internal_error and fatal_error can follow a
+        # successful chat.postMessage write, just like a lost response.
+        ambiguous = (kind in ("ask", "overdue") and err.error in ("internal_error", "fatal_error")
+                     and err.value.startswith("chat.postMessage "))
+        if not read and (err.key == "slack-response-lost" or ambiguous):
             self._out(envelope, kind, "unknown")
             print_refusal(err)
             return
@@ -1241,7 +1284,7 @@ class RootRelay:
 
     def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
               attach: str = "", admission: Optional[Callable[[], bool]] = None,
-              notice_followup: bool = False) -> Optional[str]:
+              notice_followup: bool = False, presentation: bool = False) -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
@@ -1279,10 +1322,11 @@ class RootRelay:
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
             root = progress["thread"] if progress else thread_ts
             start = progress["next"] if progress else 0
+            metadata = {"event_type": "kendex_owner_presentation", "event_payload": {"id": env_id}} if presentation else None
             for index in range(start, len(parts)):
                 self._out(envelope, kind, "inflight")
                 ts = str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=root,
-                                       **{body_arg: parts[index]})["ts"])
+                                       metadata=metadata, **{body_arg: parts[index]})["ts"])
                 root = root or ts
                 if len(parts) > 1:
                     self._out(envelope, kind, "progress", thread=root, next=index + 1, hash=digest)
@@ -1292,6 +1336,92 @@ class RootRelay:
                 self.thread_refused(err, thread_ts)
             self.post_refused(err, envelope, kind)
             return None
+
+    def recover_presentation(self, message: Dict, bot_user: str) -> None:
+        """Rebind an accepted post after a stop before its Slack stamp was saved."""
+        if message.get("user") != bot_user or str(message.get("thread_ts") or message["ts"]) != str(message["ts"]):
+            return
+        metadata = message.get("metadata") or {}
+        if metadata.get("event_type") != "kendex_owner_presentation":
+            return
+        env_id = (metadata.get("event_payload") or {}).get("id")
+        if not isinstance(env_id, str):
+            return
+        kind = self.state.unknown.get(env_id)
+        at = format_at(float(message["ts"]))
+        if kind in ("ask", "presentation"):
+            self.bind_presentation({"id": env_id, "at": at}, message, kind)
+        elif kind == "overdue" and env_id.endswith(":overdue"):
+            self.bind_presentation({"id": env_id[:-len(":overdue")], "at": at}, message, "ask")
+            self._out({"id": env_id, "at": at}, "overdue", "resolved", thread=message["ts"])
+
+    def recover_reply_presentation(self, thread_ts: str, bot_user: str) -> None:
+        self.recover_confirmed_presentations(thread_ts)
+        thread = self.state.threads.get(thread_ts)
+        if thread is not None and thread.kind == "ask":
+            return
+        if any(kind in ("ask", "presentation", "overdue") for kind in self.state.unknown.values()):
+            # Queue mode has no channel history scan for unconfirmed posts.
+            roots = self.api.get("conversations.replies", channel=self.channel, ts=thread_ts, limit=1,
+                                 include_all_metadata="true")["messages"]
+            if roots and str(roots[0]["ts"]) == thread_ts:
+                self.recover_presentation(roots[0], bot_user)
+
+    def recover_confirmed_presentations(self, thread_ts: Optional[str] = None) -> None:
+        # The originating mailbox keeps a confirmed binding even when the
+        # relay has lost its journal. A refused read leaves the reply due.
+        events = self.mail.events()
+        closed = {e.get("re") for e in events if e["box"] == "to-lane" and e.get("mail_class") == "close"}
+        for envelope in events:
+            if envelope["box"] != "to-overseer" or envelope["kind"] != "ask" or envelope.get("to") != "owner":
+                continue
+            presentation = envelope.get("presentation") or {}
+            ts = presentation.get("thread_ts")
+            if (presentation.get("presenter") != self.presenter or not ts or not presentation.get("thread")
+                    or (thread_ts is not None and ts != thread_ts)):
+                continue
+            thread = self.state.threads.get(ts)
+            if thread is None or thread.kind == "parent":
+                env_id = envelope["id"]
+                reminder = overdue_id(env_id)
+                if (envelope.get("reserved") is True and env_id not in closed
+                        and reminder not in self.state.carried and at_epoch(str(envelope["deadline"])) <= self.clock()):
+                    # The lost journal may have recorded a reminder. Refuse
+                    # its resend before this binding makes it eligible.
+                    self._out(dict(envelope, id=reminder), "overdue", "refused", reason=OVERDUE_HISTORY_UNKNOWN)
+                # Link publication still requires a Slack permalink read.
+                self.bind_presentation(envelope, {"ts": ts}, "ask", closed=env_id in closed)
+
+    def bind_presentation(self, envelope: Dict, message: Dict, kind: str, retained: bool = True,
+                          *, closed: bool = False) -> None:
+        ask = kind == "ask"
+        presenter = (self.presenter if ask else str(envelope["id"])) if retained else ""
+        self._out(envelope, "ask" if ask else "notice", "open" if ask and not closed else "resolved",
+                  thread=message["ts"], presenter=presenter,
+                  parent=self.parent_of(message, "bot", str(envelope["id"])))
+
+    def confirm_presentation(self, envelope: Dict) -> None:
+        thread = self.state.post_thread(str(envelope["id"]))
+        if thread is not None:
+            try:
+                presentation = envelope.get("presentation")
+                if presentation is None:
+                    # A previous relay already posted this ask and retained its
+                    # binding. Give that binding a receipt without posting again.
+                    presentation = self.mail.present(str(envelope["id"]), self.presenter)
+                    if presentation is None or presentation.get("presenter") != self.presenter:
+                        return
+                    self.bind_presentation(envelope, {"ts": thread}, "ask")
+                bound = self.state.threads[thread]
+                if not bound.permalink:
+                    permalink = self.api.get("chat.getPermalink", channel=self.channel, message_ts=thread)["permalink"]
+                    self._out(envelope, bound.kind, "open" if bound.open else "resolved", thread=thread,
+                              presenter=bound.presenter, permalink=permalink)
+                self.mail.present(str(envelope["id"]), presentation["presenter"], bound.permalink, thread)
+            except Refusal as err:
+                # Confirming an existing post must never make it postable again.
+                if self.post_failed is None:
+                    self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
     def ask_pieces(self, envelope: Dict, header: str) -> List[Union[str, Verbatim]]:
         """The whole question under `header`: its text, any draft, and its
@@ -1332,6 +1462,13 @@ class RootRelay:
 
     def post_ask(self, envelope: Dict) -> bool:
         """Whether the ask landed and its `open` line was journaled."""
+        established = (envelope.get("presentation") or {}).get("presenter") == self.presenter
+        retained = established or self.mail.retains_presentations()
+        if retained:
+            receipt = self.mail.present(str(envelope["id"]), self.presenter)
+            if receipt is None or receipt.get("presenter") != self.presenter:
+                return False
+            envelope = dict(envelope, presentation={"presenter": self.presenter})
         pieces = self.ask_pieces(envelope, f"{mention(self.binding)} Question from {envelope.get('from', 'overseer')}:")
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
@@ -1343,12 +1480,13 @@ class RootRelay:
                 return False
             # The ask needs its own thread so an owner reply answers this ask.
             pieces += [f"\n\n[Referenced conversation]({permalink})"]
-        ts = self._send(envelope, "ask", pieces, None)
+        ts = self._send(envelope, "ask", pieces, None, presentation=retained)
         if ts is None:
             return False
         excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-        self._out(envelope, "ask", "open", thread=ts,
-                  parent=self.parent_of({"ts": ts, "text": excerpt}, "bot", str(envelope["id"])))
+        self.bind_presentation(envelope, {"ts": ts, "text": excerpt}, "ask", retained)
+        if retained:
+            self.confirm_presentation(envelope)
         # A reserved ask first posted past its deadline is its own reminder.
         if envelope.get("reserved") is True and at_epoch(str(envelope["deadline"])) <= self.clock():
             self._out(dict(envelope, id=overdue_id(str(envelope["id"]))), "overdue", "resolved", thread=ts)
@@ -1356,10 +1494,8 @@ class RootRelay:
 
     def post_overdue(self, envelope: Dict) -> None:
         """A reserved ask past its deadline, posted again in its thread once,
-        under its own journal id so no later poll posts it again. With no
-        thread to post in, one whose post response was lost or one Slack
-        deleted, the reminder's own thread becomes the ask's, so a reply
-        there answers the ask."""
+        under its own journal id so no later poll posts it again. If Slack
+        deleted the thread, the reminder's thread takes over its binding."""
         ask_id = str(envelope["id"])
         reminder = dict(envelope, id=overdue_id(ask_id))
         thread_ts = self.state.post_thread(ask_id)
@@ -1369,13 +1505,23 @@ class RootRelay:
         pieces: List[Union[str, Verbatim]] = (
             [f"{header}: {envelope.get('text', '')}"] if thread_ts is not None
             else self.ask_pieces(envelope, f"{header}. Question from {envelope.get('from', 'overseer')}:"))
-        landed = self._send(reminder, "overdue", pieces, thread_ts)
+        binding = self.state.threads.get(self.state.by_envelope.get(ask_id, ""))
+        established = (envelope.get("presentation") or {}).get("presenter") == self.presenter or (
+            binding is not None and binding.presenter == self.presenter)
+        retained = thread_ts is None and (established or self.mail.retains_presentations())
+        if retained and not envelope.get("presentation"):
+            receipt = self.mail.present(ask_id, self.presenter)
+            if receipt is None or receipt["presenter"] != self.presenter:
+                return
+            envelope = dict(envelope, presentation={"presenter": self.presenter})
+        landed = self._send(reminder, "overdue", pieces, thread_ts, presentation=retained)
         if landed is None:
             return
         if thread_ts is None:
             excerpt = "".join(piece if isinstance(piece, str) else piece.text for piece in pieces)
-            self._out(envelope, "ask", "open", thread=landed,
-                      parent=self.parent_of({"ts": landed, "text": excerpt}, "bot", ask_id))
+            self.bind_presentation(envelope, {"ts": landed, "text": excerpt}, "ask", retained)
+            if retained:
+                self.confirm_presentation(envelope)
         self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
     def post_notice(self, envelope: Dict, record: Optional[Dict] = None) -> None:
@@ -1471,7 +1617,8 @@ class RootRelay:
                 "last_delivered_ts": delivered,
                 "seen_ts": self.state.seen_ts,
                 "unknown": sorted(self.state.unknown),
-                "refused": sorted(self.state.refused),
+                "refused": sorted(env_id for env_id, reason in self.state.refused.items()
+                                  if reason != OVERDUE_HISTORY_UNKNOWN),
                 "open_asks": sorted(t.envelope for t in self.state.threads.values() if t.open),
                 "calls_last_minute": self.api.calls_last_minute(),
                 "connection": connection,

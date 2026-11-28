@@ -278,7 +278,7 @@ mutant session-archived 'elif (.error // "" | tostring | test("archived"; "i")) 
 lm STUB_CLAUDE_OUT="$MISSING" -- "${DIRECTIVE[@]}"
 assert_eq "err=$ERR" "err=lane-mail: session-archived=session_01CLOUD" "control: every ok false read as archived fails the not-found row"
 # shellcheck disable=SC2016
-mutant session-foreign '  elif [ "$VERB" = send ] || [ "$VERB" = resolve ] || [ "$VERB" = reserve ] || [ "$VERB" = replace ]; then' '  elif false; then'
+mutant session-foreign '    { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$1"' '    :'
 lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive" --session session_03CLOUD --account "$TMP_ROOT/.eclaude" --root "$FOREIGN"
 assert_eq "called=$(called)" "called=yes" "control: without the root check another repository's session is reached"
 # shellcheck disable=SC2016

@@ -5,6 +5,8 @@ Read when a console lists owner asks or sends Reply, Done or Later through `jarv
 ```bash
 .agents/skills/jarvis/scripts/jarvis-session owner-asks list --home HOME --view active|snoozed [--cursor CURSOR]
 .agents/skills/jarvis/scripts/jarvis-session owner-asks reply|done|later --home HOME --id ID
+.agents/skills/jarvis/scripts/jarvis-session owner-asks present --home HOME --destination KEY --root ROOT --id ASK
+.agents/skills/jarvis/scripts/jarvis-session owner-asks deliver --home HOME
 ```
 
 Each action reads one JSON object from stdin with `requestId` and `expectedRevision`. Reply requires `text`. Done takes optional evidence in `text`. Later requires `until`, a future absolute ISO time with an offset.
@@ -23,9 +25,11 @@ A registered folder that is not a git work tree, outside any repository or git m
 
 Every read runs the main's own package code with the main home's settings, as the destination's account, the control account on the control host. Mailbox `pending --to owner` supplies open asks. The public mailbox events supply the tracker-posting records. Linear reads run on the main with its own credentials.
 
+Jarvis's own questions enter the page when sent. An overseer's question enters when the originating mailbox records its first presenter. An owner answer or resolution removes the row. An answer without a recorded owner sender leaves the row visible. The originating mailbox keeps an answered ask open until its asker resolves it.
+
 The main home's mailbox `owner-tracker-settings` command supplies the existing posting configuration judgement. An unconfigured tracker adds no tracker requests. A configured tracker uses Linear `comments owner-requests` with that judgement's email and label. Each comment mentioning the resolved owner's canonical profile URL is a separate request. Its immutable comment identity, author, creation time, parent and server URL remain the original request metadata. No owner, team, account, profile URL or view name is a package default.
 
-A row's link is the request comment's server URL. A mailbox ask's link is the URL of its exact tracker mirror. A mailbox ask with no tracker mirror has a null link. An unread source makes the list unavailable.
+Jarvis verifies approval links in its own Slack channel. It matches the relay's ask or notice, presenter and thread stamp. A delegated ask also matches the notice's destination, repository root and ask id. A presented ask stays accessible with an unconfirmed thread when that proof is unavailable. A reserved row says where approval counts. A tracker-only row links to its request comment. A mailbox ask without a presentation links to its tracker mirror when one exists. An unread mailbox source makes the list unavailable.
 
 Cross-source suppression requires confirmed tracker posting and equality of the request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A mailbox ask's exact tracker mirror stays suppressed while the ask's tracker-posting record remains in the mailbox events, open or closed.
 
@@ -61,7 +65,13 @@ The main records the request before it sends. A send whose outcome is unknown, a
 - A mailbox answer is sent again under the same delivery identity. lane-mail names the answer already standing and appends nothing.
 - A tracker reply is read by its comment identity first, and sent again under that identity only where Linear has no such comment.
 
-An answer to a mailbox ask closed before it arrived refuses with state `closed` and adds nothing.
+A Slack reply through a presentation already bound to an ask can arrive after closure. The mailbox includes the original question beside the owner's words. A Console Reply or Done received after closure is refused with state `closed`.
+
+## Presenting an overseer's ask
+
+New delegated presentations are on hold at every origin. Use the manual owner-ask route. The `present` command reads an existing receipt using the destination, repository root and ask id from the original mailbox event. An ask without a receipt returns `unavailable` and directs the caller to the manual route. A notice already waiting to post stays held.
+
+The `present` receipt carries a confirmed thread or `delivery: unconfirmed` when the relay has yet to establish it. A second presenter sees the first presentation's state. `deliver` reads replies bound to presentation notices and writes the owner's words to their original mailboxes with the Slack event's delivery identity. Run it from the home watch alongside `lane-mail owner-answers`. It reports undelivered replies until each originating mailbox confirms its copy. Repeating the command resumes unconfirmed deliveries.
 
 ## Receipts and Later
 
@@ -69,7 +79,7 @@ An action receipt contains `v`, `requestId`, `kind` (`accepted` or `refused`), `
 
 Later changes only main-owned visibility until the main clock reaches `until`. The row then returns with its original request time and link.
 
-A complete read alone owns membership. An ask stays open while a complete read returns it: mailbox `pending`, or the configured tracker view for a tracker-only request. A later complete read that omits it removes its checking or snooze state: after the delegate's mailbox close, compaction after that close, a root or host the main no longer reads, or a label or assignee change. Failed or incomplete reads change no action state and report unavailable.
+A complete read owns page membership. The mailbox view removes a row once it reads an owner answer, including a Done claim. The Done receipt still reports `checking` for the console. A later complete read that omits a row removes its checking or snooze state. Failed or incomplete reads preserve action state and report unavailable.
 
 Failures return `{v:1,kind:"unavailable",cause:string}` and a nonzero exit. A transport timeout or missing receipt proves neither acceptance nor refusal.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The relay's post and catch-up recovery through a fake Slack and real lane-mail.
 # Controls mutate disposable runtimes and run the same behavioral assertions.
+# Inputs: skills/jarvis/scripts/**
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
@@ -36,6 +37,166 @@ for cut in length chunked control; do
   sk_poll "$ROOT"
   assert_eq "$(asks "$CH" "Cut $cut.")|$(jq -c .unknown "$ROOT/tmp/slack/status.json")" "1|[\"$ID\"]" "$cut: restart reports unknown and does not post again"
 done
+
+# The post reaches Slack before the relay can record its thread. The next
+# poll reads the bot's metadata and binds a reply to the original question.
+ROOT="$(sk_new_root lost-ask)"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+sk_poll "$ROOT"
+ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text lost-ask 'Continue the original work?')" \
+  --options yes,no --reserved)"
+ASK="${ASK#id=}"
+sk_recovery "$ROOT" kill
+assert_eq "$RC" 9 "the relay stops after Slack posts the ask"
+STATE="$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread // "unconfirmed"')"
+assert_eq "$STATE" unconfirmed "a lost response leaves the original ask without a thread"
+TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\") | .ts")"
+sk_inject "$CH" U001 'Program reply' "$TS" '"app_id":"A001"' >/dev/null
+REPLY="$(sk_inject "$CH" U001 'Only the first part.' "$TS")"
+sk_poll "$ROOT"
+ROWS="$(sk_lm "$ROOT" events --item overseer --box to-lane | jq -cRs --arg ask "$ASK" '
+  [split("\n")[] | fromjson? | select(.kind == "answer" and .re == $ask) | [.sender, .delivery_id, .text]]')"
+assert_eq "$ROWS" "[[\"owner\",\"$CH:$REPLY\",\"Only the first part.\"]]" "a reply under a recovered thread reaches the original ask"
+assert_eq "$(asks "$CH" 'Continue the original work?')" 1 "the relay never repeats the unknown post"
+assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread != null')" true \
+  "a Slack readback confirms the thread on the ask"
+
+# The mailbox receipt outlives the journal for both inbound entry paths.
+for route in catch-up aged live; do
+  ROOT="$(sk_new_root "lost-journal-$route")"
+  sk_bind "$ROOT"
+  CH="$(sk_channel "$ROOT")"
+  if [ "$route" = aged ]; then
+    STAMPS="$(python3 -c 'import time; now = time.time(); print(*(f"{now - days * 86400:.6f}" for days in (10, 9, 8)))')" || exit 1
+    read -r BOUND_TS OLD_TS ASK_TS <<<"$STAMPS" || exit 1
+    sk_rebind_at "$ROOT" "$BOUND_TS" || exit 1
+  fi
+  sk_poll "$ROOT"
+  ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text "lost-journal-$route" 'Continue the direct ask?')" \
+    --options yes,no --reserved)" || exit 1
+  ASK="${ASK#id=}"
+  if [ "$route" = aged ]; then
+    sk_ctl /_test/fault "$(jq -cn --arg ts "$ASK_TS" '{method:"chat.postMessage",accepted:true,message_ts:$ts}')" >/dev/null || exit 1
+  fi
+  sk_poll "$ROOT"
+  TS="$(sk_state ".messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\") | .ts")"
+  if [ "$route" = aged ]; then
+    assert_eq "$TS" "$ASK_TS" "the direct ask thread predates the ordinary catch-up horizon"
+  fi
+  BINDING="$(sk_lm "$ROOT" events --item overseer | jq -c --arg id "$ASK" \
+    'select(.id == $id) | [.presentation.presenter, .presentation.thread_ts]')" || exit 1
+  assert_eq "$BINDING" "[\"slack:$CH\",\"$TS\"]" "$route: the direct ask has a confirmed mailbox binding"
+  if [ "$route" = live ]; then
+    sk_lm "$ROOT" resolve --item overseer --id "$ASK" --text "$(sk_text lost-journal-close 'Close the work.')" >/dev/null || exit 1
+    sk_poll "$ROOT"
+  fi
+  if [ "$route" = aged ]; then
+    BOX="$(sk_box "$ROOT")/to-overseer.jsonl"
+    jq -c --arg id "$ASK" 'if .id == $id then .deadline = .at else . end' "$BOX" >"$SK_TMP/expired.jsonl" || exit 1
+    mv -- "$SK_TMP/expired.jsonl" "$BOX" || exit 1
+    sk_poll "$ROOT"
+    assert_eq "$RC|$(asks "$CH" 'Overdue, no default')" '0|1' "the aged ask has a posted reminder"
+    mv -- "$(sk_journal "$ROOT")" "$SK_TMP/lost-journal-overdue.aside" || exit 1
+    sk_poll "$ROOT"
+    assert_eq "$RC|$(asks "$CH" 'Overdue, no default')|$(jq -c .refused "$ROOT/tmp/slack/status.json")" \
+      '0|1|[]' "restoring an overdue ask before it has an answer keeps its single reminder and healthy status"
+  fi
+  mv -- "$(sk_journal "$ROOT")" "$SK_TMP/lost-journal-$route.aside" || exit 1
+  REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$TS")"
+  if [ "$route" = aged ]; then
+    OLD_PARENT="$(sk_inject "$CH" U002 'Ordinary old topic.' '' "\"ts\":\"$OLD_TS\"")"
+    OLD_REPLY="$(sk_inject "$CH" U002 'Reply to ordinary old topic.' "$OLD_PARENT")"
+  fi
+  for attempt in first replay; do
+    case "$route/$attempt" in
+      catch-up/first|aged/first) sk_poll "$ROOT" ;;
+      live/first) sk_event "$ROOT" "$CH" "$REPLY" ;;
+      */replay)
+        mv -- "$(sk_journal "$ROOT")" "$SK_TMP/lost-journal-$route.replay" || exit 1
+        sk_event "$ROOT" "$CH" "$REPLY"
+        ;;
+    esac
+    ROWS="$(sk_lm "$ROOT" events --item overseer --box to-lane | jq -cRs --arg delivery "$CH:$REPLY" '
+      [split("\n")[] | fromjson? | select(.delivery_id == $delivery) | [.kind, .re, .sender, .text]]')" || exit 1
+    assert_eq "$RC|$ROWS" "0|[[\"answer\",\"$ASK\",\"owner\",\"Only the first change.\"]]" \
+      "$route/$attempt: delivery leaves one owner answer to the original ask"
+  done
+  sk_poll "$ROOT"
+  POSTS="$(sk_state "[.messages.${CH}[] | select(.metadata.event_payload.id == \"$ASK\")] | length")" || exit 1
+  assert_eq "$RC|$POSTS" '0|1' "$route: polling after journal loss never reposts the original ask"
+  if [ "$route" = aged ]; then
+    assert_eq "$(jq -cs --arg delivery "$CH:$OLD_REPLY" 'map(select(.delivery_id == $delivery))' \
+      "$(sk_box "$ROOT")/to-lane.jsonl")" '[]' "catch-up still skips replies under ordinary aged threads"
+  fi
+done
+
+ROOT="$(sk_new_root jarvis-home)"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+sk_poll "$ROOT"
+BOX="$(sk_box "$ROOT")"
+mkdir -p "$BOX"
+# A notice queued before the hold, without a corresponding Slack post.
+jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg root "$ROOT" '
+  {id:"jarvis-held",kind:"notice",from:"overseer",to:"owner",at:$at,text:"Do not post the queued delegation.",
+   presentation:{presenter:"jarvis-held",route:{destination:"local",root:$root,ask:"held-ask"},
+                 question:{text:"Which part can go ahead?",options:["first","both"],reserved:true}}}' >>"$BOX/to-overseer.jsonl"
+sk_poll "$ROOT"
+assert_eq "$(asks "$CH" 'Do not post the queued delegation.')" 0 "a queued delegation never starts a new Slack post"
+
+printf '%s' '{"recipient":"release@example.test","medium":"email","text":"Release exactly this note."}' >"$SK_TMP/approved-draft"
+ASK="$(sk_lm "$ROOT" ask --item overseer --to owner --file "$(sk_text original 'Send this release draft?')" \
+  --draft "$SK_TMP/approved-draft")" || exit 1
+ASK="${ASK#id=}"
+mkdir -p "$SK_TMP/jarvis-bin"
+jq -cn --arg root "$ROOT" '[{folder:$root,state:"ok",worktree:null}]' >"$SK_TMP/jarvis-registry"
+cat >"$SK_TMP/jarvis-bin/kendex" <<'SH'
+#!/bin/sh
+[ "$*" = "project list --json" ] || exit 97
+cat "$FIXTURE_REGISTRY"
+SH
+chmod +x "$SK_TMP/jarvis-bin/kendex"
+jarvis() {
+  (cd "$ROOT" && env -i HOME="$SK_TMP/home" PATH="$SK_TMP/jarvis-bin:$PATH" LANG=C \
+    XDG_CONFIG_HOME="$SK_TMP/config" XDG_DATA_HOME="$SK_TMP/data" \
+    XDG_STATE_HOME="${JARVIS_FIXTURE_STATE:-$SK_TMP/state}" XDG_CACHE_HOME="$SK_TMP/cache" \
+    AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    FIXTURE_REGISTRY="$SK_TMP/jarvis-registry" "$BASH" "$SK_ROOT/skills/jarvis/scripts/jarvis-session" owner-asks "$@")
+}
+
+OLD_TS="$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
+sk_ctl /_test/fault "$(jq -cn --arg ts "$OLD_TS" \
+  '{method:"chat.postMessage",accepted:true,error:"internal_error",message_ts:$ts}')" >/dev/null
+sk_recovery "$ROOT" poll
+PAGE="$(JARVIS_FIXTURE_STATE="$SK_TMP/preview" jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -cr '[.activeCount,.rows[0].link]' <<<"$PAGE")" '[1,null]' \
+  "the home approval link is unconfirmed before the relay reads the post back"
+sk_event "$ROOT" "$CH" "$OLD_TS"
+sk_poll "$ROOT"
+sk_lm "$ROOT" present --item overseer --id "$ASK" --presenter "slack:$CH" \
+  --thread-url 'https://untrusted.example.test/same-stamp' --thread-ts "$OLD_TS" >/dev/null || exit 1
+PAGE="$(jarvis list --home "$ROOT" --view active)" || exit 1
+assert_eq "$(jq -r '.rows[] | select(.what == "Send this release draft?") | .link.url' <<<"$PAGE")" \
+  "https://workspace.slack.com/archives/$CH/p${OLD_TS/./}" "the confirmed home relay link wins over a mailbox URL with the same stamp"
+ROW="$(jq -r '.rows[] | select(.what == "Send this release draft?") | .id' <<<"$PAGE")"
+CONSOLE="$(jq -c '{requestId:"console",expectedRevision:.revision,text:"Read the exact wording back."}' <<<"$PAGE" |
+  jarvis reply --home "$ROOT" --id "$ROW")" || exit 1
+assert_eq "$(jq -r .kind <<<"$CONSOLE")" accepted "the installed Console Reply accepts the direct draft"
+REPLY="$(sk_inject "$CH" U001 'Only the first change.' "$OLD_TS")"
+sk_poll "$ROOT"
+sk_poll "$ROOT"
+assert_eq "$(asks "$CH" 'Send this release draft?')" 1 "the ambiguous response never posts the direct ask twice"
+assert_eq "$(sk_lm "$ROOT" events --item overseer | jq -cs --arg ask "$ASK" --arg slack "$CH:$REPLY" '
+  (map(select(.id == $ask))[0]) as $original
+  | [$original.text,$original.options,$original.draft.recipient,$original.draft.text_hash,
+     [ .[] | select(.kind == "answer" and .re == $ask)
+        | [.sender, (if .delivery_id == $slack then "slack"
+                      elif (.delivery_id | startswith("owner-ask-")) then "console" else "unknown" end), .text] ]]')" \
+  "$(python3 -c 'import hashlib,json; print(json.dumps(["Send this release draft?",["approve","deny"],"release@example.test",
+    hashlib.sha256(b"Release exactly this note.").hexdigest(),
+    [["owner","console","Read the exact wording back."],["owner","slack","Only the first change."]]], separators=(",",":")))')" \
+  "the Slack and Console replies retain their sources and the original direct draft"
 
 # A failed pre-send append sends nothing. The next run can still post it.
 ROOT="$(sk_new_root disk-full)"

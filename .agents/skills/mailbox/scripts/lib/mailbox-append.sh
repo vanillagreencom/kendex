@@ -230,7 +230,8 @@ owner_tracker_unwritten() { # ISSUE CAUSE [ERROR FILE]
 # standing owner ask reserved as `--reserved` makes one at ask time, so every
 # reader of the folded ask judges the one `reserved` field.
 OWNER_TRACKER_JQ="$MAILBOX_TIME_JQ"'def owner_private:
-  .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation" or .kind == "replacement";
+  .kind == "tracker-posted" or .kind == "tracker-failed" or .kind == "reservation" or .kind == "replacement"
+    or .kind == "owner-presentation" or .kind == "owner-presented" or .kind == "owner-delivered";
 def owner_tracker_public:
   select(owner_private | not);
 def owner_ask_reserved($private):
@@ -238,7 +239,21 @@ def owner_ask_reserved($private):
     and (.id as $id | any($private[]; .kind == "reservation" and .re == $id))
   then .reserved = true else . end;
 def owner_tracker_record($outcomes):
-  if .kind == "ask" and .to == "owner" and .issue != null then
+  if .kind == "ask" and .to == "owner" then
+    .id as $id
+    | (first($outcomes[] | select(.re == $id and .kind == "owner-presentation")) // null) as $claim
+    | if $claim != null then .presentation = {presenter: $claim.presenter, at: $claim.at, reserved: $claim.reserved} else . end
+  else . end
+  | if .presentation != null then
+      .id as $id
+      | ([$outcomes[] | select(.re == $id and .kind == "owner-presented")] | last) as $post
+      | if $post != null then .presentation += {thread: $post.thread, thread_ts: $post.thread_ts} else . end
+    elif .kind == "directive" and .parent.envelope != null then
+      .id as $id
+      | if any($outcomes[]; .re == $id and .kind == "owner-delivered")
+        then .owner_delivered = true else . end
+    else . end
+  | if .kind == "ask" and .to == "owner" and .issue != null then
     . as $ask | ([$outcomes[] | select(.re == $ask.id and .issue == $ask.issue)] | last) as $record
     | .tracker_posted = ($record.kind == "tracker-posted")
     | if $record != null then del(.tracker_pending) else . end

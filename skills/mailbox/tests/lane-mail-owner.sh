@@ -269,7 +269,7 @@ while IFS='~' read -r name old replacement want; do
   fi
 done <<'ROWS'
 live~~~0
-eligibility~[ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ]~false && [ "$VERB" != resolve ] && [ -z "$DELIVERY_ID" ]~1
+eligibility~[ "$VERB" != resolve ] && [ "$VERB" != present ] && [ -z "$DELIVERY_ID" ]~false && [ "$VERB" != resolve ] && [ "$VERB" != present ] && [ -z "$DELIVERY_ID" ]~1
 refusal~[ "${report#duplicate id=}" != "$report" ] || return 4~[ "${report#duplicate id=}" != "$report" ] && return 4~1
 ROWS
 PATH="$SAVED_PATH"
@@ -1483,7 +1483,8 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.attach')" "0=$LANE/elsewhere/x
 lm attach-check --attach "$LANE/elsewhere/x.md"
 assert_eq "$RC=$OUT" "0=lane-mail: attach=$LANE/elsewhere/x.md" \
   "control: without the directory rule attach-check accepts a file anywhere"
-mutant attach-check-root '  ask | notice | send | resolve | reserve | replace | peer | compact | attach-check)' '  ask | notice | send | resolve | reserve | replace | peer | compact)'
+mutant attach-check-root '  ask | notice | send | resolve | reserve | present | replace | peer | compact | attach-check)' \
+  '  ask | notice | send | resolve | reserve | present | replace | peer | compact)'
 attach_from_worktree
 assert_eq "$RC" 2 "control: without the main checkout's root attach-check from a worktree judges the worktree's directory"
 
@@ -1618,7 +1619,7 @@ reserve_race control_race_default "$GUARD_DIR/lane-mail" "$LANE_MAIL" --default
 assert_eq "${RACE_RESOLVE%% answer=*}" "0=lane-mail: resolved id=$ASK by=default" \
   "control: without the judge under the close's lock a racing default closes the reserved ask"
 
-mutant reserve-unjudged-after 'lm_reserve_unclosed locked' ':'
+mutant reserve-unjudged-after $'      lm_reserve_unclosed locked\n    fi' $'      :\n    fi'
 reserve_race control_race_close "$PAUSE_DIR/lane-mail" "$LANE_MAIL_BIN"
 assert_eq "$RACE_RESERVE" "0=lane-mail: reserved id=$ASK" \
   "control: without the read after the append reserve reports a reservation the close beat"
@@ -1696,6 +1697,58 @@ mutant data-source-unchecked '|| refuse source-invalid "$DATA_SOURCE"' '|| :'
 lm send --item overseer --data 'mail watch' --file "$(text data 'Pay it now.')"
 assert_eq "$RC" "0" "control: without the source check a spaced source lands"
 LANE_MAIL_BIN="$LANE_MAIL"
+
+new_repo shared_presentation
+F="$(text presentation 'Which part can go ahead?')"
+lm ask --item overseer --to owner --file "$F" --options first,both --reserved
+ASK="${OUT#id=}"
+ORIGIN="$LANE"
+new_repo presentation_foreign
+lm present --item overseer --root "$ORIGIN" --id "$ASK" --presenter foreign
+assert_eq "${ERR%%=*}" "lane-mail: lane-foreign" "a different checkout cannot claim the original ask"
+LANE="$ORIGIN"
+BOX="$LANE/tmp/lane-mail/overseer"
+mkdir "$LANE/subdir"
+lm present --item overseer --root "$LANE/subdir" --id "$ASK" --presenter subdir
+assert_eq "${ERR%%=*}" "lane-mail: root-not-checkout" "presentation requires a checkout root"
+lm present --item overseer --id "$ASK" --presenter jarvis-first
+assert_eq "$RC|${ERR%%=*}" "2|lane-mail: presentation-held" "a new delegated claim is refused"
+lm present --item overseer --file "$F"
+assert_eq "$RC|${ERR%%=*}" "2|lane-mail: presentation-held" "a new delegated notice is refused"
+lm present --item overseer --id "$ASK" --presenter slack:C123
+FIRST="$OUT"
+lm present --item overseer --id "$ASK" --presenter slack:C456
+assert_eq "$RC|$OUT" "0|$FIRST" "a second presenter reads the first receipt"
+lm present --item overseer --id "$ASK" --presenter slack:C123 --thread-url 'https://workspace.slack.test/archives/C123/p1'
+lm resolve --item overseer --id "$ASK"
+F="$(text presentation-answer 'Only the first part.')"
+for key in C123:1.000001 C123:1.000001 C123:1.000002; do
+  lm send --item overseer --re "$ASK" --sender owner --presenter slack:C123 --delivery-id "$key" --file "$F"
+done
+lm events --item overseer --box to-lane
+assert_eq "$(jq -cRs '[split("\n")[] | fromjson? | select(.kind == "answer")
+  | [.sender, .delivery_id, .text, .owner_question.text, .owner_question.options]]' <<<"$OUT")" \
+  '[["owner","C123:1.000001","Only the first part.","Which part can go ahead?",["first","both"]],["owner","C123:1.000002","Only the first part.","Which part can go ahead?",["first","both"]]]' \
+  "two distinct late replies retain the exact prior question and a replay appends once"
+
+new_repo presented_draft_replaced
+D="$(draft_file old-draft '{"recipient":"first@example.test","medium":"email","text":"First wording."}')"
+draft_ask "$D"
+PRIOR="$ASK"
+lm present --item overseer --id "$PRIOR" --presenter slack:C123
+D="$(draft_file new-draft '{"recipient":"second@example.test","medium":"email","text":"Revised wording."}')"
+draft_ask "$D" --replaces "$PRIOR"
+F="$(text presentation-yes 'Yes')"
+lm send --item overseer --re "$PRIOR" --sender owner --presenter slack:C123 --delivery-id C123:2.000001 --file "$F"
+lm events --item overseer
+assert_eq "$(jq -cs --arg old "$PRIOR" --arg new "$ASK" '
+  (map(select(.id == $old))[0]) as $prior | (map(select(.id == $new))[0]) as $next
+  | [(map(select(.kind == "answer" and .re == $new)) | length),
+     any(.[]; .kind == "answer" and .re == $old and .text == "Yes" and .sender == "owner"
+         and .owner_question.draft.recipient == $prior.draft.recipient
+         and .owner_question.draft.text_hash == $prior.draft.text_hash
+         and .owner_question.draft.text_hash != $next.draft.text_hash)]' <<<"$OUT")" \
+  '[0,true]' "a yes under a replaced draft stays bound to its original recipient and text hash"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

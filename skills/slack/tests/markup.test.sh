@@ -47,11 +47,32 @@ class Capture(Slack):
             answer = {'ok': True, 'messages': [m for m in self.messages if 'thread_ts' not in m]}
         elif label == 'conversations.replies':
             answer = {'ok': True, 'messages': [m for m in self.messages if m['ts'] == body['ts'] or m.get('thread_ts') == body['ts']]}
+        elif label == 'chat.getPermalink':
+            answer = {'ok': True, 'permalink': f'https://fixture.invalid/{body["channel"]}/{body["message_ts"]}'}
         elif label.startswith('reactions.'):
             answer = {'ok': True}
         else:
             raise AssertionError(label)
         return json.dumps(answer).encode()
+
+class AskMailbox:
+    def __init__(self, ask_id):
+        self.ask_id = ask_id
+        self.answers = []
+
+    def retains_presentations(self):
+        return True
+
+    def present(self, ask_id, presenter, *confirmation):
+        assert ask_id == self.ask_id
+        return {'presenter': presenter}
+
+    def answer(self, *args):
+        self.answers.append(args)
+        return 'answered', 'answer'
+
+    def send_directive(self, *args):
+        raise AssertionError('fitting question reply lost its ask binding')
 
 def root(name, api=None):
     path = base / name
@@ -142,14 +163,6 @@ def recovery_cases():
         print(json.dumps({'report_recovery': 'existing' if existing else 'new', 'root': ts, 'prefix_repeated': False}))
 
 def question_cases():
-    class Mail:
-        def __init__(self): self.answers = []
-        def answer(self, *args):
-            self.answers.append(args)
-            return 'answered', 'answer'
-        def send_directive(self, *args):
-            raise AssertionError('fitting question reply lost its ask binding')
-
     # The real producers prepare different bodies for a new or existing root.
     for origin, draft, linked in [('ask', False, False), ('ask', False, True),
                                   ('ask', True, False), ('ask', True, True),
@@ -161,6 +174,7 @@ def question_cases():
             relay.journal.append(t='start', at='', ids=[])
             ask = dict(envelope('ask', 'KEN-1\n' if linked else 'Question\n'), options=['approve', 'hold'], recommend='hold',
                        deadline=format_at(now + 300), reserved=origin != 'ask')
+            relay._mail = AskMailbox(ask['id'])
             thread = None
             if origin == 'overdue-thread':
                 assert relay.post_ask(dict(ask, text='Earlier question'))
@@ -213,10 +227,9 @@ def question_cases():
                     assert 'Literal KEN-123\nrun ```make```' in parts[0]['markdown_text']
                     assert '[KEN-123]' not in parts[0]['markdown_text']
                 assert not relay.state.progress and not relay.state.refused
-                relay._mail = Mail()
                 ts = relay.state.by_envelope['ask']
                 relay.on_message({'ts': str(now + 50), 'thread_ts': ts, 'user': 'U001', 'text': 'approve'}, 'UBOT')
-                assert relay.mail.answers == [('ask', 'approve', 'C001:' + str(now + 50))]
+                assert relay.mail.answers == [('ask', 'approve', 'C001:' + str(now + 50), relay.presenter)]
                 assert relay.state.delivered[str(now + 50)] == 'answer'
             print(json.dumps({'question': origin, 'draft': draft, 'linked': linked, 'final_chars': size,
                               'outcome': 'refused' if size > 12000 else 'routed'}))
@@ -316,6 +329,7 @@ assert relay.state.pending_files == {'F001': 'upload'} and not payloads(relay.ap
 # An answer communicates the ruling and retains report-like continuations.
 relay = root('long-answer')
 ask = dict(envelope('ask', 'Question'), options=['approve', 'hold'], recommend='hold', deadline=format_at(now + 300))
+relay._mail = AskMailbox(ask['id'])
 assert relay.post_ask(ask)
 thread = relay.state.by_envelope['ask']
 relay.api.requests.clear()

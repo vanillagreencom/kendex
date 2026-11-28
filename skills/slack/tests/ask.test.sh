@@ -7,9 +7,9 @@
 # keeps its tracker links; the draft is never linked. A reserved ask is posted
 # naming no default, and once more in its thread on the first poll past its
 # deadline while it stays open and unanswered, never again; one first posted
-# past its deadline is its own reminder; one with no thread to post in, its
-# post response lost or its thread deleted, is reminded with the whole
-# question in a thread a reply in answers. Any other ask is listen.test.sh's. Each rule has its own
+# past its deadline is its own reminder. A question Slack deleted can be
+# reminded in a new thread. A lost response leaves the post unconfirmed
+# until Slack readback. Any other ask is listen.test.sh's. Each rule has its own
 # control on a copy of the scripts.
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
@@ -168,7 +168,7 @@ referenced_ask() {
   sk_poll "$ROOT"
   ASK_TS="$(sk_state "[.messages.${CH}[] | select(.text | contains(\"Approve referenced action?\")) | .ts][0] // \"\"")"
   POSTED="$(sk_state "[.messages.${CH}[] | select(.ts == \"$ASK_TS\") | .text][0] // \"\"")"
-  REF_LINK="https://workspace.slack.test/archives/$CH/p${REF_TS/./}"
+  REF_LINK="https://workspace.slack.com/archives/$CH/p${REF_TS/./}"
 }
 referenced_ask referenced
 assert_eq "$RC" 0 'the fake Slack server supports the permalink request'
@@ -202,7 +202,7 @@ while IFS='|' read -r name fault second poll_rc delivered state retried; do
       "$REF_LINK" "$name retains the referenced conversation link on retry"
   fi
 done <<'ROWS'
-post-api|{"method":"chat.postMessage","error":"internal_error"}||1|1|retry|1
+post-api|{"method":"chat.postMessage","error":"invalid_blocks"}||1|1|retry|1
 post-lost|{"method":"chat.postMessage","drop":true}||0|1|unknown|0
 post-auth|{"method":"chat.postMessage","error":"invalid_auth"}||2|0|retry|1
 read-lost|{"method":"chat.getPermalink","drop":true}||1|1|retry|1
@@ -259,6 +259,14 @@ reminder_options() { sk_state "[.messages.${CH}[] | select(.ts == \"$(reminder_t
 answers_to_ask() { jq -s --arg id "$ASK" '[.[] | select(.kind == "answer" and .re == $id)] | length' "$(sk_box "$ROOT")/to-lane.jsonl" 2>/dev/null || echo 0; }
 # reply_to_reminder: an owner reply in the reminder's thread, then a poll.
 reply_to_reminder() { sk_inject "$CH" U001 'hold' "$(reminder_ts)" >/dev/null; sk_poll "$ROOT"; }
+age_read_mailbox() {
+  local box
+  for box in to-lane to-overseer; do
+    jq -c '.at="2000-01-01T00:00:00Z"' "$(sk_box "$ROOT")/$box.jsonl" >"$SK_TMP/aged" || return 1
+    mv -- "$SK_TMP/aged" "$(sk_box "$ROOT")/$box.jsonl" || return 1
+  done
+  printf '50\n' >"$(sk_box "$ROOT")/to-lane.cursor"
+}
 
 reserved_ask reserved 30
 assert_has "$POSTED" "No default: " "a reserved ask posts naming no default"
@@ -282,17 +290,75 @@ assert_eq "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "a reserv
 
 reserved_ask reserved-lost 30 '{"method": "chat.postMessage", "drop": true, "times": 1}'
 past_deadline
-reply_to_reminder
-assert_eq "$([ -n "$(reminder_ts)" ] && echo reminded)|$(reminder_options)|$(answers_to_ask)" "reminded|true|1" \
-  "a reserved ask whose post response was lost is reminded with its options in a thread of its own, and a reply there answers the ask"
+assert_eq "$(reminder_ts)|$(asks "$CH" 'Cut the 2.0.0 release?')" "|0" \
+  "a reserved ask whose first post is unconfirmed does not start a second thread"
 
 reserved_ask reserved-deleted 30
+[ "$RC" -eq 0 ] && [ -n "$ASK_TS" ] || exit 1
+# The installed compactor still runs, but its capability answer is temporarily
+# unavailable. Keep the existing root's presenter when Slack replaces it.
+INSTALLED="$ROOT/.agents/skills/mailbox/scripts"
+rm -- "$INSTALLED" && cp -R "${SK_LANE_MAIL%/*}" "$INSTALLED" || exit 1
+mkdir -p "$ROOT/.agents/skills/agent-runtime" &&
+  ln -s "$SK_ROOT/skills/agent-runtime/scripts" "$ROOT/.agents/skills/agent-runtime/scripts" || exit 1
+COMPACTOR="$INSTALLED/lib/lane-mail-store.py"
+cp -- "$COMPACTOR" "$SK_TMP/compactor.saved" || exit 1
+python3 - "$COMPACTOR" <<'PY' || exit 1
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+marker = 'if op == "presentation-retention":'
+assert source.count(marker) == 1
+path.write_text(source.replace(marker, 'if False:'))
+PY
 sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
 sk_poll "$ROOT"
+sk_ctl /_test/fault '{"method":"chat.postMessage","accepted":true,"error":"fatal_error"}' >/dev/null
 past_deadline
-reply_to_reminder
+assert_eq "$(sk_lm "$ROOT" pending --item overseer --to owner | jq -r '.presentation.thread_ts')" "$(reminder_ts)" \
+  "the recovered replacement is the confirmed approval thread"
+sk_lm "$ROOT" resolve --item overseer --id "$ASK" >/dev/null || exit 1
+sk_lm "$ROOT" notice --item overseer --to owner --file "$(sk_text unrelated 'An unrelated old notice.')" >/dev/null || exit 1
+OVER="$(sk_box "$ROOT")/to-overseer.jsonl"
+UNRELATED="$(jq -er 'select(.kind == "notice" and (.text | contains("An unrelated old notice."))) | .id' "$OVER")" || exit 1
+age_read_mailbox || exit 1
+COMPACTED="$(ORCH_ARCHIVE_ROOT="$SK_TMP/archive" SK_LANE_MAIL="$INSTALLED/lane-mail" sk_lm "$ROOT" compact --item overseer)" || exit 1
+assert_has "$COMPACTED" 'compacted item=overseer' "the installed compactor ran successfully"
+assert_eq "$(jq -r --arg id "$UNRELATED" 'select(.id == $id) | .id' "$OVER")" "" \
+  "compaction removed the unrelated aged notice"
+
+# A refusal from a bound write must leave the event available to retry.
+sk_copy bound-answer-refused
+WRITER="${SK_BIN%/slack/scripts/slack}/mailbox/scripts/lane-mail"
+mv -- "$WRITER" "$WRITER.real" || exit 1
+cat >"$WRITER" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = send ]; then
+  for arg in "$@"; do
+    if [ "$arg" = --presenter ]; then
+      printf 'lane-mail: write-failed=fixture-cleanup-check\n' >&2
+      exit 2
+    fi
+  done
+fi
+exec "${BASH_SOURCE[0]}.real" "$@"
+SH
+chmod +x "$WRITER" || exit 1
+LATE="$(sk_inject "$CH" U001 hold "$(reminder_ts)")" || exit 1
+sk_poll "$ROOT"
+assert_has "$ERR" 'fixture-cleanup-check' "the failed bound write is reported"
+assert_eq "$(jq -r --arg ts "$LATE" 'select(.ts == $ts or (.t == "thread" and .seen == $ts)) | .t' "$(sk_journal "$ROOT")")|$(sk_reactions "$CH" "$LATE")" \
+  "|" "the failed cleanup period neither routes the reply nor marks the Slack event seen"
+sk_bin_reset
+cp -- "$SK_TMP/compactor.saved" "$COMPACTOR" || exit 1
+sk_poll "$ROOT"
+sk_poll "$ROOT"
 assert_eq "$([ "$(reminder_ts)" != "$ASK_TS" ] && echo moved)|$(reminder_options)|$(answers_to_ask)" "moved|true|1" \
-  "a reserved ask whose thread Slack deleted is reminded with its options in a new thread, and a reply there answers the ask"
+  "a late reply in the replacement thread answers its closed original ask after current compaction"
+assert_eq "$(jq -r --arg d "$CH:$LATE" 'select(.delivery_id == $d) | [.kind,.re,.sender] | join("|")' "$(sk_box "$ROOT")/to-lane.jsonl")" \
+  "answer|$ASK|owner" "retry keeps the original delivery identity and never records a directive"
 
 sk_mutant reserved-tail relay.py 'if envelope.get\("reserved"\) is True:' 'if False:'
 reserved_ask control-tail 30
@@ -324,22 +390,77 @@ sk_mutant reserved-late relay.py 'if envelope\.get\("reserved"\) is True and at_
 reserved_ask control-late 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: without the first-post rule a late reserved ask is posted twice"
 
-sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None\)' 'ts = "1.000001"'
+sk_mutant reserved-unposted relay.py 'ts = self\._send\(envelope, "ask", pieces, None, presentation=retained\)' 'ts = "1.000001"'
 reserved_ask control-unposted 0
 sk_assert_red "$([ -n "$ASK_TS" ] && echo posted)|$(reminders)" "posted|0" "control: an ask journaled open but never sent fails the posted assertion"
 
-sk_mutant reserved-rebind relay.py 'self\._out\(envelope, "ask", "open", thread=landed,' 'None and self._out(envelope, "ask", "open", thread=landed,'
-reserved_ask control-rebind 30 '{"method": "chat.postMessage", "drop": true, "times": 1}'
+sk_mutant reserved-rebind relay.py 'self\.bind_presentation\(envelope, \{"ts": landed, "text": excerpt\}, "ask", retained\)' 'None'
+reserved_ask control-rebind 30
+sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
+sk_poll "$ROOT"
 past_deadline
 reply_to_reminder
 sk_assert_red "$([ -n "$(reminder_ts)" ] && echo reminded)|$(answers_to_ask)" "reminded|1" \
-  "control: without the rebind a reply to the reminder of a lost ask is no answer"
+  "control: without the rebind a reply to the replacement thread is no answer"
 
 sk_mutant reserved-short relay.py 'if thread_ts is not None\n' 'if True\n'
-reserved_ask control-short 30 '{"method": "chat.postMessage", "drop": true, "times": 1}'
+reserved_ask control-short 30
+sk_ctl /_test/delete "{\"channel\":\"$CH\",\"ts\":\"$ASK_TS\"}" >/dev/null
+sk_poll "$ROOT"
 past_deadline
 sk_assert_red "$([ -n "$(reminder_ts)" ] && echo reminded)|$(reminder_options)" "reminded|true" \
   "control: a replacement reminder built from the question text alone shows no options"
 sk_bin_reset
+
+ROOT="$(sk_new_root pre-presentation-writer)"
+sk_bind "$ROOT"
+CH="$(sk_channel "$ROOT")"
+legacy="$ROOT/.agents/skills/mailbox/scripts"
+rm -- "$legacy"
+cp -R "${SK_LANE_MAIL%/*}" "$legacy"
+# A pre-presentation compactor uses the original age and read rule and cannot
+# advertise retained presentations. The installed writer refuses their verbs.
+python3 - "$legacy/lib/lane-mail-store.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+old_plan = ' or awaiting_delivery or bound'
+old_entry = 'if op == "presentation-retention":'
+assert source.count(old_plan) == source.count(old_entry) == 1
+path.write_text(source.replace(old_plan, '').replace(old_entry, 'if False:'))
+PY
+mv -- "$legacy/lane-mail" "$legacy/lane-mail-current"
+cat >"$legacy/lane-mail" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  present) printf 'lane-mail: verb-invalid=present\n' >&2; exit 2 ;;
+esac
+for arg in "$@"; do
+  if [ "$arg" = --presenter ]; then printf 'lane-mail: option-unknown=--presenter\n' >&2; exit 2; fi
+done
+exec "${BASH_SOURCE[0]%/*}/lane-mail-current" "$@"
+SH
+chmod +x "$legacy/lane-mail"
+legacy_mail() { SK_LANE_MAIL="$legacy/lane-mail" sk_lm "$ROOT" "$@" --item overseer; }
+ASK="$(legacy_mail ask --to owner --file "$(sk_text legacy 'Question in a legacy checkout?')" \
+  --options yes,no --reserved)"
+ASK="${ASK#id=}"
+sk_poll "$ROOT"
+TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Question in a legacy checkout?\")) | .ts")"
+REPLY="$(sk_inject "$CH" U001 'I will confirm separately.' "$TS")"
+sk_poll "$ROOT"
+assert_eq "$(asks "$CH" 'Question in a legacy checkout?')|$(jq -r --arg d "$CH:$REPLY" \
+  'select(.delivery_id == $d) | [.re,.sender] | join("|")' "$(sk_box "$ROOT")/to-lane.jsonl")" "1|$ASK|owner" \
+  "the relay uses the legacy direct post and answer path in an older bound checkout"
+BOX="$(sk_box "$ROOT")"
+assert_eq "$(jq -c --arg id "$ASK" 'select(.re == $id and (.kind | startswith("owner-present")))' "$BOX/to-overseer.jsonl")" "" \
+  "the old compactor's mailbox receives no new presentation records"
+legacy_mail resolve --id "$ASK" >/dev/null
+age_read_mailbox
+ORCH_ARCHIVE_ROOT="$SK_TMP/archive" legacy_mail compact >/dev/null
+assert_eq "$(jq -c --arg id "$ASK" 'select(.id == $id)' "$BOX/to-overseer.jsonl")" "" \
+  "the older compaction rule ages the closed legacy ask out normally"
 
 sk_summary

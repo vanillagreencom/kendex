@@ -550,6 +550,12 @@ def plan(box, dest, cutoff, seen, jq_defs, set_aside=False):
                if obj and obj.get("kind") == "answer" and isinstance(obj.get("re"), str)}
     owner_closed = {obj.get("re") for obj, row in zip(objects[1], metadata[1])
                     if obj and row["class"] == "close" and isinstance(obj.get("re"), str)}
+    presentations = {obj["id"] for obj in objects[0]
+                     if obj and obj.get("kind") == "notice" and "presentation" in obj and isinstance(obj.get("id"), str)}
+    presented_asks = {obj["re"] for obj in objects[0]
+                      if obj and obj.get("kind") == "owner-presentation" and isinstance(obj.get("re"), str)}
+    delivered = {obj.get("re") for obj in objects[1]
+                 if obj and obj.get("kind") == "owner-delivered" and isinstance(obj.get("re"), str)}
     protected = set()
     links = []
     keep = []
@@ -561,7 +567,15 @@ def plan(box, dest, cutoff, seen, jq_defs, set_aside=False):
             open_ask = obj and obj.get("kind") == "ask" and (
                 not isinstance(obj.get("id"), str) or obj["id"] not in (
                     owner_closed if obj.get("to") == "owner" else owner_closed | answers))
-            retain = (at is None or at >= cutoff or unread or open_ask
+            parent = (obj.get("parent") or {}) if obj and obj.get("kind") == "directive" else {}
+            presented = parent.get("envelope") if isinstance(parent, dict) else None
+            awaiting_delivery = (isinstance(presented, str) and presented in presentations
+                                 and obj.get("id") not in delivered)
+            # A Slack thread can still receive a live reply after the usual
+            # mailbox retention window, even if the ask has closed.
+            bound = (b == 0 and obj and isinstance(obj.get("id"), str)
+                     and (obj["id"] in presented_asks or obj["id"] in presentations))
+            retain = (at is None or at >= cutoff or unread or open_ask or awaiting_delivery or bound
                       or (b == 1 and i == directive_to_keep))
             selected.append(retain)
             if obj:
@@ -631,7 +645,11 @@ def rewrite(fd, path, dest, name):
 def main():
     """Run the operation selected by lane-mail, reporting filesystem failures."""
     op = sys.argv[1]
-    if op == "plain":
+    if op == "presentation-retention":
+        # The relay enables presentation writes only when the installed
+        # compactor keeps the original ask and its late-delivery binding.
+        print("owner-presentation")
+    elif op == "plain":
         try:
             validate_mailbox(Path(sys.argv[2]))
         except StoreRefusal as error:

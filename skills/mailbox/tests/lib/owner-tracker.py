@@ -155,6 +155,11 @@ else exec '{shutil.which("date")}' "$@"; fi
                     def paged(self, *args, **kwargs):
                         return []
 
+                    def get(self, method, *, channel, message_ts):
+                        assert method == "chat.getPermalink" and channel == "COWNER"
+                        assert message_ts in {f"{at}.{index:06d}" for index in range(1, len(self.messages) + 1)}
+                        return {"permalink": f"https://workspace.slack.com/archives/{channel}/p{message_ts.replace('.', '')}"}
+
                 api = RecordingSlack()
                 owner = "owner@example.test"
                 write_binding(root, Binding("COWNER", "owner", str(at), [owner], {owner: "UOWNER"}))
@@ -202,8 +207,8 @@ else exec '{shutil.which("date")}' "$@"; fi
                     released = [e for e in read("events") if e["id"] == ask["id"]]
                     facts["bound"] &= (len(released) == 1 and released[0]["tracker_posted"] is False
                                        and "tracker_pending" not in released[0])
-                    relay.poll("UBOT")
-                    relay.poll("UBOT")
+                    # Both readers must release the ask on the clock alone,
+                    # before the relay appends its presentation records.
                     imported = [e for e in relay.mail.events() if e["id"] == ask["id"]]
                     current = box.stat()
                     facts["bound"] &= (cached_stamp == relay.mail.snapshots["stamp"]
@@ -211,6 +216,8 @@ else exec '{shutil.which("date")}' "$@"; fi
                         == (current.st_size, current.st_mtime_ns, current.st_ctime_ns)
                         and len(imported) == 1 and imported[0]["tracker_posted"] is False
                         and "tracker_pending" not in imported[0])
+                    relay.poll("UBOT")
+                    relay.poll("UBOT")
                     facts["bound"] &= len(api.messages) == 2 and "More detail." in api.messages[-1].get("markdown_text", "")
                     continue
                 os.write(release_fd, b"release\n")

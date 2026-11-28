@@ -20,6 +20,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Callable, Dict, FrozenSet, List, Optional, Set, Union
+from urllib.parse import urlsplit
 
 from refusals import LockRefusal, Refusal
 
@@ -144,6 +145,9 @@ class Thread:
     parent: Optional[Dict] = None
     active: float = 0.0
     missing: bool = False
+    presenter: str = ""
+    channel: str = ""
+    permalink: str = ""
     # Per reader generation, the newest message of this thread it was delivered.
     reads: Dict[int, str] = field(default_factory=dict)
     # Answers deliver their own text, without the earlier thread context.
@@ -272,6 +276,11 @@ class State:
                 thread = self.threads[thread_ts]
                 thread.envelope, thread.kind, thread.open = env_id, line["kind"], state == "open"
             self.threads[thread_ts].active = max(self.threads[thread_ts].active, parse_at(str(line["at"])))
+            if line.get("presenter"):
+                self.threads[thread_ts].presenter = str(line["presenter"])
+                self.threads[thread_ts].channel = str(line["channel"])
+            if "permalink" in line:
+                self.threads[thread_ts].permalink = str(line["permalink"])
             if "parent" in line:
                 self.threads[thread_ts].parent = dict(line["parent"], **(self.threads[thread_ts].parent or {}))
             self.by_envelope[env_id] = thread_ts
@@ -329,6 +338,31 @@ def read_journal(root: Path) -> State:
     return state
 
 
+def presentation_permalink(thread: Thread) -> bool:
+    try:
+        url = urlsplit(thread.permalink)
+    except ValueError:
+        return False
+    return (url.scheme == "https" and url.netloc.endswith((".slack.com", ".slack-gov.com"))
+            and url.netloc == url.hostname and not url.fragment and not url.query
+            and url.path == f"/archives/{thread.channel}/p{thread.ts.replace('.', '')}")
+
+
+def presentation_threads(root: Path) -> Dict:
+    """Jarvis's local relay confirms the exact presentation message."""
+    try:
+        binding = read_binding(root)
+        state = read_journal(root)
+    except (OSError, Refusal, ValueError):
+        return {}
+    return {env_id: {"ts": thread.ts, "presenter": thread.presenter, "url": thread.permalink}
+            for env_id, ts in state.by_envelope.items()
+            for thread in (state.threads[ts],)
+            if env_id == thread.envelope and not thread.missing and thread.channel == binding.channel
+            and thread.presenter and presentation_permalink(thread)
+            and (thread.kind == "notice" or thread.kind == "ask" and thread.presenter == "slack:" + binding.channel)}
+
+
 class Journal:
     def __init__(self, root: Path, state: State) -> None:
         self.path = root_dir(root) / JOURNAL
@@ -370,7 +404,7 @@ def compact(root: Path, cutoff_ts: float) -> int:
     last_seen = max((i for i, line in enumerate(lines) if line.get("t") == "seen"), default=-1)
     last_hold = max((i for i, line in enumerate(lines) if line.get("t") in ("hold", "resume")), default=-1)
     live = {ts for ts, thread in state.threads.items()
-            if thread.open or max(float(ts), float(thread.seen), thread.active) >= cutoff_ts}
+            if thread.presenter or thread.open or max(float(ts), float(thread.seen), thread.active) >= cutoff_ts}
     # Live replies have no age limit. Keep only the context marks and the
     # answers beyond them, with their receipt marks, after history expires.
     received = {ts for thread in state.threads.values() for ts in thread.reads.values()}
