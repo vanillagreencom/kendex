@@ -1388,9 +1388,9 @@ class Watch:
         """jarvis-session's answer to VERB, its last stdout line, or a Failure."""
         try:
             env = os.environ.copy()
-            env.pop("JARVIS_WATCH_AUTH_CONTROLLER", None)
+            env.pop("KENDEX_JARVIS_AUTH_CONTROLLER", None)
             if auth_wall is not None:
-                env["JARVIS_WATCH_AUTH_CONTROLLER"] = json.dumps(auth_wall)
+                env["KENDEX_JARVIS_AUTH_CONTROLLER"] = json.dumps(auth_wall)
             # The session command bounds each wait it makes, the hand-over's too.
             result = run([self.bash, LIB.parent / "jarvis-session", verb, "--home", self.home, *args],
                          self.home, operation=operation, timeout=None, env=env)

@@ -1623,7 +1623,7 @@ def main():
     args = parser.parse_args()
     # Only the watch's account-walled call carries this observation. The
     # controller launch and its successor must not inherit it.
-    auth_binding = os.environ.pop("JARVIS_WATCH_AUTH_CONTROLLER", None)
+    auth_binding = os.environ.pop("KENDEX_JARVIS_AUTH_CONTROLLER", None)
     if not clean(args.home) or (args.verb == "start" and args.account is not None and not clean(args.account)):
         parser.error("path")
     if args.verb == "start" and ((args.model is None) != (args.effort is None) or not all(
