@@ -85,13 +85,15 @@ this item's questions: it names questions, and its label is not taken off.
 The item's question comments are read as `comments owner-questions` reads
 them, every mailbox's: one that no open ask names stands for another
 mailbox's ask until its ruling, unless it is unreserved and a closed or named
-ask names it. The label is ORCH_OWNER_ASK_LABEL, each ask's own where its
+ask names it. Before clearing the owner gate, delete any question still
+standing on the item whose publication this mailbox recorded as failed.
+The label is ORCH_OWNER_ASK_LABEL, each ask's own where its
 post recorded one, and the owner the ORCH_OWNER_EMAIL account;
 OVERSEE_WATCH_TRACKER selects the tracker CLI. A write lands only where the
 item differs. It prints `owner-gate: held=<true|false>`, true where
 another mailbox's question stands. A failed step exits 2 with the tracker's
 own stderr, then `lane-mail: owner-gate-unwritten=<item> cause=<step>`
-(owner-read, questions-read, labels-read, prepare, assign, label or
+(owner-read, questions-read, labels-read, prepare, comment-delete, assign, label or
 tracker-absent).
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
@@ -303,6 +305,11 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               Linear assignment, label, opening action line and comment. On
               an item Linear's GitHub sync links, whose description the
               Linear package refuses to write, it adds no action line.
+              When relaying an owner ask that carries an item, present the
+              original mailbox ask. Its author owns the item comment and
+              assignment, even while the tracker result is pending. If the
+              original ask carries no item and needs an item post, the relay's
+              manual owner ask is the one that takes --issue and posts there.
               Before anything is appended, Linear's `issues bulk-get` reads
               the tracker identity, the current identifier and UUID, of ITEM
               and of each open owner ask's item, and the ask records ITEM's as
@@ -314,9 +321,7 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               is not replaced. --replaces naming no owner ask is `ask-unknown`,
               and a closed one `resolved-already`. Where a replaced ask has a
               question comment, the ask is refused before anything is
-              appended or posted: `replace-unconfigured`, cause team-unset or
-              team-unread, where the Linear package has no LINEAR_TEAM to edit
-              comments with; `replace-unmarkable`, cause actor-unread,
+              appended or posted with `replace-unmarkable`, cause actor-unread,
               comment-foreign or comments-read, where its acting identity does
               not read, another identity wrote that comment, or the comment
               does not read. After the new ask and its tracker outcome land,
@@ -671,8 +676,8 @@ incomplete),
 tracker_pending (true on the immutable ask while its tracker outcome is missing),
 tracker_posted (a boolean projected by mailbox reads after the complete tracker
 question is confirmed), tracker_label (the confirmed label used for close
-when settings change or cannot be read), tracker_comment (the posted
-question comment's tracker id, which owner replies follow),
+when settings change or cannot be read), tracker_comment (the tracker id
+of a posted question or one whose failed publication left it behind),
 tracker_action_line (false on a posted ask whose item took no opening action
 line, since Linear's GitHub sync links it; absent where the line was written),
 tracker_cause (the failed operation of an unposted tracker question),
@@ -696,7 +701,8 @@ reads fold it into that ask as `reserved: true`, never emit it as an event,
 and count its line.
 A private tracker-posted or tracker-failed record carries an immutable ask's
 outcome by its re and issue. Posted records carry the question comment's id in
-tracker_comment. Failure records carry the failed operation in cause.
+tracker_comment. Failure records carry the failed operation in cause and
+also carry tracker_comment if deletion of the comment was unconfirmed.
 Reads fold the outcome into that ask and clear tracker_pending before cursor filtering. They never emit it as an
 ordinary event. Line counts include it. Without confirmation, an item ask
 keeps the full chat presentation and chat deadline route. A tracker-unwritten cause=label
@@ -783,7 +789,7 @@ recommend-invalid, recommend-missing, recommend-required, effect-required, ask-r
 draft-medium, attach-outside, attach-repeated,
 ask-unknown, ask-reserved, resolved-already, delivery-repeated, owner-notice-repeated,
 open-invalid, source-invalid, sender-invalid, purpose-invalid, memory-too-long,
-issue-unread, replace-unconfigured, replace-unmarkable, owner-action-missing,
+issue-unread, replace-unmarkable, owner-action-missing,
 overseer-only, not-owner-ask, overseer-unreadable, no-reader, reader-unjudged,
 command-missing, orch-missing, file-unreadable, root-unresolved, repo-unresolved, repo-self,
 lane-foreign, mailbox-unsafe, cursor-invalid, duplicate, lock-failed,
@@ -798,9 +804,8 @@ prints. `envelope-invalid`'s value, the mailbox file, follows ` path=`, and
 ` line=<N>` closes it with the damaged line's logical number.
 `item-ask-unconfigured`'s value, the item, follows ` issue=`, and
 ` cause=<cause>` closes it, then ` unset=<keys>` where the cause is
-settings-unset. `replace-unconfigured` and `replace-unmarkable` take
-` cause=`; `replace-unmarkable` closes with ` id=<id>` naming the replaced
-ask. `resolved-already`,
+settings-unset. `replace-unmarkable` takes ` cause=` and closes with ` id=<id>`
+naming the replaced ask. `resolved-already`,
 `delivery-repeated` and `owner-notice-repeated` close their own value with
 ` id=<id>` naming the envelope already there.
 
@@ -945,7 +950,6 @@ fix=run `orch-runtime register --fleet` from the orch skill in the session that 
     session-archived) text='The Claude CLI answered that the cloud session is archived, so it takes no more messages. Nothing was delivered. oversee-events.md lane-stalled names what follows.' ;;
     session-send-failed) text='The Claude CLI did not answer ok true for the cloud session, so nothing says the directive was queued. Its exit status and its own words follow; send again once they are fixed.' ;;
     issue-unread) text='The item ask reads the tracker identity of its item and of each open owner ask'"'"'s item before it appends, to know which open asks are on the same item, and that read failed: the tracker'"'"'s own words follow. Nothing was appended. Ask again once the tracker answers, or close an open ask whose item ref the tracker refuses with resolve --id first.' ;;
-    replace-unconfigured) sep=' cause='; text='This ask replaces an open owner ask whose question comment is on the tracker item, and marking that comment replaced is a Linear comment edit, which the Linear package refuses where no LINEAR_TEAM is configured: cause=team-unset, or cause=team-unread where its auth-check did not say. Nothing was appended, and the earlier ask and its question stay open. Set LINEAR_TEAM in the repository'"'"'s kendex settings and ask again, or close the earlier ask with resolve --id first.' ;;
     replace-unmarkable) sep=' cause='; text='This ask replaces the open owner ask the id names, whose question comment cannot be marked replaced: cause=actor-unread where the tracker names no acting identity, comment-foreign where another identity wrote the comment, and comments-read where the comment did not read. Nothing was appended, and the earlier ask and its question stay open. Close the earlier ask with resolve --id first, or ask again once the tracker answers.' ;;
     item-ask-unconfigured) sep=' issue='; text='--issue asks for the question on the tracker item, and the settings that write needs are not there: cause=settings-unset names each unset key in unset=, the owner account as ORCH_OWNER_EMAIL, which KENDEX_USER_EMAIL also sets, and cause=settings-unreadable means the settings files could not be read. Nothing was appended. Set the keys in the repository'"'"'s kendex settings and ask again, or leave out --issue and --do for an ask that stays in chat.' ;;
     duplicate) sep=' id='; text='This envelope was sent to this item less than a minute ago: every field of it but its own id and its stamp matches the envelope the id above names, so the send is a retry of a delivery that already landed rather than a second message. Change any field of the message, or wait out the minute, to send it again.' ;;
@@ -2016,7 +2020,12 @@ if [ "$VERB" = owner-gate ]; then
     | map(. as $entry | $asks[$entry.id] as $ask
       | if $ask == null then {id, unknown: true}
         else {id, state, tracker_comment: $ask.tracker_comment, tracker_label: $ask.tracker_label,
-          issue: $ask.issue, identity: $ask.identity} end)' "$WORK_DIR/gate-events")" ||
+          issue: $ask.issue, identity: $ask.identity} end)
+    | . + [$asks[] | $asks[$id] as $closing
+      | select(.tracker_posted == false and .tracker_cause != null and (.tracker_comment | type) == "string")
+      | select(if .identity.uuid != null and $closing.identity.uuid != null
+          then .identity.uuid == $closing.identity.uuid else .issue == $closing.issue end)
+      | {id, state: "unpublished", tracker_comment}]' "$WORK_DIR/gate-events")" ||
     refuse file-unreadable "$WORK_DIR/gate-events"
   GATE_UNKNOWN="$(jq -r 'map(select(.unknown == true) | .id) | first // ""' <<<"$GATE_ASKS")" ||
     refuse file-unreadable "$WORK_DIR/gate-events"
@@ -3463,23 +3472,20 @@ case "$VERB" in
       REPLACE_OPEN="$(jq -cs --argjson identities "$IDENTITIES" --argjson new "$IDENTITY_FIELD" --arg id "$REPLACES" '
         map(select(.kind == "ask")
           | if (.issue | type) == "string" and (.issue as $ref | $identities | has($ref)) then .identity = $identities[.issue] else . end
-          | select(.id == $id or ($new != null and .identity.uuid == $new.uuid)))' "$WORK_DIR/replace-open")" ||
+          | select(.id == $id or ($new != null and .identity.uuid == $new.uuid))
+          | if .tracker_posted == false then del(.tracker_comment) else . end)' "$WORK_DIR/replace-open")" ||
         refuse file-unreadable "$WORK_DIR/replace-open"
       REPLACES_FIELD="$(jq -c "$OWNER_REPLACING_JQ"' map({id} + (if .tracker_comment != null then {tracker_comment} else {} end)
           + (if .identity != null then {identity} else {} end), (select(owner_replacing) | .replaces // [])[])
         | unique_by(.id)' <<<"$REPLACE_OPEN")" || refuse file-unreadable "$WORK_DIR/replace-open"
       # A mark known to be refused refuses the ask whole, before the append,
-      # so no second question is posted beside one it cannot mark: a home
-      # whose Linear package edits no comment, an acting identity that does
-      # not read, and a question comment another identity wrote.
+      # so no second question is posted beside one it cannot mark. Failed
+      # publications have no replacement mark. The close cleans them up.
       if jq -e 'any(.[]; .tracker_comment != null)' <<<"$REPLACE_OPEN" >/dev/null; then
         REFUSE_EXTRA="id=$(jq -r 'map(select(.tracker_comment != null)) | first | .id' <<<"$REPLACE_OPEN")" ||
           refuse file-unreadable "$WORK_DIR/replace-open"
         if ! owner_tracker_replace_actor "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$WORK_DIR" </dev/null; then
-          case "$OWNER_REPLACE_CAUSE" in
-            team-*) REFUSE_EXTRA=""; refuse replace-unconfigured "$OWNER_REPLACE_CAUSE" "$(cat -- "$WORK_DIR/replace-auth.err")" ;;
-            *) refuse replace-unmarkable "$OWNER_REPLACE_CAUSE" "$(cat -- "$WORK_DIR/replace-auth.err")" ;;
-          esac
+          refuse replace-unmarkable actor-unread "$(cat -- "$WORK_DIR/replace-auth.err")"
         fi
         REPLACE_ACTOR="$OWNER_REPLACE_ACTOR"
         jq -c '.[] | select(.tracker_comment != null)' <<<"$REPLACE_OPEN" >"$WORK_DIR/replace-check" ||
@@ -3531,8 +3537,9 @@ case "$VERB" in
           + (if $lined == "0" then {tracker_action_line: false} else {} end) + {text: ""}' <<<"$LINE")" ||
           refuse write-failed "$TO_OVERSEER"
       else
-        POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" '{id: (.id + "-tracker"), kind: "tracker-failed", at, from,
-          re: .id, issue, cause: $cause, text: ""}' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
+        POSTED_LINE="$(jq -c --arg cause "$OWNER_TRACKER_CAUSE" --arg comment "$OWNER_TRACKER_COMMENT" '
+          {id: (.id + "-tracker"), kind: "tracker-failed", at, from, re: .id, issue, cause: $cause, text: ""}
+          + (if $comment == "" then {} else {tracker_comment: $comment} end)' <<<"$LINE")" || refuse write-failed "$TO_OVERSEER"
       fi
       lm_append_local "$TO_OVERSEER" "$POSTED_LINE"
     fi
@@ -3807,7 +3814,7 @@ case "$VERB" in
         if owner_tracker_replace_actor "$SCRIPT_DIR/../../linear/scripts/linear.sh" "$WORK_DIR" </dev/null; then
           REPLACE_ACTOR="$OWNER_REPLACE_ACTOR"
         else
-          REPLACE_CAUSE="$OWNER_REPLACE_CAUSE"
+          REPLACE_CAUSE=actor-unread
         fi
       fi
       lm_replace_step "$REPLACE_ASK" "$REPLACE_ENTRIES" "$REPLACE_ACTOR" "$REPLACE_CAUSE"

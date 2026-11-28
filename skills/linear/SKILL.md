@@ -99,7 +99,7 @@ The transport retries a rate refusal, a 5xx query or download, or an unanswered 
 
 `LINEAR_TEAM` has no default.
 
-- Existing-issue writes, including `comments create`, route by the issue identifier and need no configured team.
+- Existing-issue writes, including `comments create`, `comments update` and `comments delete`, need no configured team. Comment edits and deletions resolve the issue from the comment ID.
 - Other writes refuse when it is unset.
 - Reads drop the team filter when it is unset.
 - `--team <key-or-name>` overrides `LINEAR_TEAM` for one call only on `issues create`, `projects create`, `cycles create`, `labels create`, `labels audit`, `projects audit`, `cycles list`, `statuses list` and `statuses get`.

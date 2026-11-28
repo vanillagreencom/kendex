@@ -1227,11 +1227,10 @@ linear_guard_write_action() {
 # Every lane writes with one app token, and Linear lets an app token write in
 # every public team whatever team access the app's settings name, so no
 # credential keeps a lane out of another team's issues. These guards do: an
-# issue create, a change to an existing issue's fields, an archive and a trash
-# land only in this checkout's own team (LINEAR_TEAM). Reads, comments and
-# relations are not
-# guarded. No setting turns the guards off; with no LINEAR_TEAM they say they
-# are inactive and let the write through.
+# issue create, a change to an existing issue's fields, an archive, a trash
+# and edits or deletions of existing comments land only in this checkout's
+# own team (LINEAR_TEAM). Reads, other comment actions and relations are
+# unguarded. With no LINEAR_TEAM the guards report that they are inactive.
 
 # This checkout's team as a {id, key, name} node, read once per invocation into
 # LINEAR_OWN_TEAM. Call it in the command's own shell, not `$(...)`.
@@ -1256,6 +1255,32 @@ linear_cross_team_refusal() {
     own=$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")
     echo "linear: refused=cross-team action=$action${issue:+ issue=$issue} team=$team own-team=$own route=peer-mail" >&2
     echo "fix=Nothing was written. Give the work to the overseer of the repository that tracks $team with lane-mail peer send --repo [REPO]." >&2
+}
+
+linear_require_own_team() { # ACTION TEAM_KEY ISSUE
+    linear_own_team || return 1
+    [[ "$2" == "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]] && return 0
+    linear_cross_team_refusal "$1" "$2" "$3"
+    return 1
+}
+
+# A comment edit or delete has only the comment ID. Resolve its issue and
+# current team together before checking the same boundary as an issue write.
+linear_guard_comment_team() { # ACTION COMMENT_ID
+    local action="$1" comment="$2" vars result issue team
+    if [[ -z "$DEFAULT_TEAM" ]]; then
+        linear_cross_team_inactive "$action"
+        return 0
+    fi
+    vars=$(jq -cn --arg id "$comment" '{id: $id}') || return 1
+    if ! result=$(graphql_query 'query CommentTeam($id: String!) { comment(id: $id) { issue { identifier team { key } } } }' "$vars") \
+        || ! issue=$(jq -er '.comment.issue.identifier | strings | select(length > 0)' <<<"$result") \
+        || ! team=$(jq -er '.comment.issue.team.key | strings | select(length > 0)' <<<"$result"); then
+        echo "linear: refused=cross-team-unread action=$action comment=$comment" >&2
+        echo "The comment's issue or team could not be read, so nothing was written." >&2
+        return 1
+    fi
+    linear_require_own_team "$action" "$team" "$issue"
 }
 
 # Refs this invocation's guard has let through, each followed by a space. A
@@ -1291,11 +1316,7 @@ linear_guard_issue_team() {
             echo "The issue's team could not be read (see the previous error), so nothing was written." >&2
             return 1
         fi
-        linear_own_team || return 1
-        if [[ "$team" != "$(jq -r '.key' <<<"$LINEAR_OWN_TEAM")" ]]; then
-            linear_cross_team_refusal "$action" "$team" "$ref"
-            return 1
-        fi
+        linear_require_own_team "$action" "$team" "$ref" || return 1
         LINEAR_TEAM_PASSED+="$ref "
     done
 }

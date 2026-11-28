@@ -59,6 +59,19 @@ case "$query" in
 *"commentCreate(input:"*)
   printf '%s' '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-uuid","body":"b","createdAt":"2026-07-30T00:00:00Z","user":{"name":"tester"}}}}}___HTTP_CODE___200'
   ;;
+*"comment(id:"*)
+  case "$(jq -r '.variables.id' <<<"$payload")" in
+    own-comment) printf '%s' '{"data":{"comment":{"issue":{"identifier":"TEAM-1","team":{"key":"TEAM"}}}}}___HTTP_CODE___200' ;;
+    other-comment) printf '%s' '{"data":{"comment":{"issue":{"identifier":"OTHER-1","team":{"key":"OTHER"}}}}}___HTTP_CODE___200' ;;
+    unread-comment) printf '%s' '{"errors":[{"message":"COMMENT_READ_FAILED"}]}___HTTP_CODE___200' ;;
+  esac
+  ;;
+*"commentUpdate(id:"*)
+  printf '%s' '{"data":{"commentUpdate":{"success":true,"comment":{"id":"own-comment"}}}}___HTTP_CODE___200'
+  ;;
+*"commentDelete(id:"*)
+  printf '%s' '{"data":{"commentDelete":{"success":true}}}___HTTP_CODE___200'
+  ;;
 *"projectCreate(input:"*)
   printf '%s' '{"data":{"projectCreate":{"success":true,"project":{"id":"project-uuid","name":"P","url":"https://linear.app/x/project/P","state":"planned"}}}}___HTTP_CODE___200'
   ;;
@@ -150,6 +163,8 @@ run() {
   wire) printf 'rc=%s calls=%s wire=%s' "$rc" "$calls" "$(wire)" ;;
   err) printf 'rc=%s calls=%s wire=%s%s' "$rc" "$calls" "$(wire)" "${err:+ $err}" ;;
   err-first) printf 'rc=%s calls=%s wire=%s %s' "$rc" "$calls" "$(wire)" "${err%%;*}" ;;
+  comment-unread) printf 'rc=%s calls=%s wire=%s %s' "$rc" "$calls" "$(wire)" \
+    "$(sed -n '/COMMENT_READ_FAILED/s/.*/COMMENT_READ_FAILED/p; /^linear: refused=cross-team-unread/p' "$TMP_ROOT/err" | paste -sd';' -)" ;;
   *) printf 'UNKNOWN-VIEW:%s' "$view" ;;
   esac
 }
@@ -205,6 +220,12 @@ expected() {
     w="${w%% *}"
     printf '%s linear: cross-team-guard=inactive action=%s cause=no-team' "$(expected "ok ${spec#inactive "$w" }")" "$w"
     ;;
+  cross-comment\ *)
+    printf 'rc=1 calls=2 wire=CommentTeam(),GetTeam(name="TEAM") linear: refused=cross-team action=%s issue=OTHER-1 team=OTHER own-team=TEAM route=peer-mail' "${spec#cross-comment }"
+    ;;
+  unread-comment\ *)
+    printf 'rc=1 calls=1 wire=CommentTeam() COMMENT_READ_FAILED;linear: refused=cross-team-unread action=%s comment=unread-comment' "${spec#unread-comment }"
+    ;;
   auth\ *)
     # shellcheck disable=SC2086  # the spec's fields are its words
     set -- ${spec#auth }
@@ -237,6 +258,13 @@ issues create is refused|none|-|err|issues create --title "Cross-workspace write
 issues update uses the issue team with no configured team|none|-|err|issues update TEAM-1 --state Done --labels backend|inactive update GetIssue(),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),GetLabel(name="backend",teamName="IssueTeam",inline-team),UpdateIssue()
 issues update resolves under the issue team, not the configured spelling of it|TEAM|-|err|issues update TEAM-1 --state Done --labels backend|ok IssueTeam(),GetTeam(name="TEAM"),GetIssue(),GetState(name="Done",teamId="7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",inline-team),GetLabel(name="backend",teamName="IssueTeam",inline-team),UpdateIssue()
 comments create reaches the API with no configured team|none|-|err|comments create TEAM-1 --body hello|ok CreateComment(input.body="> Posted by Agent: unknown, Model: unknown, Effort: unknown\n\nhello\n")
+comments update reaches the API with no configured team|none|-|err|comments update own-comment --body hello|inactive update UpdateComment(input.body="hello\n")
+comments delete reaches the API with no configured team|none|-|err|comments delete own-comment|inactive delete DeleteComment()
+comments update reaches the API for its own team|TEAM|-|err|comments update own-comment --body hello|ok CommentTeam(),GetTeam(name="TEAM"),UpdateComment(input.body="hello\n")
+comments delete reaches the API for its own team|TEAM|-|err|comments delete own-comment|ok CommentTeam(),GetTeam(name="TEAM"),DeleteComment()
+comments update refuses a comment in another team|TEAM|-|err-first|comments update other-comment --body hello|cross-comment update
+comments delete refuses a comment in another team|TEAM|-|err-first|comments delete other-comment|cross-comment delete
+comments delete preserves the failed issue lookup cause|TEAM|-|comment-unread|comments delete unread-comment|unread-comment delete
 projects create is refused|none|-|err|projects create --name "New project"|refused
 cycles create is refused|none|-|err|cycles create --start 2026-08-01 --end 2026-08-15|refused
 labels create is refused|none|-|err|labels create --name backend|refused

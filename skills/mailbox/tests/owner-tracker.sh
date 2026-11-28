@@ -63,6 +63,7 @@ close_rows() {
   assert_eq "$(jq '.comment_form' <<<"$CLOSE_FACTS")" true 'the question comment mentions the owner and carries no ask id'
   assert_eq "$(jq '.mention' <<<"$CLOSE_FACTS")" true 'a saved comment without the owner mention refuses by its key and records no post'
   assert_eq "$(jq '.comment_delete' <<<"$CLOSE_FACTS")" true 'a refused comment delete reports its key and retains the answer'
+  assert_eq "$(jq '.survivor_removed' <<<"$CLOSE_FACTS")" true 'a later close recovers a failed reserved question before clearing the owner pair'
 }
 
 # A new ask that replaces an open one, each row judged on its own tracker.
@@ -81,7 +82,7 @@ spellings_replaced|an earlier ask kept under the item's lower-case ref, its UUID
 refused_before_post|a replaced question with no acting identity or another author refuses the ask before anything is appended or posted
 incomplete_retried|an edit that fails after the post leaves the earlier ask open and incomplete until a pass retries the same comment and closes it, the replacing ask open or closed since
 absent_closes|a replaced question comment the tracker holds no longer closes its ask with no edit
-no_team_refused|a re-ask replacing a question comment where Linear has no team is refused whole, while an ask replacing none still posts
+no_team_replaces|a re-ask where Linear has no team marks the earlier comment replaced and closes its ask
 explicit_replaces|--replaces closes a chat-only ask or an ask on another item, and an item ask leaves another item's open ask alone
 ROWS
 }

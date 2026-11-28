@@ -35,6 +35,7 @@ row = os.environ["TRACKER_ROW"]
 comments_path = root / "comments.json"
 comments = json.loads(comments_path.read_text())
 question_id = root / "question-id"
+surviving_id = root / "surviving-id"
 if args[:2] == ["users", "list"]:
     print(json.dumps([{"id": "owner", "name": "Owner Person", "email": "owner@example.test",
                        "display_name": "owner.person"}]))
@@ -61,9 +62,11 @@ elif args[:3] == ["comments", "owner-questions", "--id"]:
     sys.stderr.write(sent.stderr)
     sys.exit(sent.returncode)
 elif args[:2] == ["comments", "owner-questions"]:
-    # The item's open questions: the ask's question comment while it stands.
-    standing = question_id.exists() and len(comments) > 1
-    print(json.dumps([{"id": question_id.read_text(), "reserved": True, "legacy_asks": []}] if standing else []))
+    # The watch writes the successful question's ruling before calling the gate.
+    standing = ([surviving_id.read_text()] if surviving_id.exists() else [])
+    if question_id.exists() and len(comments) > 1 and not (root / "ruled").exists():
+        standing.append(question_id.read_text())
+    print(json.dumps([{"id": key, "reserved": True, "legacy_asks": []} for key in dict.fromkeys(standing)]))
 elif args[:2] == ["comments", "create"]:
     if row in ("comment-failed", "comment-refused", "comment-preexisting", "comment-label-edit", "comment-edited", "rollback-read", "rollback-failed") and not (root / "closing").exists():
         (root / "comment-attempted").touch()
@@ -99,19 +102,29 @@ elif args[:2] == ["graphql", "--query"] and args[2].startswith("query OwnerTrack
     # Linear's bodyData for the saved comment: the owner's mention is a
     # suggestion_userMentions node carrying the owner's user id.
     node = {"type": "suggestion_userMentions", "attrs": {"id": "owner", "label": "owner.person"}}
-    if row in ("mention-missing", "delete-refused"):
+    if row == "mention-missing" or (row == "delete-refused" and not (root / "closing").exists()):
         node = {"type": "text", "text": comments[-1].splitlines()[0]}
     elif row == "mention-other":
         node = {"type": "suggestion_userMentions", "attrs": {"id": "someone-else", "label": "someone.else"}}
     doc = {"type": "doc", "content": [{"type": "paragraph", "content": [node]}]}
     print(json.dumps({"comment": {"bodyData": json.dumps(doc)}}))
-elif args[:2] == ["comments", "delete"] and args[2] == question_id.read_text():
+elif args[:2] == ["comments", "delete"]:
     # The linear package exits 0 on a refused delete and prints the answer.
-    if row == "delete-refused":
+    if row == "delete-refused" and not (root / "cleanup-allowed").exists():
+        surviving_id.write_text(args[2])
         print(json.dumps(DELETE_REFUSED))
         sys.exit(0)
-    comments.pop()
+    if surviving_id.exists():
+        assert args[2] == surviving_id.read_text()
+        surviving_id.unlink()
+        del comments[1]
+    else:
+        assert args[2] == question_id.read_text()
+        comments.pop()
     comments_path.write_text(json.dumps(comments))
+    if row == "delete-refused":
+        print("tracker: write=unconfirmed", file=sys.stderr)
+        sys.exit(1)
     print(json.dumps({"success": True, "identifier": None, "url": None, "data": {"success": True}}))
 elif args[:2] == ["issues", "update"]:
     if row == "label-failed" and "--labels" in args and not (root / "closing").exists():
@@ -134,7 +147,8 @@ elif args[:2] == ["issues", "update"]:
     state.write_text(json.dumps(item))
     print("{}")
 elif args[:2] == ["issues", "bulk-get"]:
-    print(json.dumps([{"id": ref, "uuid": "uuid-" + ref} for ref in args[2:] if not ref.startswith("--")]))
+    print(json.dumps([{"id": "KEN-7", "uuid": "uuid-KEN-7"}]
+                     if any(ref in ("KEN-7", "OLD-7") for ref in args[2:]) else []))
 else:
     sys.exit(1)
 '''
@@ -170,7 +184,7 @@ def run(source, scratch, bash):
              "retained_error": True, "comments": True, "rollback_owned": True,
              "rollback_unowned": True, "rollback_notice": True, "comment_refused": True,
              "rollback_labels": True, "comment_form": True, "mention": True,
-             "comment_delete": True, "rollback_pair": True}
+             "comment_delete": True, "rollback_pair": True, "survivor_removed": False}
     # One copy of the real linear scripts, with no orch beside it, so its
     # attribution line reads unknown rather than this checkout's session.
     linear = Path(tempfile.mkdtemp(dir=scratch)) / "linear"
@@ -225,9 +239,10 @@ def run(source, scratch, bash):
                 return subprocess.run([*mail, *args], cwd=root, env=env, capture_output=True,
                                       text=True, check=True, timeout=10)
 
-            ask = invoke("ask", "--item", "overseer", "--to", "owner", "--issue", "KEN-7",
-                         "--do", "Approve change", "--wait", "5", "--options", "approve,hold",
-                         "--recommend", "approve", "--effect", "none", "--file", str(message))
+            ask_args = ("ask", "--item", "overseer", "--to", "owner", "--do", "Approve change",
+                        "--wait", "5", "--options", "approve,hold", "--file", str(message))
+            approval = ("--reserved",) if row == "delete-refused" else ("--recommend", "approve", "--effect", "none")
+            ask = invoke(*ask_args, "--issue", "KEN-7", *approval)
             ask_id = ask.stdout.strip().split("=", 1)[1]
             reserved = (root / "reserved-id").read_text()
             written = ("**Owner, what you do:** Approve change `Owner question: " + reserved + "`\n\n"
@@ -277,7 +292,7 @@ def run(source, scratch, bash):
                                    and retained[0].read_bytes() == b"tracker: refused=mention-read\n")
                     box = (root / "tmp/lane-mail/overseer/to-overseer.jsonl").read_text().splitlines()
                     facts["mention"] &= (refused and pending["tracker_posted"] is False
-                        and pending.get("tracker_cause") == cause
+                        and pending.get("tracker_cause") == cause and "tracker_comment" not in pending
                         and not any(json.loads(line).get("kind") == "tracker-posted" for line in box))
                 if row == "delete-refused":
                     # The refused delete reports by its key and keeps the
@@ -330,10 +345,28 @@ def run(source, scratch, bash):
                 error_file = Path(error_path) if error_path else None
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
                     and error_file.read_bytes() == b"tracker: refused=write\n")
+            (root / "closing").touch()
+            to_close = ask_id
+            if row == "delete-refused":
+                outcome = next(record for record in map(json.loads,
+                    (root / "tmp/lane-mail/overseer/to-overseer.jsonl").read_text().splitlines())
+                    if record.get("re") == ask_id and record["kind"] == "tracker-failed")
+                # The first question never posted for mailbox presentation.
+                # The new question reaches the same tracker item under an alias.
+                message.write_text("Approve the revised change?\n")
+                later = invoke(*ask_args, "--issue", "OLD-7", "--reserved")
+                to_close = later.stdout.strip().split("=", 1)[1]
+                current = json.loads(invoke("pending", "--item", "overseer", "--to", "owner").stdout)
+                latest_body = json.loads(comments_path.read_text())[-1]
+                survived = (outcome.get("tracker_comment") == reserved and pending.get("tracker_comment") == reserved
+                    and pending.get("reserved") is True and pending.get("tracker_posted") is False
+                    and current["id"] == to_close and current["tracker_posted"] is True
+                    and current["identity"]["uuid"] == pending["identity"]["uuid"]
+                    and current["replaces"] == [{"id": ask_id, "identity": current["identity"]}])
             before_close = json.loads(state.read_text())
             calls = (root / "calls.jsonl").read_bytes()
-            (root / "closing").touch()
-            invoke("resolve", "--item", "overseer", "--id", ask_id, "--text", str(message))
+            close_args = ("resolve", "--item", "overseer", "--id", to_close)
+            invoke(*close_args, *(("--text", str(message)) if row != "delete-refused" else ()))
             after_close = json.loads(state.read_text())
             if row == "label-failed":
                 facts["retained_error"] &= (error_file is not None and error_file.is_file()
@@ -346,6 +379,28 @@ def run(source, scratch, bash):
             facts["close_untracked"] &= (after_close == before_close
                 and all(args[:3] == ["comments", "bulk-list", "KEN-7"] or args[:2] == ["comments", "react"]
                         for args in closing))
+            if row == "delete-refused":
+                (root / "ruled").touch()
+                gate = (*mail, "owner-gate", "--item", "overseer", "--id", to_close)
+                def reconcile():
+                    return subprocess.run(gate, cwd=root, env=env, capture_output=True, text=True, timeout=10)
+
+                refused = reconcile()
+                still_held = json.loads(state.read_text())
+                (root / "cleanup-allowed").touch()
+                lost = reconcile()
+                retried = reconcile()
+                cleared = json.loads(state.read_text())
+                delete_calls = [call[2] for call in map(json.loads, (root / "calls.jsonl").read_text().splitlines())
+                                if call[:2] == ["comments", "delete"]]
+                facts["survivor_removed"] = (survived and refused.returncode == lost.returncode == 2
+                    and "cause=comment-delete" in refused.stderr and json.dumps(DELETE_REFUSED) in refused.stderr
+                    and "tracker: write=unconfirmed" in lost.stderr
+                    and still_held["assignee"] == "Owner Person" and "owner-gated" in still_held["labels"]
+                    and delete_calls == [reserved] * 3 and retried.returncode == 0
+                    and retried.stdout.strip() == "owner-gate: held=false"
+                    and json.loads(comments_path.read_text()) == previous_comments + [latest_body]
+                    and cleared["assignee"] == "" and cleared["labels"] == ["skills"])
     return facts
 
 

@@ -71,6 +71,8 @@ A Slack reply through a presentation already bound to an ask can arrive after cl
 
 New delegated presentations are on hold at every origin. Use the manual owner-ask route. The `present` command reads an existing receipt using the destination, repository root and ask id from the original mailbox event. An ask without a receipt returns `unavailable` and directs the caller to the manual route. A notice already waiting to post stays held.
 
+For who writes an item comment when relaying an ask, see the owner-channel `ask` entry in [`lane-mail --help`](../../mailbox/scripts/lane-mail).
+
 The `present` receipt carries a confirmed thread or `delivery: unconfirmed` when the relay has yet to establish it. A second presenter sees the first presentation's state. `deliver` reads replies bound to presentation notices and writes the owner's words to their original mailboxes with the Slack event's delivery identity. Run it from the home watch alongside `lane-mail owner-answers`. It reports undelivered replies until each originating mailbox confirms its copy. Repeating the command resumes unconfirmed deliveries.
 
 ## Receipts and Later

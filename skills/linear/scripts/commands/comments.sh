@@ -594,6 +594,7 @@ update_comment() {
         return 1
     fi
 
+    linear_guard_comment_team update "$comment_id" || return 1
     local escaped_body
     escaped_body=$(echo "$body" | jq -Rs '.')
 
@@ -620,6 +621,7 @@ update_comment() {
 delete_comment() {
     local comment_id="$1"
 
+    linear_guard_comment_team delete "$comment_id" || return 1
     local mutation='
     mutation DeleteComment($id: String!) {
         commentDelete(id: $id) {
@@ -635,9 +637,6 @@ delete_comment() {
 # Main routing
 action="${1:-help}"
 shift || true
-
-# Comment creation routes by the issue identifier.
-linear_guard_write_action "$action" "update delete" "$@" || exit 1
 
 case "$action" in
     list)
