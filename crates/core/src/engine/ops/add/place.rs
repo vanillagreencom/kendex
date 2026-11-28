@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use super::AddRequest;
-use super::pick::{default_source, ensure_source};
+use super::pick::{Selection, default_source, ensure_source};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::Manifest;
@@ -58,9 +58,9 @@ pub(super) fn place(
     scope: &Scope,
     manifest: &mut Manifest,
     request: &AddRequest,
-) -> Result<(BTreeMap<String, Wanted>, Option<String>)> {
+) -> Result<(BTreeMap<String, Wanted>, Option<Selection>)> {
     let context = match &request.source {
-        Some(source) => Some(ensure_source(manifest, Some(source))?),
+        Some(source) => Some(ensure_source(manifest, source)?),
         None => None,
     };
     let mut groups: BTreeMap<String, Wanted> = BTreeMap::new();
@@ -79,7 +79,7 @@ pub(super) fn place(
                 (Some((qualifier, bare)), _) => {
                     (subscription(manifest, qualifier)?, bare.to_owned())
                 }
-                (None, Some(ctx)) => (ctx.clone(), name.clone()),
+                (None, Some(ctx)) => (ctx.name.clone(), name.clone()),
                 (None, None) => (
                     search(env, scope, manifest, &mut offered, kind, name)?,
                     name.clone(),
@@ -98,7 +98,7 @@ pub(super) fn place(
         // either way.
         let (source_name, bare) = match (name.split_once(QUALIFIER), &context) {
             (Some((qualifier, bare)), _) => (subscription(manifest, qualifier)?, bare.to_owned()),
-            (None, Some(ctx)) => (ctx.clone(), name.clone()),
+            (None, Some(ctx)) => (ctx.name.clone(), name.clone()),
             (None, None) => (default_source(manifest)?, name.clone()),
         };
         groups.entry(source_name).or_default().bundles.push(bare);

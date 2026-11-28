@@ -16,7 +16,7 @@ use crate::source::{self, find_item, list_items, source_config_for};
 
 #[derive(Debug, Default, Clone)]
 pub struct AddRequest {
-    /// v1 positional source: `owner/repo`, a path, or a declared source
+    /// v1 positional source: `owner/repo[@rev]`, a path, or a declared source
     /// name. `None` sends bare names through the cross-subscription
     /// search; a `marketplace::name` spelling names its subscription
     /// itself.
@@ -87,15 +87,23 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
     crate::source_ops::install_project_from_personal(env, root, &name, request)
 }
 
-/// The scope's manifest with the subscription `request` names positionally
-/// declared the way [`add`] declares it, for a caller that downloads what
-/// the add reads before planning it again. A repository named on a fresh
-/// home is declared nowhere on disk until the add lands, so the scope's
-/// manifest alone would leave it undownloaded.
+/// The scope's manifest adjusted for downloading what [`add`] reads.
+/// A fresh subscription and an explicit override for an existing one both
+/// need to reach the fetch before the add can be planned again.
 pub fn manifest_for_request(env: &Env, scope: &Scope, request: &AddRequest) -> Result<Manifest> {
     let mut manifest = manifest_for_mutation(env, scope)?;
     if let Some(source) = &request.source {
-        pick::ensure_source(&mut manifest, Some(source))?;
+        let selection = pick::ensure_source(&mut manifest, source)?;
+        if let Some(rev) = selection.override_rev {
+            let decl =
+                manifest
+                    .sources
+                    .get_mut(&selection.name)
+                    .ok_or(CoreError::UnknownSource {
+                        name: selection.name,
+                    })?;
+            decl.rev = Some(rev);
+        }
     }
     Ok(manifest)
 }
@@ -210,7 +218,7 @@ impl PreparedAddition {
         let (mut groups, context) = place::place(env, scope, manifest, request)?;
         let all_source = match (request.all, &context) {
             (false, _) => None,
-            (true, Some(ctx)) => Some(ctx.clone()),
+            (true, Some(ctx)) => Some(ctx.name.clone()),
             (true, None) => Some(pick::default_source(manifest)?),
         };
         if let Some(source_name) = &all_source {
@@ -220,6 +228,10 @@ impl PreparedAddition {
         let mut optional_offers: Vec<(String, String)> = Vec::new();
         let mut declaring: BTreeSet<Held> = BTreeSet::new();
         for (source_name, wanted) in &groups {
+            let override_rev = context
+                .as_ref()
+                .filter(|ctx| ctx.name == *source_name)
+                .and_then(|ctx| ctx.override_rev.as_deref());
             declaring.extend(add_from(
                 env,
                 scope,
@@ -233,6 +245,7 @@ impl PreparedAddition {
                 &mut optional_offers,
                 revision,
                 member_hold_at,
+                override_rev,
             )?);
         }
         if request.harnesses.is_some() {
@@ -403,10 +416,13 @@ fn add_from(
     optional_offers: &mut Vec<(String, String)>,
     revision: Option<&str>,
     member_hold_at: Option<&str>,
+    override_rev: Option<&str>,
 ) -> Result<BTreeSet<Held>> {
-    let ready = source::require_ready_at(env, scope, source_name, manifest, revision)?;
-    let hold_at = hold_commit(request, source_name, &ready)?;
-    let hold_at = hold_at.as_deref();
+    let ready =
+        source::require_ready_at(env, scope, source_name, manifest, override_rev.or(revision))?;
+    // An override belongs to the requested packages. Recording the resolved
+    // commit keeps their plan and declaration on the same snapshot.
+    let hold_at = hold_commit(request.hold || override_rev.is_some(), source_name, &ready)?;
     let sealed = crate::source_read::SealedSource::open(&ready.root)?;
     let config = source_config_for(&sealed, &ready.provenance)?;
 
@@ -492,8 +508,8 @@ fn add_from(
     ] {
         for name in names {
             // Collections freeze their explicit members. Automatic agent
-            // skills keep their revision choices; direct add --hold still
-            // freezes the complete request expansion through hold_at.
+            // skills keep their revision choices. A direct add's hold
+            // also covers skills it expands.
             let hold_at = if kind == ItemKind::Skill && !wanted.skills.contains(&name) {
                 hold_at
             } else {
@@ -607,17 +623,17 @@ pub(crate) fn protect_installed(
 // collision refusal (installed or merely declared), the `--hold` commit, and
 // the source label a collision names.
 
-/// The commit a `--hold` request freezes its declarations at. Only a
-/// remote resolves to one; a hold on anything else is refused before the
+/// The commit a requested hold freezes its declarations at. Only a remote
+/// resolves to one. A hold on anything else is refused before the
 /// first declaration is written (invariant 11).
-fn hold_commit(
-    request: &AddRequest,
+fn hold_commit<'a>(
+    hold: bool,
     source_name: &str,
-    ready: &crate::source::ResolvedSource,
-) -> Result<Option<String>> {
-    match (request.hold, &ready.commit) {
+    ready: &'a crate::source::ResolvedSource,
+) -> Result<Option<&'a str>> {
+    match (hold, ready.commit.as_deref()) {
         (false, _) => Ok(None),
-        (true, Some(commit)) => Ok(Some(commit.clone())),
+        (true, Some(commit)) => Ok(Some(commit)),
         (true, None) => Err(CoreError::ItemRevUnsupported {
             source_name: source_name.to_owned(),
         }),
