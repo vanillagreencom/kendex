@@ -330,10 +330,10 @@ enum Verb {
         #[arg(long, group = "launch")]
         checkpoint: bool,
     },
-    /// The model, effort and name of the session bound at the caller's pane,
-    /// for a caller inside it that names no session: the three lines and
-    /// exit of `agent-runtime session model` for the session the lane's
-    /// record binds there, or `session-unnamed` at exit 2 where none does.
+    /// The model, effort and name of the caller's bound lane or controller
+    /// session. Prints the three lines of `agent-runtime session model` and
+    /// uses the launch's recorded effort when the session names none.
+    /// An unbound caller gets `session-unnamed` at exit 2.
     Session,
     /// The merge cycles the fleet record holds, printed as text lines: the
     /// per-class totals, or a running lane's stage rows. No fleet record

@@ -14,6 +14,7 @@ mod support;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime};
@@ -3814,7 +3815,10 @@ fn the_admission_refuses_a_record_of_no_session_or_another_pane() {
 impl World {
     /// `orch-runtime session` run from the lane, with `env` added.
     fn session(&self, env: Env) -> Out {
-        let mut command = isolated();
+        self.session_process(isolated(), env)
+    }
+
+    fn session_process(&self, mut command: std::process::Command, env: Env) -> Out {
         command
             .arg("session")
             .current_dir(&self.lane)
@@ -3868,6 +3872,155 @@ fn a_call_naming_no_session_reads_the_session_bound_at_its_pane() {
     );
     let out = world.session(&four);
     assert!(refused(&out), "another pane: {} {}", out.stdout, out.stderr);
+}
+
+#[test]
+fn a_lane_session_uses_only_its_own_launch_effort() {
+    let world = World::launched();
+    let env = [("AGENT_RUNTIME_LAUNCH_AGENT", ITEM)];
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    world.tool_call("claude", Some(&transcript), &env);
+    let unrelated = Owned::sleep();
+    for (session, pid, start, code, line) in [
+        (
+            "s1",
+            std::process::id(),
+            start_of(std::process::id()),
+            0,
+            "effort=high source=launch",
+        ),
+        (
+            "previous",
+            std::process::id(),
+            start_of(std::process::id()),
+            1,
+            "session-effort-unrecorded harness=claude session=s1",
+        ),
+        (
+            "s1",
+            unrelated.pid(),
+            unrelated.start(),
+            2,
+            "session-unnamed",
+        ),
+    ] {
+        fs::write(
+            world.fleet(),
+            json!({"lanes": [{"item": ITEM, "harness": "claude",
+        "status": "running", "session_id": session, "effort": "high",
+        "launch": {"pid": pid, "start": start}}]})
+            .to_string(),
+        )
+        .unwrap();
+        let out = world.session(&env);
+        assert_eq!(out.code, code, "{} {}", out.stdout, out.stderr);
+        if code == 2 {
+            assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+            assert_eq!(out.stdout.split_whitespace().next(), Some(line));
+        } else {
+            assert_eq!(out.stdout.lines().nth(1), Some(line));
+        }
+    }
+}
+
+#[test]
+fn a_hosted_lane_session_is_named_only_inside_its_launch_group() {
+    let world = World::launched();
+    let env = [("AGENT_RUNTIME_LAUNCH_AGENT", ITEM)];
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    world.tool_call("claude", Some(&transcript), &env);
+    let leader = Owned(program("sleep").arg("30").process_group(0).spawn().unwrap());
+    let identity = world.root.join("identity");
+    fs::write(
+        &identity,
+        json!({"pid": leader.pid(), "start": leader.start()}).to_string(),
+    )
+    .unwrap();
+    let launches = world.common().join("lane-launch");
+    fs::create_dir_all(&launches).unwrap();
+    fs::write(
+        launches.join("ken-1.json"),
+        json!({"identity_file": identity}).to_string(),
+    )
+    .unwrap();
+    let mut inside = isolated();
+    inside.process_group(i32::try_from(leader.pid()).unwrap());
+    let out = world.session_process(inside, &env);
+    assert_eq!(
+        (out.code, out.stdout.as_str()),
+        (
+            1,
+            "model=claude-haiku-5-5 source=session\nsession-effort-unrecorded harness=claude session=s1\nagent=ken-1 source=launch\n"
+        ),
+        "{}",
+        out.stderr
+    );
+    let out = world.session(&env);
+    assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
+    assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+    assert_eq!(
+        out.stdout.split_whitespace().next(),
+        Some("session-unnamed")
+    );
+}
+
+#[test]
+fn a_controller_session_is_named_only_for_its_own_caller() {
+    for jarvis in [false, true] {
+        let mut world = World::new();
+        if jarvis {
+            // Jarvis starts its controller from a home outside any repository.
+            world.lane = world.root.join("jarvis-home");
+        }
+        fs::create_dir_all(world.lane.join("tmp")).unwrap();
+        let pane = world.on_pane("%3");
+        let mut env = borrowed(&pane);
+        env.push(("AGENT_RUNTIME_LAUNCH_AGENT", "controller"));
+        let account = world.home.join(".claude");
+        let transcript = agent_runtime::session::fixed_file(
+            agent_runtime::harness::Harness::Claude,
+            &account,
+            &world.lane,
+            "s1",
+        )
+        .unwrap();
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::write(
+            transcript,
+            format!("{}\n", claude_usage("claude-haiku-5-5", 1_000)),
+        )
+        .unwrap();
+        let socket = world.root.join("tmux-socket");
+        let mut controller = json!({"harness": "claude", "session_id": "s1",
+            "seat": if jarvis { "jarvis" } else { "overseer" }, "cwd": world.lane,
+            "effort": "high", "server": SERVER_PID, "server_start": 1700000000,
+            "server_socket": socket, "pane": "%3", "harness_pid": std::process::id(),
+            "harness_start": start_of(std::process::id())});
+        fs::write(world.fleet(), json!({"controller": controller}).to_string()).unwrap();
+        let out = world.session(&env);
+        assert_eq!(
+            (out.code, out.stdout.as_str()),
+            (
+                0,
+                "model=claude-haiku-5-5 source=session\neffort=high source=launch\nagent=controller source=launch\n"
+            ),
+            "jarvis={jarvis}: {}",
+            out.stderr
+        );
+        let unnamed = |out: Out| {
+            assert_eq!(out.code, 2, "{} {}", out.stdout, out.stderr);
+            assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+            assert!(out.stdout.starts_with("session-unnamed "), "{}", out.stdout);
+        };
+        let other = world.on_pane("%4");
+        unnamed(world.session(&borrowed(&other)));
+        unnamed(world.session(&[]));
+        let unrelated = Owned::sleep();
+        controller["harness_pid"] = json!(unrelated.pid());
+        controller["harness_start"] = json!(unrelated.start());
+        fs::write(world.fleet(), json!({"controller": controller}).to_string()).unwrap();
+        unnamed(world.session(&env));
+    }
 }
 
 /// A Codex attached launch the reserve alone refuses, the plain mark still

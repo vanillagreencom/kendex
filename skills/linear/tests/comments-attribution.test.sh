@@ -122,7 +122,8 @@ echo "=== each member is the reading's, or unknown ==="
 # label|kind|exit|lines|attribution
 READS='
 a Codex lane names its model and effort from the session|stub|0|'"$CODEX"'|'"$CODEX_LINE"'
-a Claude Code lane records no effort|stub|1|model=claude-opus-5-5 source=session;session-effort-unrecorded harness=claude session=2082e1ce-d02d-4cd4-aa90-5b2a9180706c;agent=KEN-4554 source=launch|> Posted by Agent: KEN-4554, Model: claude-opus-5-5, Effort: unknown
+a Claude Code lane names its recorded launch effort|stub|0|model=claude-opus-5-5 source=session;effort=high source=launch;agent=KEN-4554 source=launch|> Posted by Agent: KEN-4554, Model: claude-opus-5-5, Effort: high
+a controller names its session and launch values|stub|0|model=claude-opus-5-5 source=session;effort=medium source=launch;agent=controller source=launch|> Posted by Agent: controller, Model: claude-opus-5-5, Effort: medium
 a model only the launch requested is unknown|stub|1|model=opus source=launch;session-effort-unrecorded harness=claude session=s1;agent=KEN-7 source=launch|> Posted by Agent: KEN-7, Model: unknown, Effort: unknown
 a session record that cannot be read leaves model and effort unknown|stub|2|session-file-unreadable harness=codex session=s1 cause=denied;session-file-unreadable harness=codex session=s1 cause=denied;agent=KEN-7 source=launch|> Posted by Agent: KEN-7, Model: unknown, Effort: unknown
 a session no launch named leaves the agent unknown|stub|1|model=gpt-6.1-sol source=session;effort=high source=session;session-agent-unrecorded harness=codex session=s1|> Posted by Agent: unknown, Model: gpt-6.1-sol, Effort: high

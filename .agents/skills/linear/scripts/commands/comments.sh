@@ -81,9 +81,10 @@ Create Options:
   Every created body opens with the line
     > Posted by Agent: NAME, Model: MODEL, Effort: EFFORT
   and a blank line. Each value is what orch's `orch-runtime session` reads
-  for the lane session bound at the caller: the agent from its launch, the
-  model and effort from the session's own record. A value it does not read
-  is unknown. A body that already opens with such a line has it replaced.
+  for the caller's bound lane or controller: the agent from its launch,
+  the model from the session, and the effort from the session or its launch.
+  A value it does not read is unknown. A body that already opens with such
+  a line has it replaced.
   --no-attribution leaves both out.
 
 React:
@@ -362,17 +363,10 @@ owner_questions() {
 }
 
 # The line a new comment opens with, naming who posts it, read once per post
-# through orch's `orch-runtime session`: the model and effort of the session
-# bound at the caller's lane pane, and the name its launch gave that session,
-# in the lines `agent-runtime session model --help` documents. A member stands
-# only as that reading names it. A model the launch requested (`source=launch`)
-# is no reading of the one the session runs, so it stays unknown; so does
-# every member where orch is not installed beside this package, its runtime is
-# not built on a computer without cargo, or no lane session is bound at the
-# caller (an overseer, Jarvis, a plain shell). With cargo on PATH an unbuilt
-# runtime is built at this read, so the post waits on that build. A Claude
-# Code subagent shares its lane's pane and session, so
-# its comment names the lane session's model.
+# through orch's `orch-runtime session`: the bound lane or controller's
+# session model, recorded effort and launch name. A model requested at
+# launch alone does not identify the model that ran. A Claude Code subagent
+# shares its lane's session, so its comment names the lane session's model.
 comment_attribution() {
     local reader="$SCRIPT_DIR/../../../orch/scripts/orch-runtime" lines="" line
     local agent=unknown model=unknown effort=unknown
@@ -386,7 +380,7 @@ comment_attribution() {
         case "${BASH_REMATCH[1]}:${BASH_REMATCH[3]}" in
             agent:launch) agent="${BASH_REMATCH[2]}" ;;
             model:session) model="${BASH_REMATCH[2]}" ;;
-            effort:session) effort="${BASH_REMATCH[2]}" ;;
+            effort:session|effort:launch) effort="${BASH_REMATCH[2]}" ;;
         esac
     done <<<"$lines"
     printf '> Posted by Agent: %s, Model: %s, Effort: %s' "$agent" "$model" "$effort"
