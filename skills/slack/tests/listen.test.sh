@@ -1313,7 +1313,9 @@ sk_poll "$ZETA"
 assert_eq "$(text_of "$ZETA" "$ZETA_CH:$MK2")" "typed <" "control: &amp; unescaped first, a typed &lt; lands as <"
 sk_bin_reset
 
-sk_mutant text-check relay.py 'secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' 'secret_check(b"", f"id={env_id}")'
+sk_mutant text-check relay.py \
+  '(text, body_arg = outbound\(self\.path, text, file_comment=bool\(attach\)\)\n            )secret_check\(text\.encode\(\), f"id=\{env_id\}"\)' \
+  '\1secret_check(b"", f"id={env_id}")'
 sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text s2 'leak xoxb-0123456789-abcdefghij')" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(asks "$ZETA_CH" 'xoxb-0123456789')" "1" "control: the outbound text unchecked, a token posts"

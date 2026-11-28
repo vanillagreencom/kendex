@@ -264,8 +264,9 @@ else exec '{shutil.which("date")}' "$@"; fi
                 relay.poll("UBOT")
                 due = ask["deadline"]
                 epoch = int(datetime.strptime(due, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
-                expected = ("<@UOWNER> Question from overseer: Approve this change? "
-                            "**[\\[KEN-7\\]](https://linear.app/workspace/issue/KEN-7)** It stands at "
+                expected = ("<@UOWNER> Question from overseer:\n\nApprove this change?\nMore detail.\n\n"
+                            "**[\\[KEN-7\\]](https://linear.app/workspace/issue/KEN-7)**\n\n"
+                            "Options: approve, hold. Recommended: approve. It stands at "
                             f"<!date^{epoch}^{{date_short_pretty}} at {{time}}|{due}> unless you reply in this thread.")
                 delivered = api.messages[-1].get("markdown_text", "")
                 facts["delivery"] &= (len(api.messages) == 2 and (delivered == expected if posted else
