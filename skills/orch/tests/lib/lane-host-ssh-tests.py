@@ -128,6 +128,9 @@ if [[ "${SSH_TEST_REQUEST_TTY:-}" == force && "$tty_off" == false ]]; then
   bash -c "${!#}" | "$REAL_PYTHON" -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().replace(b"\\n", b"\\r\\n"))'
   exit
 fi
+if [[ -n "${SSH_TEST_REMOTE_BIN:-}" ]]; then
+  export PATH="$SSH_TEST_REMOTE_BIN:$PATH"
+fi
 exec bash -c "${!#}"
 ''')
         self.executable(self.bin / "git", '''#!/usr/bin/env bash
@@ -1136,9 +1139,12 @@ rc=0
         count = 2 * (limit // len(row) + 1)
         final = b'{"event":"StopFailure"'
         path.write_bytes(row * count + final)
+        remote_bin = self.root / "remote-bin"
+        self.executable(remote_bin / "python3", "#!/bin/sh\nexit 127\n")
 
         def read():
-            return self.call("cat", "--item", "TEST-1", "--session-rows", str(path))
+            return self.call("cat", "--item", "TEST-1", "--session-rows", str(path),
+                             SSH_TEST_REMOTE_BIN=str(remote_bin))
 
         result = read()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2857,6 +2863,20 @@ exit 9
             proved = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
             self.assertEqual((proved.returncode, proved.stdout), (0, f"running\n{worktree}\n".encode()),
                              proved.stderr)
+            runtime = clone / ".agents/skills/agent-runtime/scripts/agent-runtime"
+            original_runtime = runtime.read_text()
+            first_group = shlex.quote(str(self.root / "group-read"))
+            self.executable(runtime, "#!/bin/sh\n"
+                            f"if [ -f {first_group} ]; then\n"
+                            "  printf '%s\\n' '{\"result\":{\"reading\":\"unreadable\",\"cause\":\"proc-unreadable\"}}'\n"
+                            "  exit 0\n"
+                            f"fi\n: > {first_group}\n"
+                            + original_runtime)
+            failed = self.call("status", "--item", "TEST-1", "--harness", "codex", "--worktree")
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual(failed.stdout, b"")
+            self.assertIn(b"cause=proc-unreadable", recorded_cause(failed.stderr).split())
+            runtime.write_text(original_runtime)
         subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)],
                        check=True, capture_output=True, env=self.env)
         self.assertEqual(status().stdout, b"running\n")

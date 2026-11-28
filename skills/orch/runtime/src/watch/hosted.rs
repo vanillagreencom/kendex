@@ -2827,9 +2827,22 @@ impl SessionRows {
     pub(super) fn after(
         &self,
         cursor: u64,
+        through: Option<u64>,
     ) -> Option<impl Iterator<Item = Reading<rows::Row>> + '_> {
         let relative = cursor.checked_sub(self.skipped as u64)?;
-        Some(rows::rows_after_in(&self.text, relative).map(|row| self.absolute(row)))
+        let text = if let Some(through) = through {
+            let lines = through.saturating_sub(self.skipped as u64);
+            let bytes = self
+                .text
+                .split_inclusive('\n')
+                .take(usize::try_from(lines).unwrap_or(usize::MAX))
+                .map(str::len)
+                .sum();
+            &self.text[..bytes]
+        } else {
+            &self.text
+        };
+        Some(rows::rows_after_in(text, relative).map(|row| self.absolute(row)))
     }
 
     fn absolute(&self, reading: Reading<rows::Row>) -> Reading<rows::Row> {
@@ -3216,8 +3229,9 @@ mod tests {
         assert_eq!(window.last_position(), 58_003);
         assert_eq!(window.complete_position(), 58_002);
         assert!(matches!(window.last_row(), Reading::Live(row) if row.position == 58_003));
-        assert!(window.after(57_999).is_none());
-        let mut later = window.after(58_000).unwrap();
+        assert!(window.after(57_999, None).is_none());
+        assert!(window.after(58_000, Some(58_000)).unwrap().next().is_none());
+        let mut later = window.after(58_000, None).unwrap();
         assert!(matches!(
             later.next(), Some(Reading::Live(row)) if row.position == 58_001 && row.digest == Some(123)
         ));

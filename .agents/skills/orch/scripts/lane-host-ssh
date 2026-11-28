@@ -417,44 +417,37 @@ def peer_read_allowed(row, path):
 
 READ_FILE = MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"'
 
-# The SSH transport carries a tail starting on a row boundary and its line
-# offset. Count the prefix on the host from the same open file and byte
-# snapshot, so a concurrent append cannot move the reported positions.
+# Count and window the same byte stream on the host. The extra window byte
+# tells whether its first line starts at a row boundary.
 SESSION_ROWS_BYTES = 1024 * 1024
-READ_SESSION_ROWS = r'''
-import os
-import stat
-import sys
+READ_SESSION_ROWS = MAILBOX_GUARD + r'''
+test -e "$1" || exit 2
+test -f "$1" || { printf 'lane-host-ssh: session-rows-not-regular\n' >&2; exit 1; }
+exec 3< "$1" || exit 1
+umask 077
+scratch=$(mktemp -d) || exit 1
+trap 'rm -rf -- "${scratch:?}"' EXIT
+mkfifo "$scratch/count-in" || exit 1
+wc -l < "$scratch/count-in" > "$scratch/count" &
+counter=$!
+transfer=0
+tee "$scratch/count-in" <&3 | tail -c "$(($2 + 1))" > "$scratch/window" || transfer=$?
+wait "$counter" || exit 1
+test "$transfer" -eq 0 || exit 1
 
-path, limit = sys.argv[1], int(sys.argv[2])
-try:
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-except FileNotFoundError:
-    sys.exit(2)
-with os.fdopen(fd, "rb") as stream:
-    metadata = os.fstat(stream.fileno())
-    if not stat.S_ISREG(metadata.st_mode):
-        sys.exit("lane-host-ssh: session-rows-not-regular")
-    start = max(metadata.st_size - limit, 0)
-    remaining, skipped, last = start, 0, b"\n"
-    while remaining:
-        chunk = stream.read(min(remaining, 65536))
-        if not chunk:
-            sys.exit("lane-host-ssh: session-rows-short")
-        remaining -= len(chunk)
-        skipped += chunk.count(b"\n")
-        last = chunk[-1:]
-    size = metadata.st_size - start
-    tail = stream.read(size)
-    if len(tail) != size:
-        sys.exit("lane-host-ssh: session-rows-short")
-    if last != b"\n":
-        end = tail.find(b"\n")
-        if end < 0 or end == len(tail) - 1:
-            sys.exit("lane-host-ssh: session-row-too-large")
-        skipped += 1
-        tail = tail[end + 1:]
-sys.stdout.buffer.write(f"{skipped}\t{len(tail)}\n".encode("ascii") + tail)
+size=$(wc -c < "$scratch/window") || exit 1
+if test "$size" -gt "$2"; then
+  fragment=$(head -n 1 "$scratch/window" | wc -c) || exit 1
+  size=$((size - fragment))
+  if test "$size" -eq 0; then
+    printf 'lane-host-ssh: session-row-too-large\n' >&2
+    exit 1
+  fi
+fi
+lines=$(< "$scratch/count")
+kept=$(tail -c "$((size + 0))" "$scratch/window" | wc -l) || exit 1
+printf '%s\t%s\n' "$((lines - kept))" "$((size + 0))" || exit 1
+tail -c "$((size + 0))" "$scratch/window" || exit 1
 '''
 
 
@@ -466,8 +459,7 @@ def read(row, path, session_rows=False):
     own status so the caller refuses rather than reads empty.
     """
     if session_rows:
-        result = remote(row, MAILBOX_GUARD + 'exec python3 -c "$2" "$1" "$3"',
-                        path, READ_SESSION_ROWS, str(SESSION_ROWS_BYTES), accept=(2,))
+        result = remote(row, READ_SESSION_ROWS, path, str(SESSION_ROWS_BYTES), accept=(2,))
     else:
         result = remote(row, READ_FILE, path, accept=(2,))
     return None if result.returncode == 2 else result.stdout
@@ -1132,11 +1124,19 @@ def runtime_result(answer):
 def process_group(row, item):
     answer = remote(row, 'exec "$1$2" process group --file "$1$3"', row["clone"], AGENT_RUNTIME, IDENTITY_FILE,
                     accept=None)
-    group = runtime_result(answer)
-    if answer.returncode != 0 or group.get("reading") not in ("live", "gone"):
+    if answer.returncode != 0:
         step_failed("status-read-failed", answer.stderr, RUNTIME_FIX, item=item, exit=answer.returncode)
         raise SystemExit(1)
-    return group
+    group = runtime_result(answer)
+    if isinstance(group, dict):
+        if group.get("reading") in ("live", "gone"):
+            return group
+        cause = group.get("cause")
+        if group.get("reading") == "unreadable" and isinstance(cause, str) and cause:
+            notice("status-read-failed", item=item, cause=cause, fix=RUNTIME_FIX)
+            raise SystemExit(1)
+    notice("status-reply-invalid", item=item, fix=RUNTIME_FIX)
+    raise SystemExit(1)
 
 
 def status(row, item, prove_worktree=False):
@@ -1528,7 +1528,7 @@ and returns item/path/status/base64-data rows, in request order, with one SSH
 call per target. Missing files have status 2; other failed files keep their
 nonzero status and no bytes. cat exits 2 for a path that is not there.
 cat --session-rows returns an absolute line offset and a bounded row window.
-It requires Python 3 on the host. put stages beside
+put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. Neither verb
 leaves its staged file behind. A failed write of the staged bytes, or of

@@ -1876,6 +1876,10 @@ if [[ "$1" == -T && -e "$here/refuse-status" && "$*" == *"orch_take_lock 9"* ]];
     exit 255
 fi
 if [[ "$1" == -T && -f "$here/defer-row-refusal" && "$*" == *"$(cat "$here/defer-row-refusal")"* ]]; then
+    if [[ -f "$here/skip-defer" ]]; then
+        rm -- "$here/skip-defer"
+        exec "$here/ssh-fixture" "$@"
+    fi
     "$here/ssh-fixture" "$@"
     code=$?
     mv -- "$here/defer-row-refusal" "$here/drop-on"
@@ -2386,9 +2390,40 @@ done
         baseline.get(wake::RESUME_KIND, lane_name),
         earlier.as_deref()
     );
+    // Keep both receipts open across the same refused snapshot. The new
+    // prompt is already on disk when the next pass reads their evidence.
+    std::fs::write(host.tools.join("skip-defer"), "").unwrap();
+    std::fs::write(&defer, rows.to_str().unwrap()).unwrap();
     let later = wake(&mut baseline);
+    assert!(later.events.iter().any(|event| matches!(
+        event, watch::Event::WakeUnconfirmed { cause, resume, .. }
+            if cause.contains("255") && resume.as_deref() == Some("server_error")
+    )));
+    let deadline = Instant::now() + secs(5);
+    while !std::fs::read_to_string(&rows)
+        .unwrap()
+        .lines()
+        .last()
+        .is_some_and(|row| row.contains("UserPromptSubmit"))
+    {
+        assert!(Instant::now() < deadline, "the typed turn wrote no receipt");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let count_reads = |from: usize| {
+        host.calls()[from..]
+            .iter()
+            .filter(|call| call.ends_with(rows.to_str().unwrap()))
+            .count()
+    };
+    let before = host.calls().len();
+    std::fs::write(&drop_on, rows.to_str().unwrap()).unwrap();
+    let refused = wake(&mut baseline);
+    assert!(!drop_on.exists());
+    assert_eq!(count_reads(before), 1, "{refused:?}");
+    let before = host.calls().len();
+    let settled = wake(&mut baseline);
     assert_eq!(
-        later
+        settled
             .events
             .iter()
             .filter(|event| matches!(
@@ -2397,24 +2432,34 @@ done
             ))
             .count(),
         1,
-        "{later:?}"
+        "{settled:?}"
     );
+    assert_eq!(count_reads(before), 1, "{settled:?}");
+    let before = host.calls().len();
     assert!(
         wake(&mut baseline)
             .events
             .iter()
             .all(|event| !matches!(event, watch::Event::WakeDelivered { .. }))
     );
+    assert_eq!(count_reads(before), 0);
     let sent = typed();
     assert_eq!(sent.lines().count(), 7);
     assert_eq!(sent.lines().nth(5), sent.lines().nth(6));
 
-    assert!(
-        host.calls()
-            .iter()
-            .filter(|call| call.ends_with("/session-rows.jsonl"))
-            .all(|call| call.ends_with(rows.to_str().unwrap()))
-    );
+    let calls = host.calls();
+    let row_reads: Vec<_> = calls
+        .iter()
+        .filter(|call| call.ends_with("/session-rows.jsonl"))
+        .collect();
+    assert!(!row_reads.is_empty());
+    for call in row_reads {
+        assert!(call.ends_with(rows.to_str().unwrap()), "{call}");
+        assert!(
+            call.split_whitespace().any(|word| word == "--session-rows"),
+            "{call}"
+        );
+    }
 }
 
 /// A baseline holding the lanes duty's resume row `value` for `lane`.
