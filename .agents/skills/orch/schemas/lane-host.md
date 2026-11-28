@@ -68,7 +68,7 @@ The recorded cause:
 
 - A failed `capabilities`, `create`, `wait`, `start`, `cat`, `touch`, `put`, `status`, `capture`, `send`, `list`, `close`, `stop`, `stop-sandbox`, `validate` or `viewer-prefix` records one stderr line as its cause: the last line carrying a `fix=` field, else the first non-blank line, else `stderr=empty`.
 - A `create` that exits `75` without `state=preparing` records `item-owned exit=75` and no stderr line, unless its stderr holds `lane-host-ssh: ownership-busy`, the ssh provider's lock: that create records `host-create-busy create exit=75` and its cause line.
-- A `close` that exits `3` records no stderr line, only the path its `close-refused path=` line names, `unknown` without one.
+- A `close` that exits `3` uses the same stderr selection for its `cause`. The cause keeps at most 2048 UTF-8 bytes. A longer line keeps its beginning and end with ` … ` between them.
 - Print any notice before a `fix=` refusal; a refusal without `fix=` that follows other stderr output is not recorded.
 - A `create` that answers, exit `0` or an accepted preparation, keeps its stderr in the launch observation's `create_stderr`, whatever later step of the launch fails. Each line is trimmed and blank lines are dropped, with no line parsed. Over 20 lines, it keeps the first 10 and the last 10, and `create_stderr_elided` counts the lines between.
 
@@ -141,6 +141,7 @@ Each verb, its arguments, and its answer:
   - Exit `0` with `kept=PATH` on stdout names the archive of the lane's records the provider kept; no `kept=` line reads as `kept=none`.
   - An item the host holds no sandbox for answers exit `0` with `closed=absent item=ID`.
   - Exit `3` with `close-refused path=PATH` on stderr or stdout refuses and keeps the checkout at `PATH`.
+  - On exit `3`, the close record and reply carry `host_close: refused`, the `path` from the first `close-refused path=` line (stderr before stdout, `unknown` without one), and the bounded stderr `cause` described above. The close stays unconfirmed.
   - `--merged` is the caller's word that the item's pull request merged; a provider may then keep less of the archive, and every provider accepts the flag.
 - `stop-sandbox --item ID` or `stop-sandbox --check --item ID`.
   - Stops the sandbox's compute and keeps its disk whole: worktree, harness session store, mailbox and `tmp`.
